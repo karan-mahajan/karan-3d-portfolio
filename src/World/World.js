@@ -15,9 +15,9 @@ import { Furniture } from '../Portfolio/Furniture.js';
  * Kenney grass-tuft models, placed via Nature.
  */
 export class World {
-  constructor(scene) {
+  constructor(scene, loader) {
     this.scene = scene;
-    this.terrain = new Terrain(scene);
+    this.terrain = new Terrain(scene, loader);
     this.sky = new Sky(scene);
     this.nature = null;
     this.billboards = null;

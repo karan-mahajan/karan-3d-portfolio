@@ -37,7 +37,7 @@ export class App extends EventTarget {
     this.#initLighting();
 
     this.physics = new Physics();
-    this.world = new World(this.scene);
+    this.world = new World(this.scene, this.loader);
     this.playerCamera = new PlayerCamera(this.camera, this.canvas);
     this.player = null;
 
