@@ -14,6 +14,7 @@ import { Interaction } from './Portfolio/Interaction.js';
 import { Fireflies } from './Effects/Fireflies.js';
 import { Water } from './Effects/Water.js';
 import { Rain } from './Effects/Rain.js';
+import { WindLines } from './Effects/WindLines.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 
@@ -56,6 +57,7 @@ export class App extends EventTarget {
     this.waterPos = new THREE.Vector3(-12, 0.05, 18);
     this.water = new Water(this.scene, { position: this.waterPos, radius: 5.5, loader: this.loader });
     this.rain = new Rain(this.scene, this.camera);
+    this.windLines = new WindLines(this.scene, this.wind);
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes);
@@ -197,6 +199,7 @@ export class App extends EventTarget {
     this.fireflies.update(elapsed);
     this.water.update(elapsed, delta, this.player.position);
     this.rain.update(delta);
+    this.windLines.update(delta, this.player.position);
     this.audio?.tick(delta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,

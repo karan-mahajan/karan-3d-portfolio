@@ -547,7 +547,8 @@ body {
 
 /* ─────────────── Audio mute toggle ─────────────── */
 .audio-toggle,
-.rain-toggle {
+.rain-toggle,
+.wind-toggle {
   position: fixed;
   bottom: 14px;
   z-index: 30;
@@ -567,8 +568,10 @@ body {
 }
 .audio-toggle { left: 14px; }
 .rain-toggle  { left: 64px; }
+.wind-toggle  { left: 114px; }
 .audio-toggle:hover,
-.rain-toggle:hover {
+.rain-toggle:hover,
+.wind-toggle:hover {
   opacity: 1;
   transform: translateY(-1px);
 }
