@@ -1,0 +1,15 @@
+node_modules
+dist
+.DS_Store
+*.local
+.env
+.env.*
+_raw-models
+*.log
+.vscode
+.idea
+thumbs.db
+
+# Working dropboxes — raw uploads before they get processed/placed
+/Extra/
+/static/models/wildlife/incoming/

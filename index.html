@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Karan Mahajan — Full Stack Developer. Walk through a 3D world to explore my work." />
+    <title>Karan Mahajan — Portfolio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Rajdhani:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="loading-screen" class="overlay">
+      <div class="loading-inner">
+        <div class="loading-title">KARAN MAHAJAN</div>
+        <div class="loading-sub">Building the world…</div>
+        <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
+        <div class="loading-status" id="loading-status">Warming up the lights…</div>
+      </div>
+    </div>
+    <div id="welcome-screen" class="overlay hidden">
+      <div class="welcome-inner">
+        <div class="welcome-eyebrow">portfolio</div>
+        <div class="welcome-title">KARAN'S WORLD</div>
+        <div class="welcome-sub">A walk-through portfolio. Each direction reveals a section.</div>
+        <div class="welcome-compass" aria-hidden="true">
+          <div class="compass-card">
+            <span class="compass-arrow">↑</span>
+            <span class="compass-label">Experience</span>
+          </div>
+          <div class="compass-row">
+            <div class="compass-card">
+              <span class="compass-arrow">←</span>
+              <span class="compass-label">Contact</span>
+            </div>
+            <div class="compass-card compass-center">↻</div>
+            <div class="compass-card">
+              <span class="compass-arrow">→</span>
+              <span class="compass-label">Projects</span>
+            </div>
+          </div>
+          <div class="compass-card">
+            <span class="compass-arrow">↓</span>
+            <span class="compass-label">Skills</span>
+          </div>
+        </div>
+        <button id="welcome-start" class="welcome-start">Start your journey</button>
+        <div class="welcome-hint">Look around with your mouse · Walk with WASD</div>
+      </div>
+    </div>
+    <div id="ui-overlay"></div>
+    <div id="controls-hud" class="hidden">
+      <div class="controls-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>move</span></div>
+      <div class="controls-row"><kbd>Shift</kbd><span>run</span></div>
+      <div class="controls-row"><kbd>Space</kbd><span>jump</span></div>
+      <div class="controls-row"><kbd>E</kbd><span>interact</span></div>
+      <div class="controls-row"><kbd>Esc</kbd><span>back</span></div>
+      <div class="controls-row"><kbd>Drag</kbd><span>look</span></div>
+    </div>
+    <div id="debug-hud"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

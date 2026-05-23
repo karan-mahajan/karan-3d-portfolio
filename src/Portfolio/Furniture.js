@@ -1,0 +1,179 @@
+import * as THREE from 'three';
+
+/**
+ * Workstation props placed in front of each project billboard so the cluster
+ * reads as a "developer's desk" the player walks up to. Each billboard gets a
+ * unique combination of desk + screen + chair + accent so the line doesn't
+ * feel like a copy/paste.
+ *
+ * Layout per billboard (positions in local frame, then transformed to world
+ * by the billboard's yaw — billboard faces origin, so "in front" means
+ * toward the player approach):
+ *
+ *   billboard
+ *      │
+ *      ▼ (desk, monitor on top)        ← forward 2.0 units
+ *      ▼ (chair)                       ← forward 3.4 units (faces billboard)
+ *      ▼ (player approach)
+ */
+
+// targetMax: the longest dimension the model should occupy in world units. If
+// the loaded GLB exceeds that, it gets auto-scaled down (some Kenney items
+// arrive at 5–10× the expected scale and would otherwise dwarf the scene).
+const SETS = [
+  {
+    desk:   { url: '/models/furniture/desk.glb',          targetMax: 1.6, y: 0 },
+    screen: { url: '/models/furniture/monitor.glb',       targetMax: 0.7, y: 0.74 },
+    chair:  { url: '/models/furniture/office-chair.glb',  targetMax: 1.2, y: 0 },
+    accent: { url: '/models/furniture/standing-lamp.glb', targetMax: 1.7, y: 0, side: -1, offset: 1.4 },
+  },
+  {
+    desk:   { url: '/models/furniture/desk-1.glb',           targetMax: 1.6, y: 0 },
+    screen: { url: '/models/furniture/laptop.glb',           targetMax: 0.6, y: 0.74 },
+    chair:  { url: '/models/furniture/chair.glb',            targetMax: 1.1, y: 0 },
+    accent: { url: '/models/furniture/lampsquarefloor.glb',  targetMax: 1.6, y: 0, side:  1, offset: 1.4 },
+  },
+  {
+    desk:   { url: '/models/furniture/table.glb',           targetMax: 1.6, y: 0 },
+    screen: { url: '/models/furniture/computerscreen.glb',  targetMax: 0.7, y: 0.74 },
+    chair:  { url: '/models/furniture/stool.glb',           targetMax: 0.8, y: 0 },
+    accent: { url: '/models/furniture/pottedplant.glb',     targetMax: 0.9, y: 0, side: -1, offset: 1.4 },
+  },
+  {
+    desk:   { url: '/models/furniture/desk-2.glb',          targetMax: 1.6, y: 0 },
+    screen: { url: '/models/furniture/screen-flat.glb',     targetMax: 0.8, y: 0.74 },
+    chair:  { url: '/models/furniture/office-chair-1.glb',  targetMax: 1.2, y: 0 },
+    accent: { url: '/models/furniture/plantsmall1.glb',     targetMax: 0.7, y: 0, side:  1, offset: 1.4 },
+  },
+  {
+    desk:   { url: '/models/furniture/deskcorner.glb',          targetMax: 1.8, y: 0 },
+    screen: { url: '/models/furniture/televisionmodern.glb',    targetMax: 0.9, y: 0.74 },
+    chair:  { url: '/models/furniture/chaircushion.glb',        targetMax: 1.1, y: 0 },
+    accent: { url: '/models/furniture/speaker.glb',             targetMax: 0.5, y: 0, side: -1, offset: 1.4 },
+  },
+];
+
+// Forward offsets from the billboard (in the direction it faces, which is
+// also the player-approach direction).
+const DESK_FORWARD = 2.4;
+const CHAIR_FORWARD = 3.8;
+
+export class Furniture {
+  constructor(scene, loader, physics, billboards) {
+    this.scene = scene;
+    this.loader = loader;
+    this.physics = physics;
+    this.billboards = billboards;
+    this.placed = [];
+  }
+
+  async load() {
+    if (!this.billboards || this.billboards.items.length === 0) return 0;
+    const tasks = [];
+    for (let i = 0; i < this.billboards.items.length; i++) {
+      const billboard = this.billboards.items[i];
+      const set = SETS[i % SETS.length];
+      tasks.push(this.#placeOne(billboard, set, i));
+    }
+    const results = await Promise.allSettled(tasks);
+    return results.filter((r) => r.status === 'fulfilled').length;
+  }
+
+  async #placeOne(billboard, set, index) {
+    // Direction the billboard faces (toward origin) → "forward" for furniture.
+    const bx = billboard.position.x;
+    const bz = billboard.position.z;
+    const len = Math.hypot(bx, bz) || 1;
+    const fx = -bx / len;
+    const fz = -bz / len;
+    // Sideways vector (perpendicular, right-hand).
+    const sx = -fz;
+    const sz =  fx;
+    // The billboard's local +Z faces origin → yaw used so far.
+    const billYaw = Math.atan2(-bx, -bz);
+
+    // ── Desk ─────────────────────────────────────────────────────────────
+    const desk = await this.#loadAt(set.desk, {
+      x: bx + fx * DESK_FORWARD,
+      y: set.desk.y,
+      z: bz + fz * DESK_FORWARD,
+      yaw: billYaw,
+    });
+
+    // Measure desk's top so the screen sits on it cleanly.
+    const deskBox = new THREE.Box3().setFromObject(desk);
+    const deskTopY = deskBox.max.y;
+
+    // ── Screen on desk ───────────────────────────────────────────────────
+    const screen = await this.#loadAt(set.screen, {
+      x: bx + fx * DESK_FORWARD,
+      y: deskTopY,
+      z: bz + fz * DESK_FORWARD,
+      // Screen faces the chair (away from billboard) → yaw rotated 180°.
+      yaw: billYaw + Math.PI,
+    });
+
+    // ── Chair behind desk ────────────────────────────────────────────────
+    const chair = await this.#loadAt(set.chair, {
+      x: bx + fx * CHAIR_FORWARD,
+      y: set.chair.y,
+      z: bz + fz * CHAIR_FORWARD,
+      // Chair faces the billboard (its occupant looks toward the screen).
+      yaw: billYaw,
+    });
+
+    // ── Accent prop (lamp / plant / speaker) ─────────────────────────────
+    const acc = set.accent;
+    const accSide = acc.side ?? 1;
+    const accOffset = acc.offset ?? 1.2;
+    const accX = bx + fx * DESK_FORWARD + sx * accSide * accOffset;
+    const accZ = bz + fz * DESK_FORWARD + sz * accSide * accOffset;
+    await this.#loadAt(acc, { x: accX, y: acc.y, z: accZ, yaw: billYaw });
+
+    // ── Physics colliders for the chunky items ───────────────────────────
+    // Desk: a cuboid the size of its bounding box.
+    if (this.physics) {
+      const deskSize = deskBox.getSize(new THREE.Vector3());
+      this.physics.addStaticCuboid(
+        bx + fx * DESK_FORWARD, 0, bz + fz * DESK_FORWARD,
+        deskSize.x / 2, deskTopY / 2, deskSize.z / 2,
+        billYaw,
+      );
+      // Chair: smaller cuboid (so the player can lean against it).
+      this.physics.addStaticCuboid(
+        bx + fx * CHAIR_FORWARD, 0, bz + fz * CHAIR_FORWARD,
+        0.35, 0.45, 0.35,
+        billYaw,
+      );
+    }
+
+    this.placed.push({ billboard, desk, screen, chair });
+  }
+
+  async #loadAt(modelDef, { x, y, z, yaw }) {
+    const gltf = await this.loader.loadGLTF(modelDef.url);
+    const obj = gltf.scene;
+
+    // First measure the model at its native scale, then scale-to-fit a
+    // sensible per-category target. Kenney's furniture pack has wildly
+    // inconsistent native scales (some at 1m, some at 5m+).
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const target = modelDef.targetMax ?? 1.2;
+    const fitScale = target / maxDim;
+    obj.scale.setScalar(fitScale);
+
+    obj.position.set(x, y, z);
+    obj.rotation.y = yaw;
+    obj.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    this.scene.add(obj);
+    return obj;
+  }
+}
