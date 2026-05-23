@@ -3,6 +3,8 @@ import { Sizes } from './Utils/Sizes.js';
 import { Debug } from './Utils/Debug.js';
 import { Loader } from './Utils/Loader.js';
 import { World } from './World/World.js';
+import { Wind } from './World/Wind.js';
+import { Grass } from './World/Grass.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -38,6 +40,11 @@ export class App extends EventTarget {
     this.world = new World(this.scene);
     this.playerCamera = new PlayerCamera(this.camera, this.canvas);
     this.player = null;
+
+    // Shared wind source — drives the grass field today; future leaves /
+    // water ripples / particle systems will read the same uniforms.
+    this.wind = new Wind();
+    this.grass = new Grass(this.scene, this.wind);
 
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
@@ -174,6 +181,8 @@ export class App extends EventTarget {
     const sample = this.player.update(delta);
     this.playerCamera.update(delta);
     this.world.update(elapsed, this.camera, delta);
+    this.wind.update(delta);
+    this.grass.update(this.camera);
     if (this.interaction) this.interaction.tick(this.player.position);
     this.fireflies.update(elapsed);
     this.water.update(elapsed, delta, this.player.position);

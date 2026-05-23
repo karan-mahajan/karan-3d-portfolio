@@ -3,41 +3,16 @@ import * as THREE from 'three';
 /**
  * Nature props with material overrides + per-instance color variation.
  *
- * - Grass: 10,000 instances across 4 models, material forced to green,
- *   per-instance color jittered between darker/base/lighter shades.
  * - Flowers: petal materials overridden to vivid red/yellow/purple;
  *   any green stem materials in the model are preserved.
  * - Trees: ring tightened to [12, 60] so they feel close and surrounding,
  *   not distant.
+ *
+ * Grass tufts are no longer placed from GLBs — the shader-driven blade
+ * field in src/World/Grass.js covers the meadow now.
  */
 
 const PROPS = [
-  // ─── GRASS — 4 models, 10,000 total, green color override ────────────────
-  {
-    url: '/models/nature/grass.glb', count: 2500,
-    scale: [0.8, 1.8], ring: [1, 80], kind: 'grass',
-    baseColor: '#4a8a2a',
-    instanceColors: ['#4a9a28', '#5aaa35', '#6abb42'],
-  },
-  {
-    url: '/models/nature/grass-large.glb', count: 2500,
-    scale: [0.8, 1.8], ring: [1, 80], kind: 'grass',
-    baseColor: '#4a8a2a',
-    instanceColors: ['#4a9a28', '#5aaa35', '#6abb42'],
-  },
-  {
-    url: '/models/nature/grass-leafs.glb', count: 2500,
-    scale: [0.8, 1.8], ring: [1, 80], kind: 'grass',
-    baseColor: '#4a8a2a',
-    instanceColors: ['#4a9a28', '#5aaa35', '#6abb42'],
-  },
-  {
-    url: '/models/nature/grass-leafslarge.glb', count: 2500,
-    scale: [0.8, 1.8], ring: [1, 80], kind: 'grass',
-    baseColor: '#4a8a2a',
-    instanceColors: ['#4a9a28', '#5aaa35', '#6abb42'],
-  },
-
   // ─── TREES — 8 models, ~67 total, ring brought in to [12, 60] ───────────
   { url: '/models/nature/tree-oak.glb',           count: 9, scale: [2.8, 4.55], ring: [14, 60], kind: 'tree' },
   { url: '/models/nature/tree-oak-fall.glb',      count: 8, scale: [2.8, 4.55], ring: [14, 60], kind: 'tree' },
