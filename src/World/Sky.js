@@ -15,8 +15,6 @@ const frag = /* glsl */ `
   uniform vec3 uTop;
   uniform vec3 uHorizon;
   uniform vec3 uGround;
-  uniform vec3 uSunDir;
-  uniform vec3 uSunColor;
 
   void main() {
     float h = vWorldDir.y;
@@ -30,18 +28,14 @@ const frag = /* glsl */ `
       color = mix(uHorizon, uGround, smoothstep(0.0, -0.25, h));
     }
 
-    // Sun glow halo around the sun direction
-    float sunDot = max(dot(vWorldDir, normalize(uSunDir)), 0.0);
-    float halo = pow(sunDot, 16.0) * 0.55 + pow(sunDot, 256.0) * 1.4;
-    color += uSunColor * halo;
-
     gl_FragColor = vec4(color, 1.0);
   }
 `;
 
 /**
- * Sunset sky: large inverted sphere with a top→horizon→ground gradient and
- * a sun halo computed from the directional light's position.
+ * Sunset sky: large inverted sphere with a top→horizon→ground gradient.
+ * The visible sun disc + halo live in Sun.js — this shader only paints the
+ * gradient bands.
  */
 export class Sky {
   constructor(scene) {
@@ -58,8 +52,6 @@ export class Sky {
         uTop: { value: new THREE.Color(DUSK.skyTop) },
         uHorizon: { value: new THREE.Color(DUSK.skyHorizon) },
         uGround: { value: new THREE.Color(DUSK.skyGround) },
-        uSunDir: { value: new THREE.Vector3(0.6, 0.45, 0.5).normalize() },
-        uSunColor: { value: new THREE.Color(DUSK.sunColor) },
       },
     });
 
@@ -71,10 +63,5 @@ export class Sky {
   /** Keep the sky centered on the camera so the player can never "reach" the edge. */
   update(cameraPosition) {
     this.mesh.position.copy(cameraPosition);
-  }
-
-  /** Lock the sun halo to wherever the directional light is in world space. */
-  setSunDirection(worldPos) {
-    this.material.uniforms.uSunDir.value.copy(worldPos).normalize();
   }
 }

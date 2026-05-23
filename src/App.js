@@ -6,6 +6,7 @@ import { World } from './World/World.js';
 import { DUSK } from './World/Palette.js';
 import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
+import { Sun } from './World/Sun.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -139,7 +140,10 @@ export class App extends EventTarget {
     const ambient = new THREE.AmbientLight(DUSK.ambientColor, 0.45);
     const hemi = new THREE.HemisphereLight(DUSK.hemiSky, DUSK.hemiGround, 0.55);
     const sun = new THREE.DirectionalLight(DUSK.sunColor, 2.4);
-    this.sunOffset = new THREE.Vector3(36, 28, 22);
+    // Low ~15° elevation so the sun sits within the third-person camera's
+    // pitch range (maxPolarAngle caps view at ~19° above horizon). Long
+    // shadows are the intended sunset look.
+    this.sunOffset = new THREE.Vector3(36, 11, 22);
     sun.position.copy(this.sunOffset);
     sun.target.position.set(0, 0, 0);
     this.scene.add(sun.target);
@@ -163,6 +167,10 @@ export class App extends EventTarget {
 
     this.scene.add(ambient, hemi, sun);
     this.lights = { ambient, hemi, sun, rim };
+
+    // Visible sun mesh — reads the DirectionalLight's direction each frame so
+    // the rendered disc stays locked to the shadow source.
+    this.sun = new Sun(this.scene, sun);
   }
 
   #bindResize() {
@@ -200,7 +208,7 @@ export class App extends EventTarget {
     this.lights.sun.position.set(p.x + this.sunOffset.x, p.y + this.sunOffset.y, p.z + this.sunOffset.z);
     this.lights.sun.target.position.set(p.x, p.y, p.z);
     this.lights.sun.target.updateMatrixWorld();
-    this.world.sky.setSunDirection(this.sunOffset);
+    this.sun.update(this.camera);
 
     this.debug.tick();
     this.postfx.render(delta);
