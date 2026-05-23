@@ -41,10 +41,12 @@ export class Grass {
    */
   constructor(scene, wind, {
     color = '#5aa033',
-    bladeHeight = 0.45,
-    bladeWidth = 0.036,
-    density = 60000,
-    patchVariation = 0.5,
+    // Carpet-style meadow: short, dense, soft. Bruno-Simon reference — grass
+    // should read as a fuzzy ground texture, not individual spikes.
+    bladeHeight = 0.22,
+    bladeWidth = 0.05,
+    density = 110000,
+    patchVariation = 0.35,
   } = {}) {
     this.scene = scene;
     this.wind = wind;
@@ -69,6 +71,12 @@ export class Grass {
         uTileSize: { value: TILE_SIZE },
         uFieldRadius: { value: FIELD_RADIUS },
         uPatchVariation: { value: this.patchVariation },
+        uPlayerPos: { value: new THREE.Vector3(0, 0, 0) },
+        uPlayerRadius: { value: 0.75 },
+        // Max flatten amount: 1.0 = blade fully pressed flat, 0 = unaffected.
+        // No horizontal yank — pure in-place vertical compression. 0.55 keeps
+        // the trampled patch subtle (blades shorten, never fully press flat).
+        uPlayerPush: { value: 0.55 },
       },
     ]);
     // Wind uniforms spread by reference so Wind.update() propagates here —
@@ -104,8 +112,11 @@ export class Grass {
   }
 
   /** Update per-frame uniforms. Call after the player/camera tick. */
-  update(camera) {
+  update(camera, playerWorldPos) {
     this.material.uniforms.uCamCenter.value.set(camera.position.x, camera.position.z);
+    if (playerWorldPos) {
+      this.material.uniforms.uPlayerPos.value.copy(playerWorldPos);
+    }
   }
 
   /**
@@ -192,6 +203,9 @@ export class Grass {
       uniform float uTileSize;
       uniform float uFieldRadius;
       uniform float uPatchVariation;
+      uniform vec3  uPlayerPos;
+      uniform float uPlayerRadius;
+      uniform float uPlayerPush;
 
       varying float vTipBlend;
       varying float vSeed;
@@ -241,6 +255,20 @@ export class Grass {
         float groundY = terrainHeight(wrap);
         float baseY = groundY + 0.01;
 
+        // Player interaction: blades inside uPlayerRadius get vertically
+        // compressed in place — pressed flat, not yanked sideways. A small
+        // per-blade jitter offsets each blade's effective distance to the
+        // player so the flatten boundary breaks up the perfect circle and
+        // doesn't read as a starburst/sunburst pattern.
+        float distToPlayer = distance(wrap, uPlayerPos.xz);
+        float perBladeJitter = (seed - 0.5) * 0.25;
+        float adjustedDist = distToPlayer + perBladeJitter;
+        float flattenAmount = 1.0 - smoothstep(
+          uPlayerRadius * 0.4,
+          uPlayerRadius * 1.1,
+          adjustedDist
+        );
+
         vec3 wpos;
         if (aCorner < 0.5) {
           // base-left — anchored, no sway
@@ -267,6 +295,13 @@ export class Grass {
           float tipX = bladeH * sin(tiltZ);
           float tipZ = bladeH * sin(tiltX);
           float tipY = bladeH * cos(tiltX) * cos(tiltZ);
+
+          // Player press: compress the tip's upward growth in place. No
+          // horizontal yank — the blade stays anchored at its base and just
+          // gets shorter. uPlayerPush is the max flatten ratio (e.g. 0.85
+          // = tip rises only 15% of normal height when fully pressed).
+          float heightFactor = 1.0 - flattenAmount * uPlayerPush;
+          tipY *= heightFactor;
 
           // Sway scaled by blade height so taller blades lever more,
           // shorter blades barely move (matches how cantilevered grass behaves).

@@ -184,7 +184,7 @@ export class App extends EventTarget {
     this.playerCamera.update(delta);
     this.world.update(elapsed, this.camera, delta);
     this.wind.update(delta);
-    this.grass.update(this.camera);
+    this.grass.update(this.camera, this.player.position);
     if (this.interaction) this.interaction.tick(this.player.position);
     this.fireflies.update(elapsed);
     this.water.update(elapsed, delta, this.player.position);
