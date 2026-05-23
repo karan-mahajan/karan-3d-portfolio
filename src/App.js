@@ -72,7 +72,7 @@ export class App extends EventTarget {
   /** Loads characters / models; resolves to a summary the loader UI can use. */
   async boot() {
     await this.physics.init();
-    this.physics.addStaticGround(this.world.terrain.size);
+    this.physics.addStaticGround(this.world.terrain);
 
     this.player = new Player(
       this.scene,
@@ -87,6 +87,16 @@ export class App extends EventTarget {
       this.player.loadCharacter(),
       this.world.loadAssets(this.loader, this.physics),
     ]);
+
+    // Push path-tile XZ centres into the grass shader once after load —
+    // suppresses blades growing through tile faces. Static, so no per-frame
+    // update needed.
+    if (this.world.paths) {
+      this.grass.setPathExclusions(
+        this.world.paths.getTilePositions(),
+        this.world.paths.getTileCount(),
+      );
+    }
 
     this.interaction = new Interaction({
       scene: this.scene,

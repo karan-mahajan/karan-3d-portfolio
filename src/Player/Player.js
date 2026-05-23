@@ -124,7 +124,26 @@ export class Player {
 
     if (this.character) this.character.update(delta);
     this.playerCamera.follow(this.group.position);
+
+    this.#logFeetVsTerrain(delta);
     return sample;
+  }
+
+  // Sprint 9 investigation: is the player visually below the displaced terrain?
+  // Logs once per second (player_y, terrain_y_at_xz, delta). Static ground in
+  // Physics.js is a flat slab at y=0; terrain mesh has a sine-wave displacement
+  // that only kicks in past r≈22 from spawn, so a non-zero delta at distance is
+  // expected. Remove once the question is settled.
+  #logFeetVsTerrain(delta) {
+    this._debugAccum = (this._debugAccum || 0) + delta;
+    if (this._debugAccum < 1.0) return;
+    this._debugAccum = 0;
+    const { x, y, z } = this.group.position;
+    const ty = this.terrain ? this.terrain.heightAt(x, z) : 0;
+    const d = y - ty;
+    console.log(
+      `[Player] pos=(${x.toFixed(2)}, ${y.toFixed(3)}, ${z.toFixed(2)})  terrainY=${ty.toFixed(3)}  Δ=${d.toFixed(3)}m`,
+    );
   }
 
   /** Rapier path: capsule + character controller resolve movement against the world. */

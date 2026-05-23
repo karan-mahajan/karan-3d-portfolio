@@ -1,5 +1,6 @@
 import { Terrain } from './Terrain.js';
 import { Nature } from './Nature.js';
+import { Paths } from './Paths.js';
 import { Sky } from './Sky.js';
 import { Birds } from './Birds.js';
 import { Billboards, PROJECTS_CENTER } from '../Portfolio/Billboards.js';
@@ -27,6 +28,11 @@ export class World {
     this.billboards = new Billboards(this.scene, physics, loader);
     this.signs = new Signs(this.scene, physics);
     this.nature = new Nature(this.scene, loader, this.terrain, physics);
+
+    // Plan path tiles synchronously and register their no-spawn circles on
+    // Nature BEFORE its scatter runs. Actual tile GLBs load below.
+    this.paths = new Paths(this.scene, loader, this.terrain);
+    this.paths.addExclusionsTo(this.nature);
 
     // Per-prop exclusions so trees never spawn right on top of a sign.
     for (const item of this.billboards.items) {
@@ -61,6 +67,11 @@ export class World {
 
     const result = await this.nature.load();
 
+    const pathsResult = await this.paths.load().catch((err) => {
+      console.warn('[Paths] load failed', err);
+      return { placed: 0 };
+    });
+
     // Furniture loads after Nature so we know where the billboards are and
     // can register colliders alongside the rest of the world.
     this.furniture = new Furniture(this.scene, loader, physics, this.billboards);
@@ -78,6 +89,7 @@ export class World {
       billboards: this.billboards.items.length,
       experience: this.signs.experienceItems.length,
       furniture: furniturePlaced,
+      paths: pathsResult.placed,
     };
   }
 

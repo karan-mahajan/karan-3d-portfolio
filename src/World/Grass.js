@@ -27,6 +27,9 @@ import { DUSK } from './Palette.js';
 
 const FIELD_RADIUS = 40;
 const TILE_SIZE = FIELD_RADIUS * 2;
+// Must match `#define MAX_PATHS` in the vertex shader below. GLSL ES 1.00
+// requires a compile-time-constant for-loop bound, so this size is baked in.
+const MAX_PATHS = 96;
 
 export class Grass {
   /**
@@ -83,6 +86,14 @@ export class Grass {
     // overwrites the cloned slots from merge with the shared objects.
     Object.assign(uniforms, wind.uniforms);
 
+    // Path exclusion uniforms — owned by this instance so setPathExclusions
+    // can mutate the packed array in place and the GPU picks it up next frame.
+    // Defaults: zero positions, zero count → shader for-loop short-circuits.
+    this.pathPositions = new Float32Array(MAX_PATHS * 2);
+    uniforms.uPathPositions = { value: this.pathPositions };
+    uniforms.uPathCount = { value: 0 };
+    uniforms.uPathExclusionRadius = { value: 0.5 };
+
     this.material = new THREE.ShaderMaterial({
       vertexShader: this.#vertexShader(),
       fragmentShader: this.#fragmentShader(),
@@ -117,6 +128,22 @@ export class Grass {
     if (playerWorldPos) {
       this.material.uniforms.uPlayerPos.value.copy(playerWorldPos);
     }
+  }
+
+  /**
+   * Register tile positions whose footprints should suppress blade growth.
+   * Caller is expected to do this once at boot (positions don't move), not
+   * every frame. Excess entries beyond MAX_PATHS are silently dropped.
+   *
+   * @param {Float32Array} positions  packed [x0, z0, x1, z1, …]
+   * @param {number}       count      number of (x, z) pairs in `positions`
+   */
+  setPathExclusions(positions, count) {
+    const capped = Math.min(count | 0, MAX_PATHS);
+    const slice = positions.subarray(0, capped * 2);
+    this.pathPositions.set(slice);
+    this.pathPositions.fill(0, capped * 2);
+    this.material.uniforms.uPathCount.value = capped;
   }
 
   /**
@@ -207,6 +234,13 @@ export class Grass {
       uniform float uPlayerRadius;
       uniform float uPlayerPush;
 
+      // Path-tile flatten ring — vertex shader sums up the strongest flatten
+      // contribution across nearby tiles. MAX_PATHS must match Grass.js.
+      #define MAX_PATHS 96
+      uniform vec2  uPathPositions[MAX_PATHS];
+      uniform int   uPathCount;
+      uniform float uPathExclusionRadius;
+
       varying float vTipBlend;
       varying float vSeed;
       varying float vEdgeFade;
@@ -269,6 +303,20 @@ export class Grass {
           adjustedDist
         );
 
+        // Path-tile flatten: hard core inside r*0.6, soft fade out to r*1.2.
+        // Loop is bounded by the compile-time MAX_PATHS for GLSL ES 1.00
+        // compatibility; the runtime uPathCount short-circuits early.
+        float pathFlatten = 0.0;
+        for (int i = 0; i < MAX_PATHS; i++) {
+          if (i >= uPathCount) break;
+          vec2 pp = uPathPositions[i];
+          float d = distance(wrap, pp);
+          pathFlatten = max(
+            pathFlatten,
+            1.0 - smoothstep(uPathExclusionRadius * 0.6, uPathExclusionRadius * 1.2, d)
+          );
+        }
+
         vec3 wpos;
         if (aCorner < 0.5) {
           // base-left — anchored, no sway
@@ -300,7 +348,12 @@ export class Grass {
           // horizontal yank — the blade stays anchored at its base and just
           // gets shorter. uPlayerPush is the max flatten ratio (e.g. 0.85
           // = tip rises only 15% of normal height when fully pressed).
-          float heightFactor = 1.0 - flattenAmount * uPlayerPush;
+          // Path tiles use a stronger 0.95 ratio (near-full press) so blades
+          // don't grow through the tile face. max() lets either source drive
+          // the compression — player-flatten behaviour from Sprint 4 Part A
+          // is preserved unchanged when no tile is nearby.
+          float combinedShrink = max(flattenAmount * uPlayerPush, pathFlatten * 0.95);
+          float heightFactor = 1.0 - combinedShrink;
           tipY *= heightFactor;
 
           // Sway scaled by blade height so taller blades lever more,

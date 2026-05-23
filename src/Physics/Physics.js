@@ -59,11 +59,44 @@ export class Physics {
 
   // ── Static colliders ─────────────────────────────────────────────────────
 
-  addStaticGround(size = 200) {
+  /**
+   * Build the ground collider from the visual terrain's displacement. The
+   * collider is a Rapier heightfield sampled from `terrain.heightAt` at the
+   * same grid resolution the visual mesh uses, so the player walks on the
+   * exact surface the renderer draws. Previously this was a flat slab at
+   * y=0, which left the player's feet up to ±0.65m off from the visual
+   * surface past r≈22 from spawn.
+   *
+   * @param {{ size:number, segments:number, heightAt:(x:number,z:number)=>number }} terrain
+   */
+  addStaticGround(terrain) {
     const { RAPIER, world } = this;
-    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.25, 0);
+    const size = terrain.size;
+    // Per Rapier/parry: column index ↔ local X axis, row index ↔ local Z axis.
+    // ncols counts cells along X, nrows along Z. Heights matrix is column-major
+    // with (nrows+1) × (ncols+1) values: heights[col*(nrows+1) + row].
+    // Earlier I had rows↔X / cols↔Z and the heightfield rendered transposed,
+    // burying the player up to ~46cm at +X section endpoints.
+    const nrows = terrain.segments; // cells along Z
+    const ncols = terrain.segments; // cells along X
+    const rowVerts = nrows + 1;
+    const colVerts = ncols + 1;
+
+    const heights = new Float32Array(rowVerts * colVerts);
+    for (let ix = 0; ix < colVerts; ix++) {
+      const x = -size / 2 + (ix / ncols) * size;
+      for (let iz = 0; iz < rowVerts; iz++) {
+        const z = -size / 2 + (iz / nrows) * size;
+        heights[ix * rowVerts + iz] = terrain.heightAt(x, z);
+      }
+    }
+
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
     const body = world.createRigidBody(bodyDesc);
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(size / 2, 0.25, size / 2);
+    const colliderDesc = RAPIER.ColliderDesc.heightfield(
+      nrows, ncols, heights,
+      { x: size, y: 1, z: size },
+    );
     world.createCollider(colliderDesc, body);
     return body;
   }

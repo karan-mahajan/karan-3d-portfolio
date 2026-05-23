@@ -36,6 +36,7 @@ export class Terrain {
 
   constructor(scene, loader, { size = 200, segments = 96 } = {}) {
     this.size = size;
+    this.segments = segments;
 
     const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
     geometry.rotateX(-Math.PI / 2);
