@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { patchShadowTint } from './Palette.js';
 
 /**
  * Large walkable ground plane. The displaced geometry is unchanged from the
@@ -42,6 +43,9 @@ export class Terrain {
     geometry.computeVertexNormals();
 
     const material = this.#buildMaterial(loader);
+    // Tint shadowed ground toward magenta-purple rather than fading to black.
+    // patchShadowTint chains onto our existing onBeforeCompile.
+    patchShadowTint(material);
 
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.receiveShadow = true;

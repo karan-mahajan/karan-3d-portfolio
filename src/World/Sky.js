@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { DUSK } from './Palette.js';
 
 const vert = /* glsl */ `
   varying vec3 vWorldDir;
@@ -54,11 +55,11 @@ export class Sky {
       side: THREE.BackSide,
       depthWrite: false,
       uniforms: {
-        uTop: { value: new THREE.Color('#6e95c7') },
-        uHorizon: { value: new THREE.Color('#ffb084') },
-        uGround: { value: new THREE.Color('#4a3528') },
+        uTop: { value: new THREE.Color(DUSK.skyTop) },
+        uHorizon: { value: new THREE.Color(DUSK.skyHorizon) },
+        uGround: { value: new THREE.Color(DUSK.skyGround) },
         uSunDir: { value: new THREE.Vector3(0.6, 0.45, 0.5).normalize() },
-        uSunColor: { value: new THREE.Color('#ffd58a') },
+        uSunColor: { value: new THREE.Color(DUSK.sunColor) },
       },
     });
 

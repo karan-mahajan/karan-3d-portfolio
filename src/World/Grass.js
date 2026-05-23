@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Wind } from './Wind.js';
+import { DUSK } from './Palette.js';
 
 /**
  * Shader-driven blade field.
@@ -53,6 +54,27 @@ export class Grass {
     this.patchVariation = patchVariation;
 
     this.geometry = this.#buildGeometry();
+
+    // UniformsUtils.merge deep-clones so the lights container is per-material;
+    // three.js's renderer fills directionalShadowMap / directionalShadowMatrix
+    // / directionalLightShadows on it every frame because `lights: true`.
+    const uniforms = THREE.UniformsUtils.merge([
+      THREE.UniformsLib.lights,
+      THREE.UniformsLib.fog,
+      {
+        uBaseColor: { value: new THREE.Color(color) },
+        uShadowTint: { value: new THREE.Color(DUSK.shadowTint) },
+        uShadowTintStrength: { value: 0.75 },
+        uCamCenter: { value: new THREE.Vector2(0, 0) },
+        uTileSize: { value: TILE_SIZE },
+        uFieldRadius: { value: FIELD_RADIUS },
+        uPatchVariation: { value: this.patchVariation },
+      },
+    ]);
+    // Wind uniforms spread by reference so Wind.update() propagates here —
+    // overwrites the cloned slots from merge with the shared objects.
+    Object.assign(uniforms, wind.uniforms);
+
     this.material = new THREE.ShaderMaterial({
       vertexShader: this.#vertexShader(),
       fragmentShader: this.#fragmentShader(),
@@ -65,22 +87,17 @@ export class Grass {
       depthWrite: true,
       alphaTest: 0,
       fog: true,
-      uniforms: {
-        // Fog uniforms must be cloned — three.js mutates them per-material
-        // each frame from scene.fog.
-        ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
-        // Wind uniforms spread by reference so Wind.update() propagates here.
-        ...wind.uniforms,
-        uBaseColor: { value: new THREE.Color(color) },
-        uCamCenter: { value: new THREE.Vector2(0, 0) },
-        uTileSize: { value: TILE_SIZE },
-        uFieldRadius: { value: FIELD_RADIUS },
-        uPatchVariation: { value: this.patchVariation },
-      },
+      // Required for three.js to inject NUM_DIR_LIGHT_SHADOWS / USE_SHADOWMAP
+      // defines and to keep the lights uniforms updated per frame.
+      lights: true,
+      uniforms,
     });
 
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
+    // Receive sun shadows so blade tips/bases pick up the same magenta tint
+    // the rest of the scene gets from patchShadowTint.
+    this.mesh.receiveShadow = true;
     this.mesh.name = 'grass-shader';
     this.mesh.renderOrder = 0;
     scene.add(this.mesh);
@@ -164,6 +181,7 @@ export class Grass {
     return /* glsl */ `
       #include <common>
       #include <fog_pars_vertex>
+      #include <shadowmap_pars_vertex>
 
       attribute vec2 aBladeCenter;
       attribute vec3 aBladeData;
@@ -263,9 +281,15 @@ export class Grass {
         vEdgeFade = 1.0 - smoothstep(uFieldRadius * 0.78, uFieldRadius, toBladeLen);
         vSeed = seed;
 
-        vec4 mvPosition = viewMatrix * vec4(wpos, 1.0);
+        // worldPosition is required by <shadowmap_vertex>. HAS_NORMAL is not
+        // defined on this material so the chunk's shadowNormalBias fallback
+        // (vec3(0)) is used — acceptable since blades are sub-cm thin and
+        // the sun's normalBias on the directional already covers acne.
+        vec4 worldPosition = vec4(wpos, 1.0);
+        vec4 mvPosition = viewMatrix * worldPosition;
         gl_Position = projectionMatrix * mvPosition;
 
+        #include <shadowmap_vertex>
         #include <fog_vertex>
       }
     `;
@@ -275,8 +299,11 @@ export class Grass {
     return /* glsl */ `
       #include <common>
       #include <fog_pars_fragment>
+      #include <shadowmap_pars_fragment>
 
       uniform vec3 uBaseColor;
+      uniform vec3 uShadowTint;
+      uniform float uShadowTintStrength;
 
       varying float vTipBlend;
       varying float vSeed;
@@ -290,6 +317,32 @@ export class Grass {
         vec3 color = uBaseColor * aoMix;
         // Per-blade tone jitter so the field isn't a flat sheet of one color.
         color *= 0.88 + vSeed * 0.22;
+
+        // Real shadow receive — averaged across all directional shadow maps
+        // (in practice this scene has exactly one: the sun). Mix toward
+        // baseColor*shadowTint so blades inside a tree's shadow turn warm
+        // magenta-purple instead of going flat dark.
+        #if defined( USE_SHADOWMAP ) && ( NUM_DIR_LIGHT_SHADOWS > 0 )
+          float _stintSum = 0.0;
+          DirectionalLightShadow _stintDls;
+          #pragma unroll_loop_start
+          for ( int i = 0; i < NUM_DIR_LIGHT_SHADOWS; i ++ ) {
+            _stintDls = directionalLightShadows[ i ];
+            _stintSum += getShadow(
+              directionalShadowMap[ i ],
+              _stintDls.shadowMapSize,
+              _stintDls.shadowIntensity,
+              _stintDls.shadowBias,
+              _stintDls.shadowRadius,
+              vDirectionalShadowCoord[ i ]
+            );
+          }
+          #pragma unroll_loop_end
+          float _stintMask = _stintSum / float( NUM_DIR_LIGHT_SHADOWS );
+          float _stintAmt = clamp( 1.0 - _stintMask, 0.0, 1.0 );
+          vec3 _stintTarget = uBaseColor * uShadowTint;
+          color = mix( color, _stintTarget, _stintAmt * uShadowTintStrength );
+        #endif
 
         gl_FragColor = vec4(color, 1.0);
 

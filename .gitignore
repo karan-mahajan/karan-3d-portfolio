@@ -13,3 +13,7 @@ thumbs.db
 # Working dropboxes — raw uploads before they get processed/placed
 /Extra/
 /static/models/wildlife/incoming/
+
+# Verification screenshots — output of .verify-*.mjs harness scripts.
+# The scripts themselves are tracked; the shots they produce are not.
+/.verify-shots/

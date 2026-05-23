@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { patchShadowTint } from './Palette.js';
 
 /**
  * Nature props with material overrides + per-instance color variation.
@@ -248,6 +249,11 @@ export class Nature {
           }
         }
       }
+
+      // Tint shadowed sides toward magenta-purple instead of going black.
+      // MeshStandardMaterial only — KayKit packs ship Standard so this is safe,
+      // but guard in case a future model brings a different material type.
+      if (material.isMeshStandardMaterial) patchShadowTint(material);
 
       const actualCount = instanceTransforms.length;
       const inst = new THREE.InstancedMesh(proto.geometry, material, actualCount);

@@ -3,6 +3,7 @@ import { Sizes } from './Utils/Sizes.js';
 import { Debug } from './Utils/Debug.js';
 import { Loader } from './Utils/Loader.js';
 import { World } from './World/World.js';
+import { DUSK } from './World/Palette.js';
 import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Player } from './Player/Player.js';
@@ -120,7 +121,8 @@ export class App extends EventTarget {
     this.scene.background = null;
     // Fog tinted to the warm horizon, pushed farther so it doesn't smother
     // the world in orange. Trees fade subtly, sky still reads as sky.
-    this.scene.fog = new THREE.Fog('#ffb084', 65, 165);
+    // DUSK.fogColor === DUSK.skyHorizon — see Palette.js.
+    this.scene.fog = new THREE.Fog(DUSK.fogColor, 65, 165);
   }
 
   #initCamera() {
@@ -134,9 +136,9 @@ export class App extends EventTarget {
 
   /** Warm sunset rig — directional sun + warm ambient + hemisphere fill. */
   #initLighting() {
-    const ambient = new THREE.AmbientLight('#ffb088', 0.45);
-    const hemi = new THREE.HemisphereLight('#a8c4ff', '#d4845a', 0.55);
-    const sun = new THREE.DirectionalLight('#ffd28a', 2.4);
+    const ambient = new THREE.AmbientLight(DUSK.ambientColor, 0.45);
+    const hemi = new THREE.HemisphereLight(DUSK.hemiSky, DUSK.hemiGround, 0.55);
+    const sun = new THREE.DirectionalLight(DUSK.sunColor, 2.4);
     this.sunOffset = new THREE.Vector3(36, 28, 22);
     sun.position.copy(this.sunOffset);
     sun.target.position.set(0, 0, 0);
@@ -154,7 +156,7 @@ export class App extends EventTarget {
     sun.shadow.radius = 4;
 
     // Soft warm rim from the opposite side so trees aren't black silhouettes.
-    const rim = new THREE.DirectionalLight('#ff6b3d', 0.45);
+    const rim = new THREE.DirectionalLight('#ff6b3d', 0.5);
     rim.position.set(-30, 12, -20);
     rim.target.position.set(0, 0, 0);
     this.scene.add(rim.target, rim);
