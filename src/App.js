@@ -78,6 +78,9 @@ export class App extends EventTarget {
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes);
 
     this.audio = new AudioManager();
+    // Rain's toggle button (built in its own constructor) plays a toggle
+    // click when flipped — needs audio after construction, hence late-bind.
+    if (this.rain) this.rain.audio = this.audio;
 
     // Day / night cycle. Built now so it can drive lights + sky immediately
     // — billboards / signs are still loading at this point, so the lanterns
@@ -112,6 +115,7 @@ export class App extends EventTarget {
     const btn = document.getElementById('tod-toggle');
     if (!btn) return;
     btn.addEventListener('click', () => {
+      this.audio?.playToggle();
       this.timeOfDay.toggle();
       this.#syncTimeOfDayButton();
     });
@@ -183,6 +187,11 @@ export class App extends EventTarget {
     this.audio.onStep = (odd) => {
       this.footprints.onStep(this.player.position, this.player.group.rotation.y, !odd);
     };
+    // Cache path arrays once for #surfaceAt() — picking grass/stone/sand
+    // per-frame for footstep audio + landing.
+    this._pathPositions = this.world.paths?.getTilePositions() ?? new Float32Array(0);
+    this._pathCount = this.world.paths?.getTileCount() ?? 0;
+    this._pathRadius2 = 1.4 * 1.4;
 
     // Build the grass field now that paths, water, and trees are placed —
     // tufts filter against those exclusions at load time. Trees' positions
@@ -375,16 +384,31 @@ export class App extends EventTarget {
     this.leaves.update(delta, this.player.position);
     const _grounded = this.player._grounded !== false;
     this.footprints.update(delta);
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const surface = this.#surfaceAt(px, pz);
     this.audio?.tick(delta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,
       grounded: _grounded, // default to true so we don't false-trigger on first frame
+      surface,
+      rainOn: !!this.rain?.enabled,
     });
+    // Landing one-shot — pick the right surface sample.
+    if (this.audio && this._wasGroundedApp === false && _grounded === true) {
+      this.audio.playLand(surface);
+    }
+    this._wasGroundedApp = _grounded;
+    // Keep ambient bed in sync with day/night flips. Only push on change so
+    // ad-hoc `audio.setMode(...)` calls (probes, debug) aren't stomped each
+    // frame.
+    if (this.audio && this.timeOfDay && this._lastAudioMode !== this.timeOfDay.mode) {
+      this._lastAudioMode = this.timeOfDay.mode;
+      this.audio.setMode(this.timeOfDay.mode);
+    }
     // Ocean ambience volume rides player proximity to the shoreline. Inside
     // the island it falls off with distance; in the water it's at full level.
     if (this.audio && this.water) {
-      const px = this.player.position.x;
-      const pz = this.player.position.z;
       this.audio.setOceanProximity(Math.hypot(px, pz), this.water.islandRadius);
     }
 
@@ -409,4 +433,25 @@ export class App extends EventTarget {
     this.postfx.render(delta);
     requestAnimationFrame(this.#tick);
   };
+
+  /** Pick the surface category at (x, z) for footstep + landing audio.
+   *  Mirrors the same rules Footprints uses for its surface guard:
+   *  in water → 'water'; r ≥ 38 → 'sand' (shore); within radius of a path
+   *  tile → 'stone'; otherwise grass. Cheap O(N) over path positions, but
+   *  N is small (~tens) and only runs once per frame. */
+  #surfaceAt(x, z) {
+    if (this.water?.playerOverWater?.(x, z)) return 'water';
+    if ((x * x + z * z) >= 38 * 38) return 'sand';
+    const pos = this._pathPositions;
+    const n = this._pathCount;
+    const r2 = this._pathRadius2;
+    if (pos && n > 0 && r2 > 0) {
+      for (let i = 0; i < n; i++) {
+        const dx = x - pos[i * 2];
+        const dz = z - pos[i * 2 + 1];
+        if (dx * dx + dz * dz < r2) return 'stone';
+      }
+    }
+    return 'grass';
+  }
 }

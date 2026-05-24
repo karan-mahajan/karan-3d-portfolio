@@ -23,3 +23,7 @@ thumbs.db
 # Ad-hoc perf probe — playwright-driven scene measurement, regenerated
 # as needed during optimization passes.
 /perf-probe.mjs
+
+# Raw audio sources before MP3 conversion. Kept locally so the conversion
+# can be re-run if MP3s need to be regenerated; never shipped.
+/.audio-originals/

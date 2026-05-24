@@ -118,6 +118,7 @@ export class ActionPrompts {
     this.oneShotActive = null;
     this.globalPushActive = false;
     this.pushStartSec = 0;
+    this.pushStartMs = 0;
     this.activePushSpot = null;
     this._elapsed = 0;
 
@@ -283,13 +284,14 @@ export class ActionPrompts {
         if (this.player.startLoopAction('push')) {
           this.globalPushActive = true;
           this.pushStartSec = this._elapsed;
+          this.pushStartMs = performance.now();
           const type = (this.currentPushSpot && this.currentPushSpot.type) || 'generic';
           const pool = PUSH_JOKES[type] || PUSH_JOKES.generic;
           this._pushJokeDeck = shuffleCopy(pool);
           this._activeJokeText = null;
           this.controller.paused = true;
           if (this.playerCamera) this.playerCamera.applyActionZoom();
-          if (this.audio) this.audio.playInteract();
+          if (this.audio) this.audio.startPush();
         } else {
           this.activePushSpot = null;
         }
@@ -360,6 +362,11 @@ export class ActionPrompts {
     const duration = (clip && clip.duration) || 2.0;
     if (!this.player.performAction(actionName, { interruptible: false, then: 'idle' })) return;
     this.controller.paused = true;
+    // Backflip / cartwheel get the whoosh sample; other future global
+    // actions stay silent unless they get their own audio hook.
+    if ((actionName === 'backflip' || actionName === 'cartwheel') && this.audio) {
+      this.audio.playFlip();
+    }
     this.oneShotActive = { trigger: { id: 'global-' + actionName }, untilSec: this._elapsed + duration + 0.1 };
     if (this.playerCamera) this.playerCamera.applyActionZoom();
     if (this.audio) this.audio.playInteract();
@@ -421,12 +428,14 @@ export class ActionPrompts {
   _endGlobalPush() {
     this.globalPushActive = false;
     this.pushStartSec = 0;
+    this.pushStartMs = 0;
     this.activePushSpot = null;
     this._pushJokeDeck = [];
     this._activeJokeText = null;
     this.player.stopLoopAction();
     this.controller.paused = false;
     if (this.playerCamera) this.playerCamera.releaseActionZoom();
+    if (this.audio) this.audio.endPush();
     this._hidePushJoke();
   }
 
@@ -509,7 +518,7 @@ export class ActionPrompts {
 
     if (this.globalPushActive) {
       this._hidePushHint();
-      const heldFor = this._elapsed - this.pushStartSec;
+      const heldFor = this.pushStartMs ? (performance.now() - this.pushStartMs) / 1000 : this._elapsed - this.pushStartSec;
       if (this.activePushSpot) this._snapToPushDistance(this.activePushSpot, heldFor);
       if (heldFor > PUSH_JOKE_DELAY) {
         const slot = Math.floor((heldFor - PUSH_JOKE_DELAY) / PUSH_JOKE_INTERVAL);

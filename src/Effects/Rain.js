@@ -225,7 +225,10 @@ export class Rain {
     localStorage.setItem(STORAGE_KEY, value ? '0' : '1');
     this.#updateButton();
   }
-  toggle() { this.setEnabled(!this.enabled); }
+  toggle() {
+    this.audio?.playToggle();
+    this.setEnabled(!this.enabled);
+  }
 
   #installButton() {
     const btn = document.createElement('button');

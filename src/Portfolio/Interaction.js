@@ -179,7 +179,7 @@ export class Interaction {
     if (!item) return;
     this.activeIndex = index;
     this.#hidePrompt();
-    this.audio?.playInteract();
+    this.audio?.playMenuOpen();
 
     this.controller.paused = true;
     this.playerCamera.locked = true;
@@ -212,6 +212,7 @@ export class Interaction {
     if (this.activeIndex === -1) return;
     this.activeIndex = -1;
     this.panelEl.classList.add('hidden');
+    this.audio?.playMenuClose();
     this.zooming = true;
 
     // Tween position back to the stashed return state and ease the look-target
@@ -279,7 +280,7 @@ export class Interaction {
     if (this.contactOpen) return;
     this.contactOpen = true;
     this.#hidePrompt();
-    this.audio?.playInteract();
+    this.audio?.playMenuOpen();
     this.controller.paused = true;
     this.contactEl.classList.remove('hidden');
   }
@@ -287,6 +288,7 @@ export class Interaction {
   closeContact() {
     if (!this.contactOpen) return;
     this.contactOpen = false;
+    this.audio?.playMenuClose();
     this.controller.paused = false;
     this.contactEl.classList.add('hidden');
   }

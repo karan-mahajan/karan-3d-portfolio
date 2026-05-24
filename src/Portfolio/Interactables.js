@@ -208,9 +208,11 @@ export class Interactables {
       stanceAction: 'fightStance',
       onActivate: () => {
         // Swing the bag when the punch fires (not the stance). Use the
-        // player's current facing yaw.
+        // player's current facing yaw. Audio fires on the same frame so the
+        // thud lands with the visible impact.
         const yaw = this.prompts.player.group.rotation.y;
         bag.swing(yaw);
+        this.prompts.audio?.playPunch();
       },
     });
   }
@@ -336,8 +338,12 @@ export class Interactables {
       action: 'kickFootball',
       onActivate: () => {
         // Delay the kick slightly so impact lines up with the foot swing.
+        // Audio fires on the same beat as the physics impulse.
         const yaw = this.prompts.player.group.rotation.y;
-        setTimeout(() => football.kick(yaw), 350);
+        setTimeout(() => {
+          football.kick(yaw);
+          this.prompts.audio?.playKick();
+        }, 350);
       },
     });
   }

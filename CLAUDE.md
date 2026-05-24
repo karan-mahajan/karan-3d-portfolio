@@ -63,6 +63,15 @@ this is wrong: player's feet sink into the visible mesh, or player stands
 **centre** (no internal lift). For a mesh whose origin is at the bbox bottom,
 pass `bottom + hy`; for a measured bbox, pass `(box.min.y + box.max.y) / 2`.
 
+### 6. Don't search `node_modules/` for user-referenced files
+When the user says "I placed X" or "find the Y file", search only project
+source: `src/`, `static/`, `index.html`, `package.json`, and other repo-root
+files. Never grep/find/glob into `node_modules/`, `dist/`, or `.verify/` to
+locate something the user gave you — those are dependency / build / sandbox
+trees and the matches are noise. `node_modules/` is fair game **only** when
+debugging a dependency's behavior (reading a lib's source for a bug), never
+for locating user-supplied files.
+
 ## Stack
 
 - **three@0.184** — renderer, scene, lights, materials
@@ -187,13 +196,11 @@ The canonical driver to copy from is [.verify/scripts/verify-walk.mjs](.verify/s
 ## Known parked work (don't surprise the user with rewrites)
 
 - **Push interaction is intentionally a comedy gag** — trees, rocks, signs,
-  billboards, and the spawn compass are all push spots so
-  [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a joke pool
-  ("Bark stronger than your shoulder", "404: motion not found", etc). The
-  real pushable interactions are the crate and bag. Lying-down props (logs,
-  stumps — `kind: 'log'`) are excluded because the standing arms-forward
-  push animation doesn't match horizontal targets. Do NOT "fix" the gag
-  without confirmation.
+  billboards, and the spawn compass are push spots so
+  [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a joke pool.
+  Real pushables are the crate and bag. Lying-down props (`kind: 'log'`) are
+  excluded — the standing push animation doesn't match horizontal targets.
+  Do NOT "fix" the gag without confirmation.
 - **B (backflip) / C (cartwheel)** don't currently raycast for clearance —
   flag if you add similar global animations.
 - **Minimap + click-to-teleport** — see auto-memory `project_minimap_teleport.md`.
