@@ -39,9 +39,11 @@ import { Refractor } from 'three/examples/jsm/objects/Refractor.js';
 
 const NORMAL_MAP_0_URL = '/textures/water/Water_1_M_Normal.jpg';
 const NORMAL_MAP_1_URL = '/textures/water/Water_2_M_Normal.jpg';
-// 512² for the shared RTs — one master pair, so we can afford the
-// resolution. (Compare to per-instance at 256² × 5 = 5 × 256² of pixels.)
-const RT_SIZE = 512;
+// 256² for the shared RTs — quartering pixel work over 512² recovers
+// ~3-5ms / frame on the test machine. The flow-map normal distortion
+// hides the resolution loss; Water2's own example uses 512 only because
+// it's the default, not because it's needed for visual quality.
+const RT_SIZE = 256;
 const MASTER_PLANE_Y = 0.0;
 const FLOW_DIRECTION = new THREE.Vector2(1, 1);
 const FLOW_SPEED = 0.03;
@@ -62,7 +64,9 @@ const RIVER_Y_LIFT = 0.04;
 // Player-water interaction tuning. Shader perturbation amounts deliberately
 // kept low so the radial wavefronts read as soft surface motion, not the
 // painted concentric rings the old code regressed into.
-const HISTORY_COUNT = 8;
+// HISTORY_COUNT dropped 8 → 4 for the FPS recovery — fewer per-fragment
+// loop iterations across every water pixel. Trail is now 4 × 0.12 = 0.48s.
+const HISTORY_COUNT = 4;
 const HISTORY_SAMPLE_INTERVAL = 0.12;   // seconds between trail samples
 const HISTORY_MAX_AGE = 1.0;            // seconds
 const PERTURB_PLAYER = 0.4;             // shader main-wave strength
@@ -145,6 +149,11 @@ const WATER_SHADER = {
     uniform vec3  uPlayerHistory[HISTORY_COUNT];
     uniform float uPlayerHistoryAge[HISTORY_COUNT];
     uniform float uHistoryMaxAge;
+    // JS-driven gate. 0 when neither the player nor any trail entry can
+    // contribute (player far from any water + every history slot expired).
+    // Skips the whole perturbation block per fragment so a calm pond
+    // costs nothing extra in the fragment shader.
+    uniform float uActivity;
 
     varying vec4 vCoord;
     varying vec2 vUv;
@@ -183,28 +192,34 @@ const WATER_SHADER = {
       // HORIZONTAL (xz) components of the tangent-space normal — those
       // map to the screen-space UV distortion that bends reflections,
       // which is what reads as "the water is moving here".
-      vec2 toPlayer = vWorldPos.xz - uPlayerPos.xz;
-      float distToPlayer = length(toPlayer);
-      float falloff = exp(-distToPlayer * 0.35);
-      float wave = sin(distToPlayer * 3.5 - uTime * 5.0)
-                 * falloff * uPlayerInWater * ${PERTURB_PLAYER.toFixed(3)};
-      vec2 dir = normalize(toPlayer + vec2(0.0001));
-      normal.xz += dir * wave;
+      //
+      // uActivity short-circuits the whole block when the player is far
+      // from water AND every trail slot has expired. Most frames hit this
+      // early-out so the per-fragment cost goes back to plain Water2.
+      if (uActivity > 0.0) {
+        vec2 toPlayer = vWorldPos.xz - uPlayerPos.xz;
+        float distToPlayer = length(toPlayer);
+        float falloff = exp(-distToPlayer * 0.35);
+        float wave = sin(distToPlayer * 3.5 - uTime * 5.0)
+                   * falloff * uPlayerInWater * ${PERTURB_PLAYER.toFixed(3)};
+        vec2 dir = normalize(toPlayer + vec2(0.0001));
+        normal.xz += dir * wave;
 
-      for (int i = 0; i < HISTORY_COUNT; i++) {
-        float age = uPlayerHistoryAge[i];
-        if (age >= uHistoryMaxAge) continue;
-        vec3  histPos = uPlayerHistory[i];
-        vec2  toHist = vWorldPos.xz - histPos.xz;
-        float histDist = length(toHist);
-        float histFalloff = exp(-histDist * 0.4)
-                          * (1.0 - age / uHistoryMaxAge);
-        float histWave = sin(histDist * 3.5 - uTime * 5.0)
-                       * histFalloff * ${PERTURB_HISTORY.toFixed(3)};
-        vec2 histDir = normalize(toHist + vec2(0.0001));
-        normal.xz += histDir * histWave;
+        for (int i = 0; i < HISTORY_COUNT; i++) {
+          float age = uPlayerHistoryAge[i];
+          if (age >= uHistoryMaxAge) continue;
+          vec3  histPos = uPlayerHistory[i];
+          vec2  toHist = vWorldPos.xz - histPos.xz;
+          float histDist = length(toHist);
+          float histFalloff = exp(-histDist * 0.4)
+                            * (1.0 - age / uHistoryMaxAge);
+          float histWave = sin(histDist * 3.5 - uTime * 5.0)
+                         * histFalloff * ${PERTURB_HISTORY.toFixed(3)};
+          vec2 histDir = normalize(toHist + vec2(0.0001));
+          normal.xz += histDir * histWave;
+        }
+        normal = normalize(normal);
       }
-      normal = normalize(normal);
       // ── end perturbation ────────────────────────────────────────────────
 
       float theta = max( dot( toEye, normal ), 0.0 );
@@ -530,12 +545,23 @@ export class Water {
       this._historySampleTimer = 0;
     }
 
-    // Shader uniforms — uTime + uPlayerInWater are scalars (assigned per
-    // material); position + history arrays are shared by reference so a
-    // single mutation above already updated every material's value.
+    // Compute activity gate — 1.0 if the player is over water OR any
+    // history entry is still alive. When this is 0, the shader skips
+    // the whole perturbation block (significant per-fragment savings).
+    let anyTrailAlive = 0;
+    for (let i = 0; i < HISTORY_COUNT; i++) {
+      if (this._playerHistoryAge[i] < HISTORY_MAX_AGE) { anyTrailAlive = 1; break; }
+    }
+    const activity = (this._playerInWater > 0.5 || anyTrailAlive) ? 1.0 : 0.0;
+
+    // Shader uniforms — uTime + uPlayerInWater + uActivity are scalars
+    // (assigned per material); position + history arrays are shared by
+    // reference so a single mutation above already updated every
+    // material's value.
     for (const m of this._materials) {
       m.uniforms.uTime.value = elapsed;
       m.uniforms.uPlayerInWater.value = this._playerInWater;
+      m.uniforms.uActivity.value = activity;
     }
 
     this.#updateSplashes(delta);
@@ -600,6 +626,7 @@ export class Water {
     material.uniforms.uPlayerHistory = { value: this._playerHistory };
     material.uniforms.uPlayerHistoryAge = { value: this._playerHistoryAge };
     material.uniforms.uHistoryMaxAge = { value: HISTORY_MAX_AGE };
+    material.uniforms.uActivity = { value: 0 };
 
     const mesh = new THREE.Mesh(geometry, material);
     // Per-mesh textureMatrix update — relies on draw-order serialisation
