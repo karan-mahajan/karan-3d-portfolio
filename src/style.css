@@ -712,6 +712,21 @@ body[data-tod="night"] .leaves-toggle {
   color: #cfe0ff;
 }
 
+/* While the loading + welcome overlays are up (body.booting), hide every
+ * corner toggle (day/night, audio, rain, wind, leaves, lightning). They get
+ * appended to the DOM during App boot, before the journey starts, and would
+ * otherwise peek out from under the overlays. main.js strips `booting` from
+ * <body> at the same moment it reveals #controls-hud. !important is needed
+ * because #lightning-trigger uses inline display:flex. */
+body.booting #tod-toggle,
+body.booting .audio-toggle,
+body.booting .rain-toggle,
+body.booting .wind-toggle,
+body.booting .leaves-toggle,
+body.booting #lightning-trigger {
+  display: none !important;
+}
+
 /* ─────────────── Day / night toggle ─────────────── */
 #tod-toggle {
   position: fixed;

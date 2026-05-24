@@ -37,14 +37,17 @@ const FOOTSTEP_INTERVAL_WALK = 0.42;
 const FOOTSTEP_INTERVAL_RUN = 0.28;
 
 // Layered ambient volumes — kept low because they all stack. Background
-// beds (day/night/birds/wind/water/rain) trimmed three times on user
-// feedback (2026-05-24): −10%, then −12%, then another −18% after the
-// stack was still washing out the thunder + foreground SFX.
+// beds (day/night/birds/wind/water/rain) trimmed four times on user
+// feedback (2026-05-24): −10%, then −12%, then −18%, then a −50% pass
+// on the pure background beds only (day/night/birds/wind/rain),
+// followed by a +10% nudge back up after the −50% sat a touch too quiet.
+// Proximity-gated water + foreground SFX (thunder, steps, jumps,
+// push/kick/punch, UI) were left untouched throughout.
 const VOL = {
-  ambientDay: 0.273,
-  ambientNight: 0.358,
-  birdsDay: 0.207,
-  windTrees: 0.182,
+  ambientDay: 0.151,
+  ambientNight: 0.197,
+  birdsDay: 0.114,
+  windTrees: 0.100,
   waterWavesMax: 0.369,
   waterWavesFalloffM: 18,
   oceanAtShore: 0.262,
@@ -69,10 +72,10 @@ const VOL = {
   kick: 0.9,
   punchBag: 0.75,
   flip: 0.55,
-  rainAmbient: 0.45,
+  rainAmbient: 0.248,
   // Rain-on-water layer is gated by player water-proximity (see
   // setOceanProximity) and only audible while rain is on.
-  rainWaterMax: 0.55,
+  rainWaterMax: 0.303,
   // Per-step footstep volume (multiplied by per-surface trim below).
   footstep: 0.45,
   footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95 },

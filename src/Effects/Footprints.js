@@ -93,7 +93,11 @@ export class Footprints {
       transparent: true,
       opacity: 1.0,
       depthWrite: false,
-      depthTest: false,
+      // depthTest stays ON so prints behind the player are occluded — with
+      // it off, renderOrder=4 paints them over the character regardless of
+      // geometry. depthWrite stays off so prints don't shadow other
+      // transparents (grass, water foam) sorted behind them.
+      depthTest: true,
       side: THREE.DoubleSide,
       alphaTest: 0.04,
       // toneMapped off — ACES otherwise brightens the dark brown into a

@@ -83,6 +83,7 @@ async function bootstrap() {
     sessionStorage.setItem(STARTED_KEY, '1');
     welcomeScreen?.classList.add('hidden');
     controlsHud?.classList.remove('hidden');
+    document.body.classList.remove('booting');
     if (app.player?.controller) app.player.controller.paused = false;
     app.audio?.start();
     window.removeEventListener('keydown', onKeyStart);
@@ -96,6 +97,7 @@ async function bootstrap() {
     setTimeout(() => {
       loadingScreen?.classList.add('hidden');
       controlsHud?.classList.remove('hidden');
+      document.body.classList.remove('booting');
       if (app.player?.controller) app.player.controller.paused = false;
       started = true;
       // Need a user gesture to autoplay; first click anywhere triggers ambient.
