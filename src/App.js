@@ -21,7 +21,7 @@ import { Fireflies } from './Effects/Fireflies.js';
 import { Rain } from './Effects/Rain.js';
 import { WindLines } from './Effects/WindLines.js';
 import { Leaves } from './Effects/Leaves.js';
-import { Dust } from './Effects/Dust.js';
+import { Footprints } from './Effects/Footprints.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 
@@ -68,7 +68,11 @@ export class App extends EventTarget {
     this.rain = new Rain(this.scene, this.camera);
     this.windLines = new WindLines(this.scene, this.wind);
     this.leaves = new Leaves(this.scene, this.wind, this.world.terrain);
-    this.dust = new Dust(this.scene, this.world.terrain, null);
+    // Footprints — persistent flat decals dropped on each footstep. Cadence
+    // is driven by AudioManager.onStep (set up after boot) so visual prints
+    // and audio steps stay aligned. Path tile positions are plumbed in
+    // post-boot once World.paths exists.
+    this.footprints = new Footprints(this.scene, this.world.terrain);
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes);
@@ -166,8 +170,19 @@ export class App extends EventTarget {
       // Give Water a handle on AudioManager so wading triggers WAV splashes
       // (entry one-shot + per-step variant). See Water.update.
       this.water.audio = this.audio;
-      this.dust.setWater(this.water);
     }
+
+    // Wire footprints: path positions for surface-guard, and the audio step
+    // callback so prints drop at the exact moment a step would sound. Read
+    // the player's world yaw from group.rotation.y at step time.
+    this.footprints.setPaths({
+      pathPositions: this.world.paths?.getTilePositions() ?? new Float32Array(0),
+      pathCount: this.world.paths?.getTileCount() ?? 0,
+      pathRadius: 1.4,
+    });
+    this.audio.onStep = (odd) => {
+      this.footprints.onStep(this.player.position, this.player.group.rotation.y, !odd);
+    };
 
     // Build the grass field now that paths, water, and trees are placed —
     // tufts filter against those exclusions at load time. Trees' positions
@@ -359,7 +374,7 @@ export class App extends EventTarget {
     this.windLines.update(delta, this.player.position);
     this.leaves.update(delta, this.player.position);
     const _grounded = this.player._grounded !== false;
-    this.dust.update(delta, this.player.position, sample, _grounded);
+    this.footprints.update(delta);
     this.audio?.tick(delta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,

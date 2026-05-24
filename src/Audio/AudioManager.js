@@ -47,8 +47,17 @@ export class AudioManager {
     this.muted = localStorage.getItem(STORAGE_KEY) === '1';
     this._stepTimer = 0;
     this._stepOdd = false;
+    this._wasStepping = false;
     this._wasGrounded = true;
     this._birdTimer = randIn(BIRD_INTERVAL_RANGE);
+    /**
+     * Optional callback fired once per step at the same instant the audio
+     * step would play. Visual footprints subscribe here so the print drops
+     * are perfectly synced to the (possibly silent) step cadence — even
+     * when audio is muted, the cadence still ticks and prints still spawn.
+     * Signature: `(odd: boolean) => void` — odd flips each step.
+     */
+    this.onStep = null;
 
     this.#installButton();
   }
@@ -162,19 +171,29 @@ export class AudioManager {
 
   // ── Per-frame: step cadence + jump detection + bird chirps ───────────────
   tick(delta, { moving, running, grounded }) {
-    if (!this.ctx || this.muted) return;
-
+    // Step cadence runs FIRST and regardless of audio context / mute state
+    // so visual listeners (Footprints) stay in sync with the silent cadence
+    // when the user mutes audio. Audio playback is gated separately below.
     if (moving && grounded) {
       const interval = running ? FOOTSTEP_INTERVAL_RUN : FOOTSTEP_INTERVAL_WALK;
-      this._stepTimer += delta;
+      if (!this._wasStepping) {
+        this._stepTimer = interval;
+        this._wasStepping = true;
+      } else {
+        this._stepTimer += delta;
+      }
       if (this._stepTimer >= interval) {
         this._stepTimer = 0;
         this._stepOdd = !this._stepOdd;
-        this.playStep(this._stepOdd);
+        if (this.ctx && !this.muted) this.playStep(this._stepOdd);
+        this.onStep?.(this._stepOdd);
       }
     } else {
       this._stepTimer = 0;
+      this._wasStepping = false;
     }
+
+    if (!this.ctx || this.muted) return;
 
     // Detect grounded → airborne transition as a jump.
     if (this._wasGrounded === true && grounded === false) {

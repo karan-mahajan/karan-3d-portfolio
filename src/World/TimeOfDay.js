@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import gsap from 'gsap';
+import gsap from "gsap";
+import * as THREE from "three";
 
 /**
  * Day / night cycle driver. Owns:
@@ -20,7 +20,7 @@ const STAR_COUNT = 280;
 const STAR_DOME_RADIUS = 230;
 
 export const DAY_PALETTE = Object.freeze({
-  sunColor: '#ffeedd',
+  sunColor: "#ffeedd",
   sunIntensity: 1.3,
   // Position chosen so the visible Sun.js disc falls inside the default
   // third-person camera frame (player at spawn, camera at -Z facing +Z,
@@ -29,26 +29,26 @@ export const DAY_PALETTE = Object.freeze({
   //   elevation  ≈ 13° above horizon  (within +15° upper-frame edge)
   // Shadow direction is fine at this elevation; cast length is moderate.
   sunOffset: new THREE.Vector3(15, 9, 35),
-  rimColor: '#ff8855',
+  rimColor: "#ff8855",
   rimIntensity: 0.35,
-  ambientColor: '#ccbbaa',
+  ambientColor: "#ccbbaa",
   ambientIntensity: 0.5,
-  hemiSky: '#88bbee',
-  hemiGround: '#886644',
+  hemiSky: "#88bbee",
+  hemiGround: "#886644",
   hemiIntensity: 0.35,
-  skyTop: '#4488cc',
-  skyMid: '#88bbee',
+  skyTop: "#4488cc",
+  skyMid: "#88bbee",
   // Horizon === fog colour so the ocean fades seamlessly into the sky band
   // — no visible ring where the water plane ends. Tuned cool-steel-blue to
   // bridge the deep-ocean tint (#1a4a6a) into the upper sky.
-  skyHorizon: '#88aabb',
-  skyGround: '#4a3528',
-  fogColor: '#88aabb',
+  skyHorizon: "#88aabb",
+  skyGround: "#4a3528",
+  fogColor: "#88aabb",
   // Pulled tighter than the old 65→165 so the ocean plane (extending 150 m
   // from the island centre) fully dissolves into fog before its edge.
   fogNear: 50,
   fogFar: 130,
-  grassColor: '#5aa033',
+  grassColor: "#5aa033",
   grassShadowStrength: 0.75,
   fireflyIntensity: 0.55,
   starsOpacity: 0,
@@ -60,7 +60,7 @@ export const DAY_PALETTE = Object.freeze({
   // because three.js's physical lighting model + linear decay over 10u
   // dilutes the light a lot — spec's "2" wasn't visible.
   spotlightIntensity: 0.6,
-  fillColor: '#ffffff',
+  fillColor: "#ffffff",
   // Day face fill — counters the warm directional sun on the face so
   // the skin doesn't read yellow. 1.5 was OK but with the camera-side
   // anchored fill now actually pointing at the face, 1.8 is what reads
@@ -75,32 +75,32 @@ export const DAY_PALETTE = Object.freeze({
   lampBulbBrightness: 0.6,
   // Warm daylight tint on the water — sky-fresh reads as a brighter blue
   // because the Water2 shader multiplies the reflected colour by this tint.
-  waterColor: '#4a90c4',
+  waterColor: "#4a90c4",
 });
 
 export const NIGHT_PALETTE = Object.freeze({
-  sunColor: '#6688bb',
+  sunColor: "#6688bb",
   sunIntensity: 0.3,
   sunOffset: new THREE.Vector3(-30, 25, -20),
-  rimColor: '#3a4d80',
+  rimColor: "#3a4d80",
   rimIntensity: 0.0,
-  ambientColor: '#0a1525',
+  ambientColor: "#0a1525",
   ambientIntensity: 0.18,
-  hemiSky: '#112244',
-  hemiGround: '#0a0a15',
+  hemiSky: "#112244",
+  hemiGround: "#0a0a15",
   hemiIntensity: 0.12,
   // Lifted from near-black so the night sky still reads as a sky band
   // rather than the void around the canvas. Bands kept in deep blue family
   // so stars + moon still stand out brightly against them. Horizon === fog
   // so the night ocean dissolves into the sky band at the horizon ring.
-  skyTop: '#0c1228',
-  skyMid: '#15203f',
-  skyHorizon: '#0a1520',
-  skyGround: '#0a0a18',
-  fogColor: '#0a1520',
+  skyTop: "#0c1228",
+  skyMid: "#15203f",
+  skyHorizon: "#0a1520",
+  skyGround: "#0a0a18",
+  fogColor: "#0a1520",
   fogNear: 30,
   fogFar: 95,
-  grassColor: '#1f3a2a',
+  grassColor: "#1f3a2a",
   grassShadowStrength: 0.25,
   fireflyIntensity: 1.6,
   starsOpacity: 1,
@@ -111,7 +111,7 @@ export const NIGHT_PALETTE = Object.freeze({
   // top-up; 2.5 with decay=1.4 over the 1.5u face distance gives ≈ 1.5
   // effective intensity at the face — enough to actually see skin
   // detail against the dark world.
-  fillColor: '#ccd6ec',
+  fillColor: "#ccd6ec",
   fillIntensity: 2.5,
   sunMeshOpacity: 0,
   billboardEmissiveBoost: 2.2,
@@ -121,7 +121,7 @@ export const NIGHT_PALETTE = Object.freeze({
   lampBulbBrightness: 1.8,
   // Cooler, deeper night water — moon + lanterns + stars reflect against
   // a darker blue-grey base so the night scene reads as cold water.
-  waterColor: '#2a4a64',
+  waterColor: "#2a4a64",
 });
 
 /**
@@ -129,7 +129,7 @@ export const NIGHT_PALETTE = Object.freeze({
  */
 export function detectAutoMode() {
   const hour = new Date().getHours();
-  return (hour >= 19 || hour < 6) ? 'night' : 'day';
+  return hour >= 21 || hour < 6 ? "night" : "day";
 }
 
 export class TimeOfDay {
@@ -196,15 +196,15 @@ export class TimeOfDay {
 
   // ── Public API ────────────────────────────────────────────────────────────
   setMode(mode, duration = TRANSITION_SECONDS) {
-    if (mode !== 'day' && mode !== 'night') return;
+    if (mode !== "day" && mode !== "night") return;
     if (mode === this.mode) return;
     this.mode = mode;
-    this.dispatchEvent?.('change', mode);
+    this.dispatchEvent?.("change", mode);
     this.#transition(mode, duration);
   }
 
   toggle(duration = TRANSITION_SECONDS) {
-    this.setMode(this.mode === 'day' ? 'night' : 'day', duration);
+    this.setMode(this.mode === "day" ? "night" : "day", duration);
   }
 
   /** Hard-reset every uniform / light / lantern to match the current mode.
@@ -251,16 +251,25 @@ export class TimeOfDay {
       // Visible shaft: cone (height=9) is centered at origin, so position
       // its center at player.y + 4.5 so apex sits ≈ y+9 and base ≈ y+0.
       if (this.spotShaft) {
-        this.spotShaft.position.set(playerPos.x, playerPos.y + 4.5, playerPos.z);
+        this.spotShaft.position.set(
+          playerPos.x,
+          playerPos.y + 4.5,
+          playerPos.z,
+        );
         // Opacity tracks live spotlight intensity so the shaft fades
         // in / out with the day-night transition automatically. Lower
         // peak (0.35) than before so the cone reads as a hint, not a
         // floodlight.
         const peak = NIGHT_PALETTE.spotlightIntensity;
         this.spotShaftMat.uniforms.uOpacity.value =
-          Math.max(0, this.spotLight.intensity - DAY_PALETTE.spotlightIntensity) /
-          Math.max(0.001, peak - DAY_PALETTE.spotlightIntensity) * 0.35;
-        this.spotShaft.visible = this.spotShaftMat.uniforms.uOpacity.value > 0.005;
+          (Math.max(
+            0,
+            this.spotLight.intensity - DAY_PALETTE.spotlightIntensity,
+          ) /
+            Math.max(0.001, peak - DAY_PALETTE.spotlightIntensity)) *
+          0.35;
+        this.spotShaft.visible =
+          this.spotShaftMat.uniforms.uOpacity.value > 0.005;
       }
     }
     if (this.starGroup && camera) {
@@ -268,7 +277,8 @@ export class TimeOfDay {
       this.starMaterial.uniforms.uTime.value = elapsed;
       // Visibility tracks live uniform so a partially-faded starfield
       // mid-transition still renders, but a fully-faded one is skipped.
-      this.starGroup.visible = this.starMaterial.uniforms.uOpacity.value > 0.001;
+      this.starGroup.visible =
+        this.starMaterial.uniforms.uOpacity.value > 0.001;
     }
     if (this.moonGroup && camera) {
       this.#updateMoonPosition(camera);
@@ -292,11 +302,11 @@ export class TimeOfDay {
     // sun already shadows the character correctly from above.
     this.spotLight = new THREE.SpotLight(
       0xddeeff,
-      0,                  // intensity (set by mode)
-      20,                 // distance
-      Math.PI / 5,        // 36° cone (half-angle)
-      0.6,                // penumbra (soft edges)
-      1,                  // linear decay (decay=2 dilutes too aggressively at this distance)
+      0, // intensity (set by mode)
+      20, // distance
+      Math.PI / 5, // 36° cone (half-angle)
+      0.6, // penumbra (soft edges)
+      1, // linear decay (decay=2 dilutes too aggressively at this distance)
     );
     this.spotLight.castShadow = false;
     this.spotTarget = new THREE.Object3D();
@@ -318,7 +328,7 @@ export class TimeOfDay {
       side: THREE.DoubleSide,
       fog: false,
       uniforms: {
-        uColor: { value: new THREE.Color('#ccddff') },
+        uColor: { value: new THREE.Color("#ccddff") },
         uOpacity: { value: 0 },
       },
       vertexShader: /* glsl */ `
@@ -368,9 +378,9 @@ export class TimeOfDay {
       phases[i] = Math.random() * Math.PI * 2;
     }
     const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geom.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
-    geom.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
+    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geom.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+    geom.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
 
     this.starMaterial = new THREE.ShaderMaterial({
       transparent: true,
@@ -421,7 +431,7 @@ export class TimeOfDay {
     // HDR-boost the disc colour so UnrealBloomPass picks it up (threshold
     // is 0.92 in linear space; 2.4× boost on #ddeeff puts it cleanly past
     // that). Same trick Sun.js uses on the day-side disc.
-    const moonColor = new THREE.Color('#ddeeff').multiplyScalar(2.4);
+    const moonColor = new THREE.Color("#ddeeff").multiplyScalar(2.4);
     const moonMat = new THREE.MeshBasicMaterial({
       color: moonColor,
       transparent: true,
@@ -430,7 +440,10 @@ export class TimeOfDay {
       fog: false,
       toneMapped: false,
     });
-    this.moonDisc = new THREE.Mesh(new THREE.SphereGeometry(5.0, 24, 18), moonMat);
+    this.moonDisc = new THREE.Mesh(
+      new THREE.SphereGeometry(5.0, 24, 18),
+      moonMat,
+    );
     this.moonDisc.frustumCulled = false;
     this.moonDisc.renderOrder = 10;
     this.moonGroup.add(this.moonDisc);
@@ -442,7 +455,7 @@ export class TimeOfDay {
     const coronaTex = this.#buildCoronaTexture();
     const coronaMat = new THREE.MeshBasicMaterial({
       map: coronaTex,
-      color: new THREE.Color('#aac6ff'),
+      color: new THREE.Color("#aac6ff"),
       transparent: true,
       opacity: 0,
       depthWrite: false,
@@ -468,10 +481,10 @@ export class TimeOfDay {
    *  edge with a pow(1-d, 3.0) curve. Identical technique to Sun.js. */
   #buildCoronaTexture() {
     const size = 256;
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     const img = ctx.createImageData(size, size);
     const half = size / 2;
     for (let y = 0; y < size; y++) {
@@ -510,7 +523,7 @@ export class TimeOfDay {
 
   // ── State application ─────────────────────────────────────────────────────
   #applyInstant(mode) {
-    const p = mode === 'night' ? NIGHT_PALETTE : DAY_PALETTE;
+    const p = mode === "night" ? NIGHT_PALETTE : DAY_PALETTE;
     // Hard-set every animatable field with no tween. Used on construction so
     // the first rendered frame matches the auto-detected mode.
     this.sun.color.set(p.sunColor);
@@ -553,8 +566,10 @@ export class TimeOfDay {
     this.starMaterial.uniforms.uOpacity.value = p.starsOpacity;
     this.starGroup.visible = p.starsOpacity > 0.001;
 
-    if (this.billboards) this.billboards.emissiveBoost = p.billboardEmissiveBoost;
-    if (this.lanterns) for (const l of this.lanterns) l.intensity = p.lanternIntensity;
+    if (this.billboards)
+      this.billboards.emissiveBoost = p.billboardEmissiveBoost;
+    if (this.lanterns)
+      for (const l of this.lanterns) l.intensity = p.lanternIntensity;
     // Ocean tints (shallow / deep / foam / sun position) ride day-night
     // together — see Water.applyTimeOfDay for the colour palettes.
     if (this.water) this.water.applyTimeOfDay(mode);
@@ -571,8 +586,8 @@ export class TimeOfDay {
   }
 
   #transition(mode, duration) {
-    const p = mode === 'night' ? NIGHT_PALETTE : DAY_PALETTE;
-    const ease = 'sine.inOut';
+    const p = mode === "night" ? NIGHT_PALETTE : DAY_PALETTE;
+    const ease = "sine.inOut";
 
     // Make sure stars/moon are added to the render queue at the start of any
     // fade-in (they're hidden when opacity is ~0).
@@ -580,26 +595,47 @@ export class TimeOfDay {
     this.moonGroup.visible = true;
 
     const tweens = [];
-    const colorTo = (color, hex) => tweens.push(
-      gsap.to(color, { r: tmp.set(hex).r, g: tmp.g, b: tmp.b, duration, ease }),
-    );
+    const colorTo = (color, hex) =>
+      tweens.push(
+        gsap.to(color, {
+          r: tmp.set(hex).r,
+          g: tmp.g,
+          b: tmp.b,
+          duration,
+          ease,
+        }),
+      );
     const tmp = new THREE.Color();
 
     // Lights
     colorTo(this.sun.color, p.sunColor);
-    tweens.push(gsap.to(this.sun, { intensity: p.sunIntensity, duration, ease }));
+    tweens.push(
+      gsap.to(this.sun, { intensity: p.sunIntensity, duration, ease }),
+    );
     colorTo(this.rim.color, p.rimColor);
-    tweens.push(gsap.to(this.rim, { intensity: p.rimIntensity, duration, ease }));
+    tweens.push(
+      gsap.to(this.rim, { intensity: p.rimIntensity, duration, ease }),
+    );
     colorTo(this.ambient.color, p.ambientColor);
-    tweens.push(gsap.to(this.ambient, { intensity: p.ambientIntensity, duration, ease }));
+    tweens.push(
+      gsap.to(this.ambient, { intensity: p.ambientIntensity, duration, ease }),
+    );
     colorTo(this.hemi.color, p.hemiSky);
     colorTo(this.hemi.groundColor, p.hemiGround);
-    tweens.push(gsap.to(this.hemi, { intensity: p.hemiIntensity, duration, ease }));
+    tweens.push(
+      gsap.to(this.hemi, { intensity: p.hemiIntensity, duration, ease }),
+    );
 
     // Sun follow offset (per-frame writer in App.js reads sunOffset).
-    tweens.push(gsap.to(this.sunOffset, {
-      x: p.sunOffset.x, y: p.sunOffset.y, z: p.sunOffset.z, duration, ease,
-    }));
+    tweens.push(
+      gsap.to(this.sunOffset, {
+        x: p.sunOffset.x,
+        y: p.sunOffset.y,
+        z: p.sunOffset.z,
+        duration,
+        ease,
+      }),
+    );
 
     // Sky
     colorTo(this.sky.material.uniforms.uTop.value, p.skyTop);
@@ -609,24 +645,36 @@ export class TimeOfDay {
 
     // Fog
     colorTo(this.fog.color, p.fogColor);
-    tweens.push(gsap.to(this.fog, { near: p.fogNear, far: p.fogFar, duration, ease }));
+    tweens.push(
+      gsap.to(this.fog, { near: p.fogNear, far: p.fogFar, duration, ease }),
+    );
 
     // Grass — tween the shared baseColor and propagate to all per-layer
     // materials each onUpdate. GLB grass uses patchShadowTint at a fixed
     // strength so the old uShadowTintStrength tween is dropped.
     if (this.grass) {
       const gTarget = new THREE.Color(p.grassColor);
-      tweens.push(gsap.to(this.grass.baseColor, {
-        r: gTarget.r, g: gTarget.g, b: gTarget.b, duration, ease,
-        onUpdate: () => this.grass.syncColor(),
-      }));
+      tweens.push(
+        gsap.to(this.grass.baseColor, {
+          r: gTarget.r,
+          g: gTarget.g,
+          b: gTarget.b,
+          duration,
+          ease,
+          onUpdate: () => this.grass.syncColor(),
+        }),
+      );
     }
 
     // Fireflies
     if (this.fireflies) {
-      tweens.push(gsap.to(this.fireflies.material.uniforms.uIntensity, {
-        value: p.fireflyIntensity, duration, ease,
-      }));
+      tweens.push(
+        gsap.to(this.fireflies.material.uniforms.uIntensity, {
+          value: p.fireflyIntensity,
+          duration,
+          ease,
+        }),
+      );
     }
 
     // Sun mesh (visible disc + corona)
@@ -636,45 +684,86 @@ export class TimeOfDay {
 
     // Character lights
     colorTo(this.fillLight.color, p.fillColor);
-    tweens.push(gsap.to(this.fillLight, { intensity: p.fillIntensity, duration, ease }));
-    tweens.push(gsap.to(this.spotLight, { intensity: p.spotlightIntensity, duration, ease }));
+    tweens.push(
+      gsap.to(this.fillLight, { intensity: p.fillIntensity, duration, ease }),
+    );
+    tweens.push(
+      gsap.to(this.spotLight, {
+        intensity: p.spotlightIntensity,
+        duration,
+        ease,
+      }),
+    );
 
     // Moon (disc + halo opacity lerped together)
-    tweens.push(gsap.to(this.moonDisc.material, { opacity: p.moonOpacity, duration, ease }));
-    tweens.push(gsap.to(this.moonHalo.material, { opacity: p.moonOpacity * 0.7, duration, ease }));
+    tweens.push(
+      gsap.to(this.moonDisc.material, {
+        opacity: p.moonOpacity,
+        duration,
+        ease,
+      }),
+    );
+    tweens.push(
+      gsap.to(this.moonHalo.material, {
+        opacity: p.moonOpacity * 0.7,
+        duration,
+        ease,
+      }),
+    );
 
     // Stars
-    tweens.push(gsap.to(this.starMaterial.uniforms.uOpacity, {
-      value: p.starsOpacity, duration, ease,
-    }));
+    tweens.push(
+      gsap.to(this.starMaterial.uniforms.uOpacity, {
+        value: p.starsOpacity,
+        duration,
+        ease,
+      }),
+    );
 
     // Billboards (read the scalar each pulse in Billboards.update)
     if (this.billboards) {
-      tweens.push(gsap.to(this.billboards, {
-        emissiveBoost: p.billboardEmissiveBoost, duration, ease,
-      }));
+      tweens.push(
+        gsap.to(this.billboards, {
+          emissiveBoost: p.billboardEmissiveBoost,
+          duration,
+          ease,
+        }),
+      );
     }
 
     // Lanterns
     if (this.lanterns) {
       for (const l of this.lanterns) {
-        tweens.push(gsap.to(l, { intensity: p.lanternIntensity, duration, ease }));
+        tweens.push(
+          gsap.to(l, { intensity: p.lanternIntensity, duration, ease }),
+        );
       }
     }
 
     // Ocean tint — tweens shallow + deep + foam + sun position together.
-    if (this.water) this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
+    if (this.water)
+      this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
 
     // Physical lamps — tween each PointLight's intensity, and animate
     // the shared bulb material color (toward target hex × brightness).
     if (this.lamps && this.lamps.items.length) {
       for (const item of this.lamps.items) {
-        tweens.push(gsap.to(item.light, { intensity: p.lampIntensity, duration, ease }));
+        tweens.push(
+          gsap.to(item.light, { intensity: p.lampIntensity, duration, ease }),
+        );
       }
-      const tmp = new THREE.Color(0xffe9b0).multiplyScalar(p.lampBulbBrightness);
-      tweens.push(gsap.to(this.lamps.bulbMaterial.color, {
-        r: tmp.r, g: tmp.g, b: tmp.b, duration, ease,
-      }));
+      const tmp = new THREE.Color(0xffe9b0).multiplyScalar(
+        p.lampBulbBrightness,
+      );
+      tweens.push(
+        gsap.to(this.lamps.bulbMaterial.color, {
+          r: tmp.r,
+          g: tmp.g,
+          b: tmp.b,
+          duration,
+          ease,
+        }),
+      );
     }
 
     // Note: we deliberately do NOT schedule a delayed visibility hide
