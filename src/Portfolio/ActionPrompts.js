@@ -20,22 +20,6 @@ const PUSH_JOKES = {
     'Bark stronger than your shoulder.',
     'Photosynthesis 1, you 0.',
   ],
-  rock: [
-    'Its a rock. Of course not.',
-    'Tectonically speaking, no.',
-    'Predates the planet.',
-    'Geology disagrees.',
-    'Maybe in a thousand years.',
-    'Stone-faced refusal.',
-    'This boulder has tenure.',
-  ],
-  log: [
-    'Its napping.',
-    'Lumberjack required.',
-    'Roll over - no, the log.',
-    'Even the moss is laughing.',
-    'Try a different log.',
-  ],
   board: [
     'The HOA approved this.',
     'Bolted to the codebase.',
@@ -59,6 +43,22 @@ const PUSH_JOKES = {
     'The structure prevails.',
     'Solid build, unfortunately.',
     'Even my home page wont move.',
+  ],
+  rock: [
+    'Its a rock. Of course not.',
+    'Tectonically speaking, no.',
+    'Predates the planet.',
+    'Geology disagrees.',
+    'Maybe in a thousand years.',
+    'Stone-faced refusal.',
+    'This boulder has tenure.',
+  ],
+  log: [
+    'Its napping.',
+    'Lumberjack required.',
+    'Roll over - no, the log.',
+    'Even the moss is laughing.',
+    'Try a different log.',
   ],
   crate: [
     'Label says fragile - its bluffing.',
@@ -85,6 +85,8 @@ const PUSH_JOKES = {
     'Achievement unlocked: futile effort.',
   ],
 };
+
+const PUSH_FACING_MIN_DOT = 0.5; // ±60° arc — matches the bag-punch facing check
 
 function shuffleCopy(arr) {
   const out = arr.slice();
@@ -133,44 +135,59 @@ export class ActionPrompts {
     this.triggers.push({ ...trigger, position: v3 });
   }
 
-  addPushSpot({ position, surfaceRadius, type = 'generic', name = null }) {
+  addPushSpot({ position, surfaceRadius, type = 'generic', name = null, colliderRadius = null }) {
     const v3 = position instanceof THREE.Vector3
       ? position
       : new THREE.Vector3(position.x, position.y ?? 0, position.z);
-    this.pushSpots.push({ position: v3, surfaceRadius, type, name });
+    this.pushSpots.push({ position: v3, surfaceRadius, type, name, colliderRadius });
   }
 
   /**
    * Pulls push spots from the loaded world. Interactables register their
    * own spots directly via addPushSpot.
+   *
+   * Pool: every standing solid prop — trees, rocks, billboards, signs,
+   * spawn compass — so the joke gag fires when the player tries to push
+   * something they obviously can't. Crate + bag are the real pushable
+   * interactions and come from Interactables.
+   *
+   * Excluded: lying-down props (logs, stumps) because the push animation
+   * is a standing arms-forward push; firing it at a ground-level log
+   * looks broken. Walk-through accents (bushes, pebbles, ferns) have no
+   * collider and aren't candidates anyway.
    */
   discoverPushSpots(world) {
     if (!world) return;
+    // colliderRadius values mirror the physical collider extents used by
+    // Signs.js / Billboards.js — they drive the push-start snap so the hand
+    // at apex just touches the visible face instead of clipping through it
+    // (for billboards/signs the front slab is ~8 cm thin in local Z).
     if (world.billboards && world.billboards.items) {
       for (const item of world.billboards.items) {
-        this.addPushSpot({ position: item.position, surfaceRadius: 3.0, type: 'board' });
+        this.addPushSpot({ position: item.position, surfaceRadius: 3.0, type: 'board', colliderRadius: 0.10 });
       }
     }
     if (world.signs) {
-      // Spawn compass: the big "KARAN'S WORLD" sign — first thing visitors
-      // see, so the hint really needs to fire here.
       if (world.signs.compassPosition) {
-        this.addPushSpot({ position: world.signs.compassPosition, surfaceRadius: 4.0, type: 'sign', name: 'compass' });
+        this.addPushSpot({ position: world.signs.compassPosition, surfaceRadius: 4.0, type: 'sign', name: 'compass', colliderRadius: 0.13 });
       }
       if (world.signs.experienceItems) {
         for (const item of world.signs.experienceItems) {
-          this.addPushSpot({ position: item.position, surfaceRadius: 2.8, type: 'sign' });
+          this.addPushSpot({ position: item.position, surfaceRadius: 2.8, type: 'sign', colliderRadius: 0.16 });
         }
       }
       if (world.signs.skillsPosition) {
-        this.addPushSpot({ position: world.signs.skillsPosition, surfaceRadius: 4.5, type: 'section', name: 'skills' });
+        this.addPushSpot({ position: world.signs.skillsPosition, surfaceRadius: 4.5, type: 'section', name: 'skills', colliderRadius: 0.30 });
       }
       if (world.signs.contactPosition) {
-        this.addPushSpot({ position: world.signs.contactPosition, surfaceRadius: 3.2, type: 'section', name: 'contact' });
+        this.addPushSpot({ position: world.signs.contactPosition, surfaceRadius: 3.2, type: 'section', name: 'contact', colliderRadius: 0.30 });
       }
     }
     if (world.nature && world.nature.pushSpots) {
       for (const spot of world.nature.pushSpots) {
+        // Logs/stumps share kind: 'log' and lie on the ground — the standing
+        // push animation doesn't match, so skip them.
+        if (spot.type === 'log') continue;
         this.addPushSpot(spot);
       }
     }
@@ -251,6 +268,16 @@ export class ActionPrompts {
       }
 
       if (e.code === 'KeyP' && !e.repeat && !hasModifier && !this.globalPushActive && !this.activeHoldLoop && !this.oneShotActive && !this.activeZoneLoop) {
+        // Realism: P only fires when the player is actually facing a real
+        // pushable in range. currentPushSpot is set by tick() after the
+        // proximity-and-facing filter, so its presence is the gate.
+        if (!this.currentPushSpot) return;
+        // Body-clipping fix: the standing push animation extends the arms
+        // (and slightly leans the head) forward. If the player is flush
+        // against the object, those forward-reaching parts pass through the
+        // visible mesh. Snap the player outward along the spot→player ray
+        // to a comfortable push distance before the animation plays.
+        this._snapToPushDistance(this.currentPushSpot);
         if (this.player.startLoopAction('push')) {
           this.globalPushActive = true;
           this.pushStartSec = this._elapsed;
@@ -344,6 +371,44 @@ export class ActionPrompts {
     this._hidePushJoke();
   }
 
+  /**
+   * Slides the player outward along the (spot → player) ray so the push
+   * animation's forward-reaching frame (3rd-phase apex — both arms fully
+   * extended) lands the hand against the visible surface instead of clipping
+   * through it.
+   *
+   * Target = colliderRadius (distance from spot centre to the object's
+   * visible surface) + PUSH_HAND_REACH (body radius + max arm extension
+   * at apex). Only ever moves the player AWAY from the spot, never toward —
+   * so a player who's already at a comfortable distance stays put.
+   *
+   * Falls back to a coarser surfaceRadius-based target if colliderRadius
+   * isn't set on the spot. Spots registered by Nature, Interactables, and
+   * discoverPushSpots all set it, so the fallback shouldn't normally fire.
+   */
+  _snapToPushDistance(spot) {
+    // Body radius (~0.4 m) + arm extension at the push apex (~0.55 m) —
+    // tuned visually so the hand just touches the surface at full reach.
+    const PUSH_HAND_REACH = 0.95;
+    const surface = (spot.colliderRadius != null)
+      ? spot.colliderRadius
+      : Math.max(0, spot.surfaceRadius - 1.2);
+    const target = surface + PUSH_HAND_REACH;
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const dx = px - spot.position.x;
+    const dz = pz - spot.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d <= 0.05) return; // standing on the spot — nothing sensible to do
+    if (d >= target) return; // already at or past the comfort distance
+    const k = target / d;
+    const nx = spot.position.x + dx * k;
+    const nz = spot.position.z + dz * k;
+    const py = this.player.position.y;
+    if (this.player.body) this.player.body.teleport(nx, py, nz);
+    this.player.group.position.set(nx, py, nz);
+  }
+
   _jokeAt(slot) {
     if (!this._pushJokeDeck.length) return null;
     if (slot >= this._pushJokeDeck.length) {
@@ -363,15 +428,18 @@ export class ActionPrompts {
   tick(playerPosition, delta) {
     this._elapsed += delta;
 
-    // Nearest push spot in range.
+    // Nearest push spot in range AND in the player's forward arc. The facing
+    // check makes the hint context-aware: turning away from a rock hides the
+    // prompt, and the keydown gate on currentPushSpot ensures P doesn't fire
+    // into empty space behind the player.
     let nearestSpot = null;
     let bestDist = Infinity;
     for (const spot of this.pushSpots) {
       const d = playerPosition.distanceTo(spot.position);
-      if (d <= spot.surfaceRadius && d < bestDist) {
-        nearestSpot = spot;
-        bestDist = d;
-      }
+      if (d > spot.surfaceRadius || d >= bestDist) continue;
+      if (!this.#facing(spot.position, PUSH_FACING_MIN_DOT)) continue;
+      nearestSpot = spot;
+      bestDist = d;
     }
     this.currentPushSpot = nearestSpot;
 

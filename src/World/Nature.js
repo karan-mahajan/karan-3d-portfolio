@@ -153,6 +153,44 @@ function pickAutumnColor(url) {
 }
 
 /**
+ * Quaternius tree trunks vary widely: straight pines vs sprawling twisted
+ * variants whose trunks curve out 0.8–1.2m at character height. Sample the
+ * unit-scale GLB at chest height and return the real XZ half-extent + centre
+ * so the cylinder collider matches the visible trunk instead of a fixed
+ * one-size-fits-all 0.45m. Returns null if no geometry sits in the slice
+ * (caller falls back to COLLIDERS default).
+ */
+function measureTrunkSlice(root) {
+  root.updateMatrixWorld(true);
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  let count = 0;
+  const v = new THREE.Vector3();
+  const SLICE_LO = 0.5, SLICE_HI = 1.5;
+  root.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return;
+    const pos = child.geometry.attributes.position;
+    if (!pos) return;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      child.localToWorld(v);
+      if (v.y < SLICE_LO || v.y > SLICE_HI) continue;
+      if (v.x < minX) minX = v.x;
+      if (v.x > maxX) maxX = v.x;
+      if (v.z < minZ) minZ = v.z;
+      if (v.z > maxZ) maxZ = v.z;
+      count++;
+    }
+  });
+  if (count === 0) return null;
+  return {
+    radius: Math.max(maxX - minX, maxZ - minZ) / 2,
+    cx: (minX + maxX) / 2,
+    cz: (minZ + maxZ) / 2,
+  };
+}
+
+/**
  * Per-kind collider config. Two sizing strategies:
  *  - 'fixed'    : use the half/radius/height below × per-instance scale.
  *                 Right for trees (trunk is narrow, foliage shouldn't block
@@ -252,6 +290,11 @@ export class Nature {
     const dummy = new THREE.Object3D();
     const [minR, maxR] = cfg.ring;
     const colliderShape = this.physics ? COLLIDERS[cfg.kind] : null;
+    // Trees: measure the actual trunk XZ extent at character height so the
+    // cylinder collider matches the visible mesh (twisted trees curve well
+    // past the 0.45m default and the player could stand inside the painted
+    // trunk). Computed once per prop and reused across instances.
+    const trunkMeasure = (cfg.kind === 'tree') ? measureTrunkSlice(root) : null;
 
     for (let i = 0; i < cfg.count; i++) {
       let x, z, tries = 0;
@@ -274,13 +317,32 @@ export class Nature {
       // 'bbox'  (rocks/logs)  : derive half-extents from the measured scaled
       //   bbox, and shift the collider centre to match the visible mesh
       //   centre so the player can't stand inside the painted rock.
+      // colliderOuter is the distance from the spot centre to the visible
+      // mesh surface — used by ActionPrompts._snapToPushDistance to position
+      // the player so the push animation's hand at apex just touches the
+      // surface. Captured per-shape below.
+      let instanceColliderOuter = null;
       if (colliderShape) {
         if (colliderShape.type === 'cylinder') {
+          let trunkR = colliderShape.radius;
+          let trunkCx = x, trunkCz = z;
+          if (trunkMeasure) {
+            // Never shrink below the tuned default — a measured slice that
+            // misses (very thin trunk) shouldn't drop us under it.
+            trunkR = Math.max(colliderShape.radius, trunkMeasure.radius);
+            // Apply the instance yaw so leaning trunks collide on the side
+            // they actually lean toward, not the GLB-origin point.
+            const cy = Math.cos(dummy.rotation.y);
+            const sy = Math.sin(dummy.rotation.y);
+            trunkCx = x + scale * (cy * trunkMeasure.cx + sy * trunkMeasure.cz);
+            trunkCz = z + scale * (-sy * trunkMeasure.cx + cy * trunkMeasure.cz);
+          }
           this.physics.addStaticCylinder(
-            x, y, z,
-            colliderShape.radius * scale,
+            trunkCx, y, trunkCz,
+            trunkR * scale,
             colliderShape.height * scale,
           );
+          instanceColliderOuter = trunkR * scale;
         } else if (colliderShape.type === 'cuboid') {
           let hx, hy, hz, yBottom, cx, cz;
           if (colliderShape.sizing === 'bbox') {
@@ -307,6 +369,9 @@ export class Nature {
           // axis-aligned cuboid leaves the painted rock corners poking
           // 30-50 cm past the collider at ~45° yaws.
           this.physics.addStaticCuboid(cx, yBottom, cz, hx, hy, hz, dummy.rotation.y);
+          // Player can hit the cuboid at any face — use the larger XZ
+          // half-extent as a reasonable "outer radius" for the push snap.
+          instanceColliderOuter = Math.max(hx, hz);
         }
       }
 
@@ -337,6 +402,7 @@ export class Nature {
             position: new THREE.Vector3(spotX, y, spotZ),
             type: cfg.kind,           // 'tree' | 'rock' | 'log'
             surfaceRadius,
+            colliderRadius: instanceColliderOuter,
           });
         }
       }

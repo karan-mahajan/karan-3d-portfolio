@@ -98,8 +98,18 @@ export class Interactables {
 
     // Crate is a "push spot" — the P-key push hint will surface when the
     // player is near, with crate-flavored jokes ("shipping ETA: never",
-    // "what's inside? more crates", etc.).
-    this.prompts.addPushSpot({ position: pos, surfaceRadius: 1.6, type: 'crate' });
+    // "what's inside? more crates", etc.). colliderRadius = max XZ half of
+    // the scaled crate so the push-start snap parks the hand on the front
+    // face at apex instead of clipping through it.
+    obj.updateMatrixWorld(true);
+    const finalBox = new THREE.Box3().setFromObject(obj);
+    const finalSize = finalBox.getSize(new THREE.Vector3());
+    this.prompts.addPushSpot({
+      position: pos,
+      surfaceRadius: 1.6,
+      type: 'crate',
+      colliderRadius: Math.max(finalSize.x, finalSize.z) / 2,
+    });
   }
 
   // ── 2. Punching bag (fight-stance + superman-punch) ──────────────────────
@@ -173,7 +183,9 @@ export class Interactables {
     }
 
     // Bag is also a "push spot" for the P-key hint — punch with E, push with P.
-    this.prompts.addPushSpot({ position: pos, surfaceRadius: 1.2, type: 'bag' });
+    // colliderRadius matches the static-cylinder radius (0.34) so the push
+    // snap places the hand on the bag's surface at apex.
+    this.prompts.addPushSpot({ position: pos, surfaceRadius: 1.2, type: 'bag', colliderRadius: 0.34 });
 
     this.prompts.add({
       id: 'punching-bag',

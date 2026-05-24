@@ -138,42 +138,45 @@ Sun + shadow camera follow the player so shadows stay sharp.
   dynamic body. Variable timestep — known wart, not yet fixed.
 - Fog tinted `#ffb084`, range 65→165, so distant trees fade into sunset.
 
-## Verification sandbox (everything goes in `.verify/`)
+## Verification sandbox — MUST use `.verify/scripts/` + `.verify/shots/<date>/`
 
-**All** verification artifacts — playwright scripts AND screenshots — live in
-`.verify/` at the project root. Never `/tmp/`, never anywhere else. The user
-opens screenshots locally to confirm a fix actually works.
-
-Layout:
+When you write or run a verification / playwright probe in this project,
+you **must** use this exact layout. No exceptions, no `/tmp/`, no flat
+`.verify/*.png`, no shots in the same folder as the script:
 
 ```
 .verify/
-  scripts/                 # all probe .mjs files
-    verify-walk.mjs        # canonical boot + WASD + screenshot driver
+  scripts/                 # all probe .mjs files (verify-walk.mjs, verify-water.mjs, …)
   shots/
-    YYYY-MM-DD/            # one folder per day, auto-created on run
-      NN-step.png
+    YYYY-MM-DD/            # one folder per day, auto-created on each run
+      NN-step.png          # or any other screenshot name
 ```
 
-- `.verify/` is gitignored (whole folder). Outputs never get committed AND
-  the scripts never get committed either — they're scratch tooling that
-  survives between sessions but stays local.
-- Copy `scripts/verify-walk.mjs` as `scripts/verify-<feature>.mjs` for new
-  probes (e.g. `verify-water.mjs`, `verify-football.mjs`). Every script must
-  resolve its output dir as `../shots/<today>/` from its own `__dirname`
-  (use `new Date().toISOString().slice(0, 10)`) and `mkdirSync` it.
-- Run from project root: `URL=http://localhost:5173/ node .verify/scripts/verify-walk.mjs`
-  (playwright must be installed somewhere reachable;
-  `cd /tmp && npm install --no-save playwright` works since the project
-  itself has no playwright dependency).
-- Before adding a new probe, **read `ls .verify/scripts/`** to see what
-  already exists — don't duplicate.
+Mandatory rules for every probe script:
+
+1. Script file lives at `.verify/scripts/verify-<feature>.mjs`.
+2. Screenshot output dir is computed at runtime as:
+   `path.resolve(__dirname, '..', 'shots', new Date().toISOString().slice(0, 10))`
+   then `fs.mkdirSync(SHOTS, { recursive: true })`. Never hardcode a date.
+3. Run from project root: `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`.
+4. Before adding a new probe, `ls .verify/scripts/` first — don't duplicate
+   an existing driver, copy and adapt it.
+
+`.verify/` is gitignored as a whole folder; neither scripts nor shots ever
+get committed. Playwright is not a project dep — install once globally
+(`cd /tmp && npm install --no-save playwright`) and reuse via `NODE_PATH`.
+The canonical driver to copy from is [.verify/scripts/verify-walk.mjs](.verify/scripts/verify-walk.mjs).
 
 ## Known parked work (don't surprise the user with rewrites)
 
-- **Push interaction is intentionally a comedy gag** — trees/signs/lamps are
-  all registered as push spots so [ActionPrompts.js](src/Portfolio/ActionPrompts.js)
-  can rotate a joke pool. Do NOT "fix" this without confirmation.
+- **Push interaction is intentionally a comedy gag** — trees, rocks, signs,
+  billboards, and the spawn compass are all push spots so
+  [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a joke pool
+  ("Bark stronger than your shoulder", "404: motion not found", etc). The
+  real pushable interactions are the crate and bag. Lying-down props (logs,
+  stumps — `kind: 'log'`) are excluded because the standing arms-forward
+  push animation doesn't match horizontal targets. Do NOT "fix" the gag
+  without confirmation.
 - **B (backflip) / C (cartwheel)** don't currently raycast for clearance —
   flag if you add similar global animations.
 - **Minimap + click-to-teleport** — see auto-memory `project_minimap_teleport.md`.
