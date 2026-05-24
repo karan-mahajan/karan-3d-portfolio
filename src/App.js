@@ -19,6 +19,7 @@ import { Fireflies } from './Effects/Fireflies.js';
 // Water is constructed inside World.loadAssets so its exclusions reach
 // Nature before scatter; App.js just grabs `this.world.water` in boot().
 import { Rain } from './Effects/Rain.js';
+import { Thunderstorm } from './Effects/Thunderstorm.js';
 import { WindLines } from './Effects/WindLines.js';
 import { Leaves } from './Effects/Leaves.js';
 import { Footprints } from './Effects/Footprints.js';
@@ -81,6 +82,20 @@ export class App extends EventTarget {
     // Rain's toggle button (built in its own constructor) plays a toggle
     // click when flipped — needs audio after construction, hence late-bind.
     if (this.rain) this.rain.audio = this.audio;
+
+    // Thunderstorm — owns its own ⚡ button + flash overlay + message
+    // element. Auto-strikes only fire while rain is enabled; the manual
+    // button works at any time. setActive() is called below + on every
+    // rain toggle so the auto-timer resumes/halts in lockstep.
+    this.thunderstorm = new Thunderstorm(this.scene, this.camera, this.lights.ambient, this.audio);
+    this.thunderstorm.setActive(this.rain.enabled);
+    // Wrap Rain.setEnabled so the auto-storm follows the toggle without
+    // needing Rain to know about Thunderstorm.
+    const _setRainEnabled = this.rain.setEnabled.bind(this.rain);
+    this.rain.setEnabled = (value) => {
+      _setRainEnabled(value);
+      this.thunderstorm.setActive(value);
+    };
 
     // Day / night cycle. Built now so it can drive lights + sky immediately
     // — billboards / signs are still loading at this point, so the lanterns
@@ -380,6 +395,7 @@ export class App extends EventTarget {
     this.fireflies.update(elapsed);
     if (this.water) this.water.update(elapsed, delta, this.player.position, sample);
     this.rain.update(delta);
+    this.thunderstorm.update(delta, this.player.position);
     this.windLines.update(delta, this.player.position);
     this.leaves.update(delta, this.player.position);
     const _grounded = this.player._grounded !== false;

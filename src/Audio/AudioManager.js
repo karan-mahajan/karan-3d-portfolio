@@ -37,22 +37,26 @@ const FOOTSTEP_INTERVAL_WALK = 0.42;
 const FOOTSTEP_INTERVAL_RUN = 0.28;
 
 // Layered ambient volumes — kept low because they all stack. Background
-// beds (day/night/birds/wind) were trimmed twice on user feedback
-// (2026-05-24): first −10%, then another −12% after the stack still
-// read as too present.
+// beds (day/night/birds/wind/water/rain) trimmed three times on user
+// feedback (2026-05-24): −10%, then −12%, then another −18% after the
+// stack was still washing out the thunder + foreground SFX.
 const VOL = {
-  ambientDay: 0.333,
-  ambientNight: 0.436,
-  birdsDay: 0.253,
-  windTrees: 0.222,
-  waterWavesMax: 0.45,
+  ambientDay: 0.273,
+  ambientNight: 0.358,
+  birdsDay: 0.207,
+  windTrees: 0.182,
+  waterWavesMax: 0.369,
   waterWavesFalloffM: 18,
-  oceanAtShore: 0.32,
-  oceanInWater: 0.5,
+  oceanAtShore: 0.262,
+  oceanInWater: 0.41,
   oceanFalloffM: 30,
   splashLight: 0.32,
   splashEntry: 0.55,
-  thunder: 0.65,
+  // Peak thunder volume before Howler master (0.72). Held back from 0.85
+  // to 1.0 after the third volume report (user still couldn't hear it
+  // over the ambient stack). With the −18% ambient pass above, this
+  // sits well above any background bed.
+  thunder: 1.0,
   jump: 0.55,
   bump: 0.5,
   landWater: 0.55,
@@ -81,7 +85,9 @@ const VOL = {
 
 const AMBIENT_CROSSFADE_S = 3.0;
 const PROX_RAMP_S = 0.4;
-const THUNDER_INTERVAL = [30, 60]; // sec between strikes while rain is on
+// Thunder timing now lives in src/Effects/Thunderstorm.js — it drives both
+// the visual strike and this manager's playThunder(delay, intensity) so
+// flash + audio stay in sync. The old per-frame timer here was removed.
 
 // Files that exist in static/sounds. Anything still missing (rain ambient,
 // rain-on-water, flip whoosh, zoom-in / zoom-out whooshes) is intentionally
@@ -106,8 +112,10 @@ const SOUND_FILES = {
     loop: false,
     vol: VOL.splashEntry,
   },
-  // Weather
-  thunder: { src: "/sounds/thunder.mp3", loop: false, vol: VOL.thunder },
+  // Weather — thunder uses the real recorded sample (set per-call by
+  // Thunderstorm with delay + intensity). The procedural noise fallback
+  // inside playThunder only fires if the sample failed to load.
+  thunder: { src: "/sounds/thunder.mp3", loop: false, vol: 0 },
   rainAmbient: { src: "/sounds/rain-ambient.mp3", loop: true, vol: 0 },
   rainWater: { src: "/sounds/rain-water.mp3", loop: true, vol: 0 },
   flip: { src: "/sounds/flip.mp3", loop: false, vol: VOL.flip },
@@ -212,7 +220,6 @@ export class AudioManager {
     this._stepOdd = false;
     this._wasStepping = false;
     this._wasGrounded = true;
-    this._thunderTimer = randIn(THUNDER_INTERVAL);
     this._wasRainOn = false;
     this._rainOn = false;
 
@@ -340,16 +347,6 @@ export class AudioManager {
     if (rainOn && !this._wasRainOn) this.#startRain();
     else if (!rainOn && this._wasRainOn) this.#stopRain();
     this._wasRainOn = rainOn;
-
-    if (rainOn) {
-      this._thunderTimer -= delta;
-      if (this._thunderTimer <= 0) {
-        this.playThunder();
-        this._thunderTimer = randIn(THUNDER_INTERVAL);
-      }
-    } else {
-      this._thunderTimer = randIn(THUNDER_INTERVAL);
-    }
   }
 
   #startRain() {
@@ -481,9 +478,95 @@ export class AudioManager {
     if (h && h.state() === "loaded") h.play();
   }
 
-  playThunder() {
+  /**
+   * Thunder one-shot, driven by Thunderstorm. Plays the recorded
+   * /sounds/thunder.mp3 sample (real distant-thunder timbre) at a volume
+   * scaled by `intensity`, scheduled `delay` seconds in the future via
+   * setTimeout (light reaches the player before sound).
+   *
+   * Falls back to a 3-layer procedural noise burst (CRACK + RUMBLE +
+   * ECHO via Web Audio) only when the sample failed to load — the user
+   * still hears something instead of silence.
+   *
+   * @param {number} delay     seconds before the thunder fires. Caller
+   *                           passes ≈ boltDistance / 40 for real-world
+   *                           spacing.
+   * @param {number} intensity 0..1 — scales final volume. Clamped to 0.8
+   *                           so even at 100% browser vol the strike is
+   *                           audible but not startling.
+   */
+  playThunder(delay = 0, intensity = 1.0) {
+    if (this.muted || this._focusLost) return;
+    intensity = Math.min(Math.max(intensity, 0), 0.8);
+    const delayMs = Math.max(0, delay) * 1000;
+
     const h = this.howls.thunder;
-    if (h && h.state() === "loaded") h.play();
+    if (h && h.state() === "loaded") {
+      // Sample path. Scheduled via setTimeout so the visual flash leads
+      // the audio by ~delay seconds. Each play gets its own id so volume
+      // + rate apply per-instance (the sample is not loop:true).
+      setTimeout(() => {
+        if (this.muted || this._focusLost) return;
+        const id = h.play();
+        h.volume(VOL.thunder * intensity, id);
+        // Mild pitch wobble so back-to-back strikes don't sound identical.
+        h.rate(0.92 + Math.random() * 0.16, id);
+      }, delayMs);
+      return;
+    }
+
+    // Procedural fallback ── only reached if /sounds/thunder.mp3 didn't
+    // load. Three layers: CRACK (short bandpass noise burst), RUMBLE
+    // (long lowpass tail), ECHO (delayed deeper second rumble).
+    const ctx = this.#ctx();
+    const dest = this.#dest();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime + Math.max(0, delay);
+
+    const crackBuf = this.#noiseBuffer(ctx, 0.15);
+    const crack = ctx.createBufferSource();
+    crack.buffer = crackBuf;
+    const crackFilter = ctx.createBiquadFilter();
+    crackFilter.type = "bandpass";
+    crackFilter.frequency.value = 800;
+    crackFilter.Q.value = 1.5;
+    const crackGain = ctx.createGain();
+    crackGain.gain.setValueAtTime(0, now);
+    crackGain.gain.linearRampToValueAtTime(0.35 * intensity, now + 0.01);
+    crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    crack.connect(crackFilter).connect(crackGain).connect(dest);
+    crack.start(now);
+    crack.stop(now + 0.2);
+
+    const rumbleBuf = this.#noiseBuffer(ctx, 3.0);
+    const rumble = ctx.createBufferSource();
+    rumble.buffer = rumbleBuf;
+    const rumbleFilter = ctx.createBiquadFilter();
+    rumbleFilter.type = "lowpass";
+    rumbleFilter.frequency.value = 200;
+    rumbleFilter.Q.value = 0.5;
+    const rumbleGain = ctx.createGain();
+    rumbleGain.gain.setValueAtTime(0, now + 0.05);
+    rumbleGain.gain.linearRampToValueAtTime(0.25 * intensity, now + 0.2);
+    rumbleGain.gain.exponentialRampToValueAtTime(0.08 * intensity, now + 1.5);
+    rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 3.0);
+    rumble.connect(rumbleFilter).connect(rumbleGain).connect(dest);
+    rumble.start(now);
+    rumble.stop(now + 3.5);
+
+    const echoBuf = this.#noiseBuffer(ctx, 2.0);
+    const echo = ctx.createBufferSource();
+    echo.buffer = echoBuf;
+    const echoFilter = ctx.createBiquadFilter();
+    echoFilter.type = "lowpass";
+    echoFilter.frequency.value = 120;
+    const echoGain = ctx.createGain();
+    echoGain.gain.setValueAtTime(0, now + 0.8);
+    echoGain.gain.linearRampToValueAtTime(0.12 * intensity, now + 1.2);
+    echoGain.gain.exponentialRampToValueAtTime(0.001, now + 3.5);
+    echo.connect(echoFilter).connect(echoGain).connect(dest);
+    echo.start(now + 0.8);
+    echo.stop(now + 4.0);
   }
 
   /** Generic UI click — press E, confirm an action. */

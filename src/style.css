@@ -789,3 +789,14 @@ body[data-tod="night"] .leaves-toggle {
   opacity: 1;
   transform: translateY(-1px);
 }
+
+/* ─────────────── Lightning ⚡ trigger button ─────────────── */
+/* The button + its visuals are mounted by src/Effects/Thunderstorm.js;
+ * this keyframe just powers the "you clicked too fast" cooldown shake.
+ * Translation has to nest inside the existing translateX(-50%) center
+ * anchor so the button doesn't jump off-center when the animation runs. */
+@keyframes lightning-shake {
+  0%, 100% { transform: translateX(-50%); }
+  25%      { transform: translateX(calc(-50% + 3px)); }
+  75%      { transform: translateX(calc(-50% - 3px)); }
+}
