@@ -54,7 +54,9 @@ export class App extends EventTarget {
     // Shared wind source — drives the grass field today; future leaves /
     // water ripples / particle systems will read the same uniforms.
     this.wind = new Wind();
-    this.grass = new Grass(this.scene, this.wind);
+    // Grass is loaded inside boot() once paths, water, and tree placements
+    // are known (it filters its placement against those exclusion lists).
+    this.grass = new Grass(this.scene, this.loader, this.world.terrain, this.wind);
 
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
@@ -150,28 +152,32 @@ export class App extends EventTarget {
       this.world.loadAssets(this.loader, this.physics),
     ]);
 
-    // Push path-tile XZ centres into the grass shader once after load —
-    // suppresses blades growing through tile faces. Static, so no per-frame
-    // update needed.
-    if (this.world.paths) {
-      this.grass.setPathExclusions(
-        this.world.paths.getTilePositions(),
-        this.world.paths.getTileCount(),
-      );
-    }
-
     // Water is built inside world.loadAssets so its exclusions feed Nature.
-    // Hook it up to the grass shader (separate exclusion array), the rain
-    // (pond ripple footprint), and TimeOfDay (day/night tint).
+    // Hook it up to the rain (pond ripple footprint) and TimeOfDay (day/
+    // night tint). The grass field consumes its exclusion list below in the
+    // grass.load() call.
     this.water = this.world.water;
     if (this.water) {
-      this.grass.setWaterExclusions(this.water.getExclusionPoints());
       if (this.water.mainPondPosition) {
         this.rain.setPond(this.water.mainPondPosition, this.water.mainPondRadius);
       }
       this.timeOfDay.water = this.water;
       this.timeOfDay.reapply();
     }
+
+    // Build the grass field now that paths, water, and trees are placed —
+    // tufts filter against those exclusions at load time. Trees' positions
+    // come from Nature.pushSpots (only entries with type === 'tree').
+    const treePositions = (this.world.nature?.pushSpots ?? [])
+      .filter((s) => s.type === 'tree')
+      .map((s) => ({ x: s.position.x, z: s.position.z }));
+    await this.grass.load({
+      pathPositions: this.world.paths?.getTilePositions() ?? new Float32Array(0),
+      pathCount: this.world.paths?.getTileCount() ?? 0,
+      pathRadius: 1.4,
+      waterPoints: this.water?.getExclusionPoints() ?? [],
+      treePositions,
+    });
 
     this.interaction = new Interaction({
       scene: this.scene,
@@ -253,7 +259,9 @@ export class App extends EventTarget {
     // 144fps machine has plenty of headroom.
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    // 1.3 (was 1.2) — slight bump for the Quaternius nature overhaul so the
+    // warmer painted greens/browns read brighter under the same warm-sun rig.
+    this.renderer.toneMappingExposure = 1.3;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
   }
 
@@ -287,17 +295,17 @@ export class App extends EventTarget {
     sun.target.position.set(0, 0, 0);
     this.scene.add(sun.target);
     sun.castShadow = true;
-    // 1024² shadow map + ±25u frustum centered on the player gives
-    // sharp character / tree shadows everywhere within visible range.
-    // (Sprint-11 dropped to 512²+15u for FPS; with 144 fps on the
-    // user's machine there's plenty of headroom to bump back up.)
-    sun.shadow.mapSize.set(1024, 1024);
+    // 512² shadow map + ±18u frustum — tightened after the Quaternius
+    // overhaul (more geometry per shadow pass made 1024² too costly).
+    // Character + nearby props still read sharp; distant trees fade to
+    // fog before their shadows would matter anyway.
+    sun.shadow.mapSize.set(512, 512);
     sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 80;
-    sun.shadow.camera.left = -25;
-    sun.shadow.camera.right = 25;
-    sun.shadow.camera.top = 25;
-    sun.shadow.camera.bottom = -25;
+    sun.shadow.camera.far = 50;
+    sun.shadow.camera.left = -18;
+    sun.shadow.camera.right = 18;
+    sun.shadow.camera.top = 18;
+    sun.shadow.camera.bottom = -18;
     sun.shadow.bias = -0.00015;
     sun.shadow.normalBias = 0.04;
 
@@ -339,7 +347,8 @@ export class App extends EventTarget {
     this.playerCamera.update(delta);
     this.world.update(elapsed, this.camera, delta);
     this.wind.update(delta);
-    this.grass.update(this.camera, this.player.position);
+    // Grass has no per-frame work — its wind sway shares uWindTime above,
+    // and exclusions are baked at load time.
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, delta);

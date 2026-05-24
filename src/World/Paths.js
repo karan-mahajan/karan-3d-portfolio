@@ -40,11 +40,19 @@ const SHADOW_TINT_STRENGTH = 0.35;
 // sizes >96 start to compile-fail on weaker GPUs.
 const MAX_GRASS_FLATTEN_TILES = 96;
 
+// Stone paths use Quaternius's round rock-path tiles — smoother / more
+// organic than the blocky KayKit stone tiles they replaced. The wide/thin
+// pair is the visual mainstream, the three small variants give per-tile
+// variety so the radial run doesn't read as a stamped line.
 const STONE_VARIANTS = [
-  '/models/nature/path-stone.glb',
-  '/models/nature/path-stonecorner.glb',
-  '/models/nature/path-stoneend.glb',
+  '/models/nature/quaternius/rock-path-round-wide.glb',
+  '/models/nature/quaternius/rock-path-round-thin.glb',
+  '/models/nature/quaternius/rock-path-round-small-1.glb',
+  '/models/nature/quaternius/rock-path-round-small-2.glb',
+  '/models/nature/quaternius/rock-path-round-small-3.glb',
 ];
+// Wood paths stay on KayKit — preserves the "professional vs personal"
+// material story (stone for Projects/Experience, wood for Skills/Contact).
 const WOOD_VARIANTS = [
   '/models/nature/path-wood.glb',
   '/models/nature/path-woodcorner.glb',

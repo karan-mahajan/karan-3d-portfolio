@@ -52,7 +52,11 @@ const TiltShiftShader = {
 
       float blurRadius = strength * uTiltShiftAmount * 0.003;
       vec4 acc = vec4(0.0);
-      const int SAMPLES = 20;
+      // Cut from 20 → 8 samples after the Quaternius overhaul: the perf
+      // pass measured tilt-shift as the most expensive screen-space cost
+      // in the composer. 8 hash-jittered taps still read as bokeh blur
+      // rather than banded steps at the frame edges.
+      const int SAMPLES = 8;
       for (int i = 0; i < SAMPLES; i++) {
         vec2 offset = (hash2(vUv, float(i)) - 0.5) * 2.0 * blurRadius;
         acc += texture2D(tDiffuse, vUv + offset);
@@ -79,10 +83,11 @@ export class PostFX {
 
     // Subtle bloom — only truly bright pixels (sun, fireflies, emissive
     // screens) bloom. Lower strength + higher threshold keeps the sun a
-    // clean glowing disc instead of a blown-out blob. Resolution is
-    // half-width to roughly quarter the bloom's per-pixel work.
+    // clean glowing disc instead of a blown-out blob. Resolution dropped
+    // 0.5× → 0.25× of canvas size after the Quaternius overhaul (quarters
+    // the per-pixel work again — bloom is the second-most-expensive pass).
     const bloom = new UnrealBloomPass(
-      new THREE.Vector2(sizes.width * 0.5, sizes.height * 0.5),
+      new THREE.Vector2(sizes.width * 0.25, sizes.height * 0.25),
       0.30,   // strength
       0.55,   // radius
       0.92,   // threshold
@@ -113,7 +118,7 @@ export class PostFX {
   resize(width, height, pixelRatio) {
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(width, height);
-    this.bloom.setSize(width * 0.5, height * 0.5);
+    this.bloom.setSize(width * 0.25, height * 0.25);
   }
 
   render(delta) {

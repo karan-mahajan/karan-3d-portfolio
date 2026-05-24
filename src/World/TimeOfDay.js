@@ -529,8 +529,7 @@ export class TimeOfDay {
     this.fog.far = p.fogFar;
 
     if (this.grass) {
-      this.grass.material.uniforms.uBaseColor.value.set(p.grassColor);
-      this.grass.material.uniforms.uShadowTintStrength.value = p.grassShadowStrength;
+      this.grass.setColor(p.grassColor);
     }
     if (this.fireflies) {
       this.fireflies.material.uniforms.uIntensity.value = p.fireflyIntensity;
@@ -606,11 +605,14 @@ export class TimeOfDay {
     colorTo(this.fog.color, p.fogColor);
     tweens.push(gsap.to(this.fog, { near: p.fogNear, far: p.fogFar, duration, ease }));
 
-    // Grass
+    // Grass — tween the shared baseColor and propagate to all per-layer
+    // materials each onUpdate. GLB grass uses patchShadowTint at a fixed
+    // strength so the old uShadowTintStrength tween is dropped.
     if (this.grass) {
-      colorTo(this.grass.material.uniforms.uBaseColor.value, p.grassColor);
-      tweens.push(gsap.to(this.grass.material.uniforms.uShadowTintStrength, {
-        value: p.grassShadowStrength, duration, ease,
+      const gTarget = new THREE.Color(p.grassColor);
+      tweens.push(gsap.to(this.grass.baseColor, {
+        r: gTarget.r, g: gTarget.g, b: gTarget.b, duration, ease,
+        onUpdate: () => this.grass.syncColor(),
       }));
     }
 
