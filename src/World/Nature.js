@@ -43,26 +43,28 @@ const PROPS = [
 
   // ─── FLOWERS — Quaternius, native painted colours preserved ─────────────
   // Groups in the inner ring (cluster look), singles spread wider, petals
-  // sprinkled across both rings as low-detail accent fill.
-  { url: '/models/nature/quaternius/flower-group-1.glb',  count: 8, scale: [0.8, 1.2], ring: [4, 22], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-group-2.glb',  count: 8, scale: [0.8, 1.2], ring: [4, 22], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-single-1.glb', count: 12, scale: [0.7, 1.0], ring: [3, 25], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-single-2.glb', count: 12, scale: [0.7, 1.0], ring: [3, 25], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-petal-1.glb',  count: 6, scale: [0.6, 0.9], ring: [3, 28], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-petal-2.glb',  count: 6, scale: [0.6, 0.9], ring: [3, 28], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-petal-3.glb',  count: 6, scale: [0.6, 0.9], ring: [3, 28], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-petal-4.glb',  count: 6, scale: [0.6, 0.9], ring: [3, 28], kind: 'accent' },
-  { url: '/models/nature/quaternius/flower-petal-5.glb',  count: 6, scale: [0.6, 0.9], ring: [3, 28], kind: 'accent' },
+  // sprinkled across both rings as low-detail accent fill. `bend: true`
+  // applies the shared F5 player-bend hook so flowers lean away as the
+  // player walks past — see Nature.#applyBendHook.
+  { url: '/models/nature/quaternius/flower-group-1.glb',  count: 8,  scale: [0.8, 1.2], ring: [4, 22], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-group-2.glb',  count: 8,  scale: [0.8, 1.2], ring: [4, 22], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-single-1.glb', count: 12, scale: [0.7, 1.0], ring: [3, 25], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-single-2.glb', count: 12, scale: [0.7, 1.0], ring: [3, 25], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-petal-1.glb',  count: 6,  scale: [0.6, 0.9], ring: [3, 28], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-petal-2.glb',  count: 6,  scale: [0.6, 0.9], ring: [3, 28], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-petal-3.glb',  count: 6,  scale: [0.6, 0.9], ring: [3, 28], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-petal-4.glb',  count: 6,  scale: [0.6, 0.9], ring: [3, 28], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/flower-petal-5.glb',  count: 6,  scale: [0.6, 0.9], ring: [3, 28], kind: 'accent', bend: true },
 
   // ─── BUSHES ─────────────────────────────────────────────────────────────
   // Bushes get colliders; ferns and plants are walk-through accents.
   { url: '/models/nature/quaternius/bush.glb',              count: 12, scale: [0.85, 1.3], ring: [10, 38], kind: 'bush' },
   { url: '/models/nature/quaternius/bush-with-flowers.glb', count: 6,  scale: [0.85, 1.2], ring: [6, 30],  kind: 'bush' },
-  { url: '/models/nature/quaternius/fern.glb',              count: 12, scale: [0.7, 1.1],  ring: [10, 38], kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-1.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 38],  kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-2.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 38],  kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-big-1.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-big-2.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent' },
+  { url: '/models/nature/quaternius/fern.glb',              count: 12, scale: [0.7, 1.1],  ring: [10, 38], kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/plant-1.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 38],  kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/plant-2.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 38],  kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/plant-big-1.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent', bend: true },
+  { url: '/models/nature/quaternius/plant-big-2.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent', bend: true },
 
   // ─── MUSHROOMS ──────────────────────────────────────────────────────────
   { url: '/models/nature/quaternius/mushroom.glb',             count: 5, scale: [0.6, 1.0], ring: [12, 38], kind: 'accent' },
@@ -228,6 +230,24 @@ export class Nature {
 
     /** [{x, z, r}] zones where solid props (trees/bushes/rocks/logs) won't spawn. */
     this.exclusions = [];
+
+    /**
+     * Shared F5 player-bend uniforms — provided by Grass after construction.
+     * When set BEFORE load(), every `bend: true` prop's material picks up
+     * the bend hook in #placeInstances and leans away from the player.
+     * Read-only once installed; the same Vector2 instance is mutated each
+     * frame via App.tick() → grass.setPlayerPos().
+     */
+    this.playerUniforms = null;
+  }
+
+  /**
+   * Plumb the shared player-bend uniforms from Grass. Must be called BEFORE
+   * load() so the bend hook can capture the uniform references when each
+   * accent material's onBeforeCompile runs.
+   */
+  setPlayerUniforms(uniforms) {
+    this.playerUniforms = uniforms;
   }
 
   /** Register a no-spawn circle. Call before load(). */
@@ -470,6 +490,12 @@ export class Nature {
       // but guard in case a future model brings a different material type.
       if (material.isMeshStandardMaterial) patchShadowTint(material);
 
+      // F5 player-bend hook — flowers/ferns/plants lean away from the
+      // player when they're within uPlayerBendRadius. Chained BEFORE
+      // patchShadowTint? No — patchShadowTint already wrapped onBeforeCompile
+      // above; #applyBendHook stacks on top by capturing the prior hook.
+      if (cfg.bend && this.playerUniforms) this.#applyBendHook(material);
+
       const actualCount = instanceTransforms.length;
       const inst = new THREE.InstancedMesh(proto.geometry, material, actualCount);
       // Trees / bushes / rocks all live in rings 10–60u from spawn; the
@@ -500,5 +526,55 @@ export class Nature {
     }
 
     return instanceTransforms.length;
+  }
+
+  /**
+   * Inject the F5 player-bend snippet into a non-instanced PBR material.
+   * Wraps any existing onBeforeCompile (e.g. patchShadowTint) so its chain
+   * is preserved. Bend uses per-instance world XZ from instanceMatrix[3].xz
+   * — identical to the Grass shader — and gates by position.y via a wider
+   * smoothstep band than grass since these props are taller (flowers up to
+   * ~1.5 m, plants up to ~2 m).
+   *
+   * Strength is dialed down vs grass (0.18 m vs grass 0.35 m) because the
+   * accent props have wider visual silhouettes — large lateral shifts read
+   * as the whole plant teleporting rather than swaying.
+   */
+  #applyBendHook(material) {
+    const playerUniforms = this.playerUniforms;
+    const prev = material.onBeforeCompile;
+    material.onBeforeCompile = (shader, renderer) => {
+      if (prev) prev.call(material, shader, renderer);
+      Object.assign(shader.uniforms, playerUniforms, {
+        uPropBendStrength: { value: 0.18 },
+      });
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+           uniform vec2 uPlayerPos;
+           uniform float uPlayerBendRadius;
+           uniform float uPropBendStrength;`,
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           // Only the upper portion bends — base stays anchored. Larger
+           // smoothstep range than grass so 0.5–1.5 m of stem/leaves all sway.
+           float bendY = smoothstep(0.1, 1.2, position.y);
+           vec2 instWorldXZ = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+           vec2 fromPlayer = instWorldXZ - uPlayerPos;
+           float distToPlayer = length(fromPlayer);
+           float bendFalloff = 1.0 - smoothstep(0.0, uPlayerBendRadius, distToPlayer);
+           if (bendFalloff > 0.0 && bendY > 0.0) {
+             vec2 bendDir = (distToPlayer > 0.0001) ? fromPlayer / distToPlayer : vec2(0.0);
+             float bendAmt = uPropBendStrength * bendFalloff * bendY;
+             transformed.x += bendDir.x * bendAmt;
+             transformed.z += bendDir.y * bendAmt;
+           }`,
+        );
+    };
+    // Force a recompile in case the material was already used somewhere.
+    material.needsUpdate = true;
   }
 }

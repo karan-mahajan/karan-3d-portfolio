@@ -68,6 +68,16 @@ export class Grass {
     this.instancedMeshes = [];
     /** Shared base colour — TimeOfDay tweens this; syncColor() pushes to materials. */
     this.baseColor = new THREE.Color(GRASS_DAY);
+    // Shared player-bend uniforms — every grass material's onBeforeCompile
+    // assigns these into shader.uniforms by reference, so updates from
+    // setPlayerPos() propagate to all layers without iterating materials.
+    // uPlayerBendRadius: blades closer than this lean away from the player.
+    // uPlayerBendStrength: meters of horizontal displacement at the tip.
+    this.playerUniforms = {
+      uPlayerPos:           { value: new THREE.Vector2(1e6, 1e6) },
+      uPlayerBendRadius:    { value: 1.4 },
+      uPlayerBendStrength:  { value: 0.35 },
+    };
   }
 
   /**
@@ -198,20 +208,38 @@ export class Grass {
    */
   #applyWindHook(material) {
     const windUniforms = this.wind?.uniforms;
+    const playerUniforms = this.playerUniforms;
     material.onBeforeCompile = (shader) => {
       if (windUniforms) Object.assign(shader.uniforms, windUniforms);
+      Object.assign(shader.uniforms, playerUniforms);
       shader.vertexShader = shader.vertexShader
         .replace(
           '#include <common>',
           `#include <common>
-           uniform float uWindTime;`,
+           uniform float uWindTime;
+           uniform vec2 uPlayerPos;
+           uniform float uPlayerBendRadius;
+           uniform float uPlayerBendStrength;`,
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
            float windFactor = smoothstep(0.0, 0.5, position.y);
            transformed.x += sin(uWindTime * 1.5 + position.x * 0.5 + instanceMatrix[3][0] * 0.3) * 0.08 * windFactor;
-           transformed.z += cos(uWindTime * 1.2 + position.z * 0.5 + instanceMatrix[3][2] * 0.3) * 0.05 * windFactor;`,
+           transformed.z += cos(uWindTime * 1.2 + position.z * 0.5 + instanceMatrix[3][2] * 0.3) * 0.05 * windFactor;
+           // Player bend — push the tip of each blade away from the player.
+           // Per-instance world XZ comes from instanceMatrix[3].xz; only the
+           // upper half of each blade bends (windFactor already gates by Y).
+           vec2 instWorldXZ = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+           vec2 fromPlayer = instWorldXZ - uPlayerPos;
+           float distToPlayer = length(fromPlayer);
+           float bendFalloff = 1.0 - smoothstep(0.0, uPlayerBendRadius, distToPlayer);
+           if (bendFalloff > 0.0) {
+             vec2 bendDir = (distToPlayer > 0.0001) ? fromPlayer / distToPlayer : vec2(0.0);
+             float bendAmt = uPlayerBendStrength * bendFalloff * windFactor;
+             transformed.x += bendDir.x * bendAmt;
+             transformed.z += bendDir.y * bendAmt;
+           }`,
         );
     };
   }
@@ -228,6 +256,14 @@ export class Grass {
       if (dx * dx + dz * dz < TREE_EXCLUSION_R * TREE_EXCLUSION_R) return true;
     }
     return false;
+  }
+
+  /**
+   * Update the shared player-bend uniform. Cheap: it's a single Vector2
+   * already shared across every grass material via onBeforeCompile.
+   */
+  setPlayerPos(playerPos) {
+    this.playerUniforms.uPlayerPos.value.set(playerPos.x, playerPos.z);
   }
 
   /** Hard-set the base colour. Called by TimeOfDay on instant mode apply. */

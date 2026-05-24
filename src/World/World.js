@@ -24,10 +24,11 @@ export class World {
     this.billboards = null;
   }
 
-  async loadAssets(loader, physics = null) {
+  async loadAssets(loader, physics = null, { playerUniforms = null } = {}) {
     this.billboards = new Billboards(this.scene, physics, loader, this.terrain);
     this.signs = new Signs(this.scene, physics, this.terrain);
     this.nature = new Nature(this.scene, loader, this.terrain, physics);
+    if (playerUniforms) this.nature.setPlayerUniforms(playerUniforms);
 
     // Plan path tiles synchronously and register their no-spawn circles on
     // Nature BEFORE its scatter runs. Actual tile GLBs load below. Physics

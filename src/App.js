@@ -21,6 +21,7 @@ import { Fireflies } from './Effects/Fireflies.js';
 import { Rain } from './Effects/Rain.js';
 import { WindLines } from './Effects/WindLines.js';
 import { Leaves } from './Effects/Leaves.js';
+import { Dust } from './Effects/Dust.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 
@@ -66,7 +67,8 @@ export class App extends EventTarget {
     this.water = null;
     this.rain = new Rain(this.scene, this.camera);
     this.windLines = new WindLines(this.scene, this.wind);
-    this.leaves = new Leaves(this.scene, this.wind);
+    this.leaves = new Leaves(this.scene, this.wind, this.world.terrain);
+    this.dust = new Dust(this.scene, this.world.terrain, null);
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes);
@@ -145,7 +147,12 @@ export class App extends EventTarget {
 
     const [characterResult, worldResult] = await Promise.all([
       this.player.loadCharacter(),
-      this.world.loadAssets(this.loader, this.physics),
+      // Share Grass's player-bend uniforms — World constructs Nature inside
+      // loadAssets() and passes them straight into its onBeforeCompile hook
+      // so flowers / ferns / plants lean away from the player too (F5).
+      this.world.loadAssets(this.loader, this.physics, {
+        playerUniforms: this.grass.playerUniforms,
+      }),
     ]);
 
     // Water is built inside world.loadAssets so its exclusions feed Nature.
@@ -159,6 +166,7 @@ export class App extends EventTarget {
       // Give Water a handle on AudioManager so wading triggers WAV splashes
       // (entry one-shot + per-step variant). See Water.update.
       this.water.audio = this.audio;
+      this.dust.setWater(this.water);
     }
 
     // Build the grass field now that paths, water, and trees are placed —
@@ -336,8 +344,10 @@ export class App extends EventTarget {
     this.playerCamera.update(delta);
     this.world.update(elapsed, this.camera, delta);
     this.wind.update(delta);
-    // Grass has no per-frame work — its wind sway shares uWindTime above,
-    // and exclusions are baked at load time.
+    // Grass's wind sway is driven by uWindTime; the per-frame work is one
+    // uniform write for the player-bend (F5) — blades within
+    // uPlayerBendRadius lean away from the player.
+    this.grass?.setPlayerPos(this.player.position);
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, delta);
@@ -348,10 +358,12 @@ export class App extends EventTarget {
     this.rain.update(delta);
     this.windLines.update(delta, this.player.position);
     this.leaves.update(delta, this.player.position);
+    const _grounded = this.player._grounded !== false;
+    this.dust.update(delta, this.player.position, sample, _grounded);
     this.audio?.tick(delta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,
-      grounded: this.player._grounded !== false, // default to true so we don't false-trigger on first frame
+      grounded: _grounded, // default to true so we don't false-trigger on first frame
     });
     // Ocean ambience volume rides player proximity to the shoreline. Inside
     // the island it falls off with distance; in the water it's at full level.
