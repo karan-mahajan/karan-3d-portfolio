@@ -318,6 +318,7 @@ export class Signs {
 
     this.scene.add(group);
     this.compassGroup = group;
+    this.compassPosition = new THREE.Vector3(x, 0, z);
 
     if (this.physics) {
       this.physics.addStaticCylinder(x - span / 2 + 0.25, 0, z, 0.13, postHeight);
@@ -399,7 +400,10 @@ export class Signs {
 
       if (this.physics) {
         this.physics.addStaticCylinder(x, 0, z, 0.16, postHeight);
-        this.physics.addStaticCuboid(x, plankCenterY - plankH / 2, z, plankW / 2, plankH / 2, 0.09, yaw);
+        // Collider centered on the plank center, not its bottom — the
+        // previous offset left the top half of the plank without a collider
+        // so the player's head clipped through experience signs.
+        this.physics.addStaticCuboid(x, plankCenterY, z, plankW / 2, plankH / 2, 0.09, yaw);
       }
     });
   }
@@ -487,7 +491,9 @@ export class Signs {
     if (this.physics) {
       this.physics.addStaticCylinder(x - span / 2 + 0.3, 0, z, 0.22, postHeight);
       this.physics.addStaticCylinder(x + span / 2 - 0.3, 0, z, 0.22, postHeight);
-      this.physics.addStaticCuboid(x, plankCenterY - plankH / 2, z, 2.6, 1.2, 0.1, yaw);
+      // Center the collider on the plank, not at its bottom (see same fix
+      // in experience signs).
+      this.physics.addStaticCuboid(x, plankCenterY, z, 2.6, 1.2, 0.1, yaw);
     }
   }
 
@@ -587,7 +593,9 @@ export class Signs {
       const nx = x + Math.cos(yaw) * 2.0;
       const nz = z - Math.sin(yaw) * 2.0;
       this.physics.addStaticCylinder(nx, 0, nz, 0.13, 2.6);
-      this.physics.addStaticCuboid(nx, 1.3, nz, 1.6, 0.75, 0.08, yaw);
+      // Plank collider centered at the visual plank's Y (was 1.3 which left
+      // the top of the plank with no collider).
+      this.physics.addStaticCuboid(nx, namePlankY, nz, nameW / 2, nameH / 2, 0.08, yaw);
     }
   }
 

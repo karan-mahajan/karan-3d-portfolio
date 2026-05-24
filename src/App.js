@@ -11,6 +11,8 @@ import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
 import { Interaction } from './Portfolio/Interaction.js';
+import { ActionPrompts } from './Portfolio/ActionPrompts.js';
+import { Interactables } from './Portfolio/Interactables.js';
 import { Fireflies } from './Effects/Fireflies.js';
 import { Water } from './Effects/Water.js';
 import { Rain } from './Effects/Rain.js';
@@ -108,6 +110,24 @@ export class App extends EventTarget {
       signs: this.world.signs,
       audio: this.audio,
     });
+
+    this.actionPrompts = new ActionPrompts({
+      player: this.player,
+      controller: this.player.controller,
+      audio: this.audio,
+      playerCamera: this.playerCamera,
+      billboardInteraction: this.interaction,
+    });
+    // Back-reference so Interaction can defer to ActionPrompts when both
+    // would show a prompt at the same spot (e.g. Dance tile vs Contact).
+    this.interaction.actionPrompts = this.actionPrompts;
+    // Pre-populate push spots from the loaded world.
+    this.actionPrompts.discoverPushSpots(this.world);
+
+    this.interactables = new Interactables(this.scene, this.loader, this.physics, this.actionPrompts);
+    // Fire and forget — props load asynchronously and self-register triggers
+    // as each one settles. No need to block the boot resolution on this.
+    this.interactables.load().catch((err) => console.warn('[Interactables] load failed:', err));
 
     this.#tick();
     return { character: characterResult, world: worldResult };
@@ -207,7 +227,11 @@ export class App extends EventTarget {
     this.world.update(elapsed, this.camera, delta);
     this.wind.update(delta);
     this.grass.update(this.camera, this.player.position);
+    // ActionPrompts first so Interaction can read its candidate state and
+    // suppress its own prompt in case of overlap (Dance tile near Contact).
+    if (this.actionPrompts) this.actionPrompts.tick(this.player.position, delta);
     if (this.interaction) this.interaction.tick(this.player.position);
+    if (this.interactables) this.interactables.update(delta);
     this.fireflies.update(elapsed);
     this.water.update(elapsed, delta, this.player.position);
     this.rain.update(delta);

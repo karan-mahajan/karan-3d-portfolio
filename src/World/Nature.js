@@ -111,6 +111,9 @@ export class Nature {
     this.physics = physics;
     this.rng = makeRng(0xc0ffee);
     this.instancedMeshes = [];
+    /** [{position, type, surfaceRadius}] entries for proximity-based push prompts. */
+    this.pushSpots = [];
+
     /** [{x, z, r}] zones where solid props (trees/bushes/rocks/logs) won't spawn. */
     this.exclusions = [];
   }
@@ -196,6 +199,28 @@ export class Nature {
             x, y, z,
             hx * scale, hy * scale, hz * scale,
           );
+        }
+      }
+
+      // Record push-spot for trees/rocks/logs above a usefulness threshold.
+      // Bushes / small accents are skipped so the hint doesn't spam in low
+      // shrubbery. The surfaceRadius below = collider half-width × scale +
+      // a small "near" buffer the player can stand within before the chip
+      // fires.
+      if (colliderShape && cfg.kind !== 'bush') {
+        // Generous buffer so the hint fires while approaching, not just on
+        // contact. Trees especially — players orbit a tree from a few metres
+        // away before "walking into" it.
+        const buffer = cfg.kind === 'tree' ? 1.8 : 1.2;
+        const surfaceRadius = colliderShape.type === 'cylinder'
+          ? colliderShape.radius * scale + buffer
+          : Math.max(colliderShape.half[0], colliderShape.half[2]) * scale + buffer;
+        if (surfaceRadius >= 1.2) {
+          this.pushSpots.push({
+            position: new THREE.Vector3(x, y, z),
+            type: cfg.kind,           // 'tree' | 'rock' | 'log'
+            surfaceRadius,
+          });
         }
       }
     }

@@ -28,11 +28,17 @@ export class PlayerController {
   }
 
   get isRunning() {
-    return !this.paused && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+    return !this.paused && !this.isCrouching && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
   }
 
   get isJumping() {
     return !this.paused && this.keys.has('Space');
+  }
+
+  get isCrouching() {
+    // Z chosen over Ctrl: Ctrl+W closes the browser tab, which made the
+    // intended crouch-walk-forward combo destructive.
+    return !this.paused && this.keys.has('KeyZ');
   }
 
   /**
@@ -72,7 +78,9 @@ export class PlayerController {
         .normalize();
     }
 
-    const speed = this.isRunning
+    const speed = this.isCrouching
+      ? PlayerController.WALK_SPEED * 0.45
+      : this.isRunning
       ? PlayerController.RUN_SPEED
       : PlayerController.WALK_SPEED;
 

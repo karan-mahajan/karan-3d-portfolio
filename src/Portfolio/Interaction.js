@@ -17,7 +17,7 @@ const ZOOM_HEIGHT_OFFSET = 0.0; // vertical bias relative to screen center
  *   destroy() — removes listeners (not currently used; lifetime == app)
  */
 export class Interaction {
-  constructor({ scene, camera, playerCamera, player, controller, billboards, signs = null, audio = null }) {
+  constructor({ scene, camera, playerCamera, player, controller, billboards, signs = null, audio = null, actionPrompts = null }) {
     this.scene = scene;
     this.camera = camera;
     this.playerCamera = playerCamera;
@@ -26,6 +26,7 @@ export class Interaction {
     this.billboards = billboards;
     this.signs = signs;
     this.audio = audio;
+    this.actionPrompts = actionPrompts;
 
     this.activeIndex = -1;   // -1 = not focused
     this.candidate = null;   // billboard the player is currently near
@@ -127,6 +128,16 @@ export class Interaction {
     const nearContact = this.signs && this.signs.nearContact(playerPosition, CONTACT_PROXIMITY);
     this.candidate = nearBillboard;
     this.contactCandidate = !!nearContact && !nearBillboard;
+
+    // Defer to ActionPrompts — if it's about to show its own E prompt at the
+    // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
+    // ours. The action prompt is more specific to the player's current state.
+    const ap = this.actionPrompts;
+    const apOwnsPrompt = ap && (ap.candidate || ap.activeZoneLoop || ap.activeHoldLoop);
+    if (apOwnsPrompt) {
+      this.#hidePrompt();
+      return;
+    }
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
     else if (this.contactCandidate) this.#showPrompt('Contact');

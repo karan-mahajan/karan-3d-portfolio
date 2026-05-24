@@ -65,6 +65,15 @@ export class World {
       this.nature.addExclusion(a.x, a.z, 3);
     }
 
+    // Interactable prop spots — keep trees clear so the player can see them
+    // and the prompts have room to read. Coordinates mirror Interactables.js.
+    this.nature.addExclusion(18,   0, 3);    // stuck crate
+    this.nature.addExclusion( 8, -20, 3);    // punching bag
+    this.nature.addExclusion( 7,  -8, 2);    // football
+    this.nature.addExclusion(-28, -3, 3);    // dance tile
+    this.nature.addExclusion(10, -10, 2);    // chalk circle
+    this.nature.addExclusion( 3,  44, 3);    // disappointed sign + trophy
+
     const result = await this.nature.load();
 
     const pathsResult = await this.paths.load().catch((err) => {

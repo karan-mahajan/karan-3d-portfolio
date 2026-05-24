@@ -169,6 +169,150 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* ─────────────── Action prompt (do / perform) ─────────────── */
+.action-prompt {
+  position: fixed;
+  bottom: 8%;
+  left: 50%;
+  transform: translate(-50%, 4.2rem);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 1.1rem 0.55rem 0.7rem;
+  background: rgba(26, 20, 16, 0.78);
+  color: var(--paper);
+  border: 1px solid rgba(255, 153, 68, 0.4);
+  border-radius: 999px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.action-prompt.hidden {
+  opacity: 0;
+  transform: translate(-50%, 5rem);
+  pointer-events: none;
+}
+.action-prompt .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 6px;
+  background: var(--warm-pink);
+  color: var(--ink);
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  font-size: 0.9rem;
+  box-shadow: 0 0 12px rgba(255, 136, 102, 0.55);
+}
+
+/* ─────────────── Push hint (Press P when stuck) ─────────────── */
+/* Accessibility: opaque backgrounds so the world sunset never bleeds
+   through and tanks contrast. Text uses pure white on near-black
+   (contrast > 18:1, WCAG AAA). Amber is used only as an accent border /
+   key-chip, never as primary text on the sunset background. */
+.push-hint {
+  position: fixed;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 42;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 1.15rem 0.55rem 0.7rem;
+  background: #15110d;
+  color: #ffffff;
+  border: 2px solid var(--warm-amber);
+  border-radius: 999px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  box-shadow: 0 3px 18px rgba(0, 0, 0, 0.6), 0 0 20px rgba(251, 191, 36, 0.35);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.push-hint.hidden {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+  pointer-events: none;
+}
+.push-hint .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 7px;
+  background: #fbbf24;
+  color: #15110d;
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  box-shadow: 0 0 11px rgba(251, 191, 36, 0.65);
+}
+.push-joke {
+  position: fixed;
+  top: 27%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 43;
+  padding: 0.6rem 1.2rem;
+  background: #15110d;
+  color: #ffffff;
+  border: 2px solid rgba(255, 210, 138, 0.55);
+  border-radius: 10px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-style: italic;
+  pointer-events: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
+  box-shadow: 0 3px 18px rgba(0, 0, 0, 0.6);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.push-joke.hidden {
+  opacity: 0;
+  transform: translate(-50%, -6px);
+  pointer-events: none;
+}
+
+/* ─────────────── Action blocked toast ─────────────── */
+.action-blocked {
+  position: fixed;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 44;
+  padding: 0.7rem 1.4rem;
+  background: #15110d;
+  color: #ffffff;
+  border: 2px solid #ff8866;
+  border-radius: 999px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  box-shadow: 0 3px 18px rgba(0, 0, 0, 0.6), 0 0 20px rgba(255, 136, 102, 0.35);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.action-blocked.hidden {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+
 /* ─────────────── Project detail panel ─────────────── */
 .project-panel {
   position: fixed;

@@ -1,39 +1,58 @@
 import * as THREE from 'three';
 
 const TARGET_HEIGHT = 1.7;
+const AVATAR_GLB = '/models/character/avatar.glb';
 
-const ANIMATION_FILES = {
-  idle: '/models/character/idle.fbx',
-  walking: '/models/character/walking.fbx',
-  walkingBackwards: '/models/character/walking-backwards.fbx',
-  running: '/models/character/running.fbx',
-  jump: '/models/character/jump.fbx',
-  standingUp: '/models/character/standing-up.fbx',
-  startWalking: '/models/character/start-walking.fbx',
-  catwalk: '/models/character/catwalk-idle-to-walk-forward.fbx',
-  lookingAround: '/models/character/looking-around.fbx',
-  pointing: '/models/character/pointing.fbx',
-  waving: '/models/character/waving-gesture.fbx',
-};
+// Each entry: a GLB whose first animation clip is extracted and renamed to
+// `action`. The mesh inside is discarded — only the AnimationClip is kept.
+const AVATURN_CLIPS = [
+  { action: 'running',         url: '/models/character/animations/running-avaturn.glb' },
+  { action: 'crouchWalk',      url: '/models/character/animations/crouch-walk.glb' },
+  { action: 'push',            url: '/models/character/animations/push.glb' },
+  { action: 'fightStance',     url: '/models/character/animations/fight-stance.glb' },
+  { action: 'supermanPunch',   url: '/models/character/animations/superman-punch.glb' },
+  { action: 'kickFootball',    url: '/models/character/animations/kick-football.glb' },
+  { action: 'kickLeg',         url: '/models/character/animations/kick-leg.glb' },
+  { action: 'dance',           url: '/models/character/animations/dance.glb' },
+  { action: 'danceCelebrate',  url: '/models/character/animations/dance-celebrate.glb' },
+  { action: 'backflip',        url: '/models/character/animations/backflip.glb' },
+  { action: 'cartwheel',       url: '/models/character/animations/cartwheel.glb' },
+  { action: 'facepalm',        url: '/models/character/animations/facepalm.glb' },
+];
 
-/**
- * Mixamo clips often arrive with root-motion translation baked into the Hips
- * bone position track. Our movement system handles position itself, so we
- * strip the .position tracks to keep the character "in place" — the legs and
- * arms still animate, but the bone hierarchy no longer translates and the
- * character won't snap back to the origin every loop.
- */
+// Mixamo clips still used for actions Avaturn doesn't ship.
+const MIXAMO_CLIPS = [
+  { action: 'walking',          url: '/models/character/walking.fbx' },
+  { action: 'walkingBackwards', url: '/models/character/walking-backwards.fbx' },
+  { action: 'jump',             url: '/models/character/jump.fbx' },
+  { action: 'standingUp',       url: '/models/character/standing-up.fbx' },
+  { action: 'startWalking',     url: '/models/character/start-walking.fbx' },
+  { action: 'lookingAround',    url: '/models/character/looking-around.fbx' },
+  { action: 'pointing',         url: '/models/character/pointing.fbx' },
+  { action: 'waving',           url: '/models/character/waving-gesture.fbx' },
+];
+
 function stripRootMotion(clip) {
   clip.tracks = clip.tracks.filter((t) => !t.name.endsWith('.position'));
   return clip;
 }
 
 /**
- * Mixamo character: skinned mesh + AnimationMixer + state machine.
- *
- * Loads idle.fbx as the base (it contains the skin), then loads the
- * other animations and pulls just their AnimationClip onto the same
- * skeleton so we get a single mesh + N animations.
+ * Mixamo FBX exports name bones like "mixamorigHips" (or "mixamorig:Hips").
+ * Avaturn's rig uses the bare Mixamo convention ("Hips"). Stripping the
+ * prefix lets AnimationMixer bind Mixamo tracks onto the Avaturn skeleton.
+ */
+function retargetMixamoToAvaturn(clip) {
+  for (const track of clip.tracks) {
+    track.name = track.name.replace(/^mixamorig:?/, '');
+  }
+  return clip;
+}
+
+/**
+ * Avaturn avatar (GLB) + a mix of Avaturn-native and Mixamo-retargeted clips
+ * driven by a single AnimationMixer. The avatar's embedded "Animation" clip
+ * serves as the idle.
  */
 export class Character {
   constructor(loader) {
@@ -53,21 +72,23 @@ export class Character {
   }
 
   async load() {
-    const idleFbx = await this.loader.loadFBX(ANIMATION_FILES.idle);
+    let gltf;
+    try {
+      gltf = await this.loader.loadGLTF(AVATAR_GLB);
+    } catch (err) {
+      console.warn('[Character] failed to load Avaturn GLB:', err);
+      return { ok: false, reason: 'glb-load-failed' };
+    }
 
-    // Detect whether this FBX actually contains a skinned mesh.
+    const avatar = gltf.scene;
     this.skinned = false;
-    idleFbx.traverse((child) => {
+    avatar.traverse((child) => {
       if (child.isSkinnedMesh) {
         this.skinned = true;
         child.castShadow = true;
         child.receiveShadow = true;
-        // Mixamo materials often arrive as MeshPhongMaterial with no map —
-        // soften them so they read well under warm light.
         const apply = (m) => {
-          if (!m) return;
-          m.envMapIntensity = 0.6;
-          if (m.shininess !== undefined) m.shininess = 8;
+          if (m && m.envMapIntensity !== undefined) m.envMapIntensity = 0.6;
         };
         if (Array.isArray(child.material)) child.material.forEach(apply);
         else apply(child.material);
@@ -75,30 +96,20 @@ export class Character {
     });
 
     if (!this.skinned) {
-      console.warn(
-        '[Character] idle.fbx has no SkinnedMesh — Mixamo download was likely "Without Skin". ' +
-          'Re-download any animation with the "Skin" checkbox ticked.',
-      );
-      return { ok: false };
+      console.warn('[Character] Avaturn GLB contains no SkinnedMesh.');
+      return { ok: false, reason: 'no-skinned-mesh' };
     }
 
-    // Scale + ground-align the character to ~1.7m, feet at y=0.
-    const box = new THREE.Box3().setFromObject(idleFbx);
+    const box = new THREE.Box3().setFromObject(avatar);
     const size = box.getSize(new THREE.Vector3());
     const scale = TARGET_HEIGHT / Math.max(size.y, 0.001);
-    idleFbx.scale.setScalar(scale);
-    const scaledBox = new THREE.Box3().setFromObject(idleFbx);
-    idleFbx.position.y -= scaledBox.min.y;
+    avatar.scale.setScalar(scale);
+    const scaledBox = new THREE.Box3().setFromObject(avatar);
+    avatar.position.y -= scaledBox.min.y;
 
-    // Mixamo characters arrive facing +Z, which matches our movement system —
-    // no extra rotation needed. Player.group provides yaw.
-
-    this.mesh = idleFbx;
+    this.mesh = avatar;
     this.root.add(this.mesh);
 
-    // Locate the root bone (Hips) so we can clamp its position each frame —
-    // even with position tracks stripped, the bind pose can drift if multiple
-    // mixers blend simultaneously, producing a noticeable lean / float.
     this.mesh.traverse((child) => {
       if (this.rootBone || !child.isBone) return;
       if (/hips/i.test(child.name)) {
@@ -110,38 +121,58 @@ export class Character {
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.mixer.addEventListener('finished', this.#onActionFinished);
 
-    // Idle clip is in the same FBX.
-    if (idleFbx.animations.length > 0) {
-      const clip = stripRootMotion(idleFbx.animations[0]);
-      clip.name = 'idle';
-      this.actions.idle = this.mixer.clipAction(clip);
+    // Idle: the GLB's embedded animation is authored for this exact rig.
+    if (gltf.animations?.length) {
+      const idleClip = stripRootMotion(gltf.animations[0]);
+      idleClip.name = 'idle';
+      this.actions.idle = this.mixer.clipAction(idleClip);
     }
 
-    // Load remaining animations in parallel and extract their first clip.
-    const others = Object.entries(ANIMATION_FILES).filter(([k]) => k !== 'idle');
-    const loaded = await Promise.allSettled(
-      others.map(async ([name, url]) => {
-        const fbx = await this.loader.loadFBX(url);
-        return { name, clip: fbx.animations[0] };
+    // Avaturn-native clips: each GLB ships its own skeleton + one anim. We
+    // discard the mesh and just bind the clip onto our existing mixer (bone
+    // names match, no retargeting needed).
+    const avaturnResults = await Promise.allSettled(
+      AVATURN_CLIPS.map(async ({ action, url }) => {
+        const g = await this.loader.loadGLTF(url);
+        return { action, clip: g.animations?.[0] };
       }),
     );
-
-    for (const r of loaded) {
+    for (const r of avaturnResults) {
       if (r.status !== 'fulfilled' || !r.value.clip) continue;
-      const { name, clip } = r.value;
+      const { action, clip } = r.value;
       stripRootMotion(clip);
-      clip.name = name;
-      this.actions[name] = this.mixer.clipAction(clip);
+      clip.name = action;
+      this.actions[action] = this.mixer.clipAction(clip);
     }
 
-    // Spawn-in: play "standing up" once, then settle to idle.
+    // Mixamo clips for actions Avaturn doesn't ship — retarget by stripping
+    // the mixamorig prefix from track names.
+    const mixamoResults = await Promise.allSettled(
+      MIXAMO_CLIPS.map(async ({ action, url }) => {
+        const fbx = await this.loader.loadFBX(url);
+        return { action, clip: fbx.animations?.[0] };
+      }),
+    );
+    for (const r of mixamoResults) {
+      if (r.status !== 'fulfilled' || !r.value.clip) continue;
+      const { action, clip } = r.value;
+      stripRootMotion(clip);
+      retargetMixamoToAvaturn(clip);
+      clip.name = action;
+      this.actions[action] = this.mixer.clipAction(clip);
+    }
+
     if (this.actions.standingUp) {
       this.play('standingUp', { fade: 0, once: true, then: 'idle' });
-    } else {
+    } else if (this.actions.idle) {
       this.play('idle');
     }
 
-    return { ok: true, animationCount: Object.keys(this.actions).length };
+    return {
+      ok: true,
+      animationCount: Object.keys(this.actions).length,
+      availableActions: Object.keys(this.actions),
+    };
   }
 
   /**
@@ -149,6 +180,7 @@ export class Character {
    * opts.fade: seconds, default 0.25
    * opts.once: if true, plays the clip once and fires opts.then on finish
    * opts.then: state name to transition to after a one-shot finishes
+   * opts.interruptible: cosmetic clips can be cancelled by movement input
    */
   play(name, opts = {}) {
     const action = this.actions[name];
@@ -160,9 +192,6 @@ export class Character {
     if (opts.once) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
-      // `interruptible` lets the Player state machine cancel cosmetic
-      // one-shots (lookAround, point, wave) when input arrives. Critical
-      // ones (standingUp spawn) leave it undefined → treated as non-interruptible.
       this._oneShot = { name, then: opts.then ?? 'idle', interruptible: opts.interruptible === true };
     } else {
       next.setLoop(THREE.LoopRepeat, Infinity);
@@ -191,9 +220,6 @@ export class Character {
   update(delta) {
     if (!this.mixer) return;
     this.mixer.update(delta);
-    // Snap the root bone back to its bind position every frame. Cancels any
-    // drift the animation might introduce, keeping the character upright
-    // and on its feet.
     if (this.rootBone) {
       this.rootBone.position.copy(this.rootBoneBindPos);
     }

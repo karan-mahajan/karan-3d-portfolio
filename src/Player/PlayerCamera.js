@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import CameraControls from 'camera-controls';
+import CameraControls from "camera-controls";
+import * as THREE from "three";
 
 // Tree-shake-safe subset for camera-controls.
 const subsetOfTHREE = {
@@ -35,8 +35,8 @@ export class PlayerCamera {
     this.camera = camera;
     this.controls = new CameraControls(camera, canvas);
 
-    this.controls.minDistance = 3.5;
-    this.controls.maxDistance = 10;
+    this.controls.minDistance = 2.5;
+    this.controls.maxDistance = 12;
 
     this.controls.azimuthRotateSpeed = 0.55;
     this.controls.polarRotateSpeed = 0.35;
@@ -49,11 +49,12 @@ export class PlayerCamera {
     this.controls.truckSpeed = 0;
     this.controls.dollyToCursor = false;
 
-    // Seed initial state. Closer + lower than a pure top-down — behind the
-    // player at roughly shoulder height so the sky shows above the billboards
-    // and the character fills more of the frame.
-    // distance≈5.6, polar≈77° (near-horizontal), azimuth=π (behind).
-    this.controls.setLookAt(0, 2.45, -5.5, 0, HEAD_HEIGHT, 0, false);
+    // Seed initial state. Pinned to the minimum zoom distance and the most
+    // horizontal polar angle — but azimuth=0 places the camera in FRONT of
+    // the player so we see the character's face, with the welcome board
+    // behind the camera (out of frame).
+    // distance≈2.5, polar≈85° (nearly flat), azimuth=0 (in front).
+    this.controls.setLookAt(0, 1.66, -3.94, 0, HEAD_HEIGHT, 0, false);
 
     this._target = new THREE.Vector3(0, HEAD_HEIGHT, 0);
     this._tmpOffset = new THREE.Vector3();
@@ -107,6 +108,28 @@ export class PlayerCamera {
 
     this.camera.position.copy(this._target).add(this._tmpOffset);
     this.camera.lookAt(this._target);
+  }
+
+  /**
+   * Temporarily zoom the orbit out by `factor` (1.10 = 10% farther). Called
+   * by ActionPrompts when a performance animation starts so the player can
+   * see the character do the thing. Re-entrant safe.
+   */
+  applyActionZoom(factor = 1.1) {
+    if (this._actionZoomActive) return;
+    this._actionZoomActive = true;
+    this._savedActionDistance = this.controls.distance;
+    const target = Math.min(this.controls.distance * factor, this.controls.maxDistance);
+    this.controls.dollyTo(target, true);
+  }
+
+  releaseActionZoom() {
+    if (!this._actionZoomActive) return;
+    this._actionZoomActive = false;
+    if (this._savedActionDistance !== undefined) {
+      this.controls.dollyTo(this._savedActionDistance, true);
+      this._savedActionDistance = undefined;
+    }
   }
 
   /**

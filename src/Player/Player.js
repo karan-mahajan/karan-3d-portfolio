@@ -120,6 +120,7 @@ export class Player {
     } else {
       this.#applyKinematicMotion(sample, delta);
     }
+
     this.#updateAnimationState(sample);
 
     if (this.character) this.character.update(delta);
@@ -205,6 +206,10 @@ export class Player {
   #updateAnimationState(sample) {
     if (!this.character) return;
 
+    // ActionPrompts-driven loops (push, dance) lock the animation so the
+    // state machine doesn't yank it back to walk/idle each frame.
+    if (this._actionLocked) return;
+
     const wantsMove = sample.moving || !this._grounded;
     const oneShot = this.character._oneShot;
     if (oneShot) {
@@ -220,7 +225,9 @@ export class Player {
     if (!this._grounded) {
       nextState = 'jump';
     } else if (sample.moving) {
-      nextState = this.controller.isRunning ? 'running' : 'walking';
+      if (this.controller.isCrouching && this.character.actions.crouchWalk) nextState = 'crouchWalk';
+      else if (this.controller.isRunning) nextState = 'running';
+      else nextState = 'walking';
     } else if (this._idleTimer >= Player.IDLE_LOOK_AROUND_SECONDS) {
       this._idleTimer = 0;
       this.character.play('lookingAround', { once: true, then: 'idle', interruptible: true });
@@ -248,5 +255,44 @@ export class Player {
   }
   wave() {
     if (this.character) this.character.play('waving', { once: true, then: 'idle', interruptible: true });
+  }
+
+  /**
+   * Entry point for ActionPrompts. Plays an arbitrary action by name; opts
+   * are forwarded to Character.play. Returns true if the action existed.
+   */
+  performAction(name, opts = {}) {
+    if (!this.character || !this.character.actions[name]) return false;
+    // Lock the state machine to this clip while it's playing — the one-shot
+    // path in #updateAnimationState already handles this when interruptible
+    // is false. We mark it interruptible only if the caller asks.
+    this.character.play(name, { once: true, then: 'idle', interruptible: false, ...opts });
+    this._state = name;
+    return true;
+  }
+
+  /** Play a looping action (e.g. dance, push) until stopAction is called. */
+  startLoopAction(name) {
+    if (!this.character || !this.character.actions[name]) return false;
+    this._actionLocked = true;
+    this.character.play(name, { fade: 0.2 });
+    this._state = name;
+    return true;
+  }
+
+  /** Switch the current loop to a different clip without unlocking. */
+  swapLoopAction(name) {
+    if (!this.character || !this.character.actions[name]) return false;
+    this.character.play(name, { fade: 0.25 });
+    this._state = name;
+    return true;
+  }
+
+  /** Stop a loop started by startLoopAction; fades back to idle. */
+  stopLoopAction() {
+    if (!this.character) return;
+    this._actionLocked = false;
+    this.character.play('idle', { fade: 0.25 });
+    this._state = 'idle';
   }
 }
