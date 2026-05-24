@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd089"/>
+      <stop offset="0.55" stop-color="#ffb084"/>
+      <stop offset="1" stop-color="#c14a2a"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff7e0"/>
+      <stop offset="0.45" stop-color="#ffe2a8" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffd089" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7a3018"/>
+      <stop offset="1" stop-color="#4a1e0e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+
+  <circle cx="44" cy="34" r="20" fill="url(#sun)"/>
+
+  <path d="M0 50 Q14 44 28 48 T56 46 L64 47 L64 64 L0 64 Z" fill="url(#ground)" opacity="0.7"/>
+
+  <g stroke="#fffaf2" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <line x1="20" y1="14" x2="20" y2="49"/>
+    <line x1="20" y1="32" x2="42" y2="14"/>
+    <line x1="20" y1="32" x2="42" y2="49"/>
+  </g>
+</svg>
