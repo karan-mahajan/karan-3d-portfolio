@@ -155,6 +155,45 @@ export class Physics {
     return body;
   }
 
+  /**
+   * Swept-capsule clearance test. Returns true if an upright capsule of
+   * (`radius`, `halfHeight`) cast from `origin` along `dir` for `distance`
+   * metres encounters no static geometry. Pass the player's collider as
+   * `excludeCollider` so the player's own body doesn't count as a hit.
+   *
+   * Used by ActionPrompts to gate body-sweeping animations (backflip,
+   * cartwheel) so limbs don't clip walls, trees, signs, or rising slopes.
+   * The caller chooses the cast direction(s) — a backflip casts
+   * backward+up; a cartwheel casts ±sideways+up.
+   *
+   * `dir` is normalised internally; magnitude doesn't matter. The cast
+   * uses stopAtPenetration=true so any initial overlap counts as blocked
+   * (caller should lift the origin so the capsule's bottom hemisphere
+   * sits just above the ground).
+   */
+  clearanceFor(origin, dir, distance, radius, halfHeight, excludeCollider = null) {
+    if (!this.ready) return true;
+    const { RAPIER, world } = this;
+    const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
+    const shape = new RAPIER.Capsule(halfHeight, radius);
+    const shapePos = { x: origin.x, y: origin.y, z: origin.z };
+    const shapeRot = { x: 0, y: 0, z: 0, w: 1 };
+    // With maxToi=1, shapeVel itself is the total displacement vector.
+    const shapeVel = {
+      x: (dir.x / len) * distance,
+      y: (dir.y / len) * distance,
+      z: (dir.z / len) * distance,
+    };
+    const hit = world.castShape(
+      shapePos, shapeRot, shapeVel, shape,
+      1.0,
+      true,
+      undefined, undefined,
+      excludeCollider || undefined,
+    );
+    return hit === null;
+  }
+
   // ── Player ───────────────────────────────────────────────────────────────
 
   /**

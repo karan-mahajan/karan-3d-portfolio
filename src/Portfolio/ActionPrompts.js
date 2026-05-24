@@ -338,11 +338,12 @@ export class ActionPrompts {
   }
 
   _triggerGlobalAction(actionName, blockMessage) {
-    // Conservative: if any pushable obstacle is in proximity, refuse — the
-    // animation would visually clip. The proximity check uses the same
-    // `currentPushSpot` that drives the "Press P" hint, so behaviour is
-    // consistent with what the player sees.
-    if (this.currentPushSpot) {
+    // Swept-capsule clearance against the static world (incl. heightfield
+    // ground). The old proximity-only check using currentPushSpot only
+    // covered tagged push spots — walls, dock railings, furniture, mailbox
+    // body, slopes, and tree canopies weren't blocked, so limbs clipped
+    // through them.
+    if (!this._hasClearance(actionName)) {
       this._showBlockedMessage(blockMessage);
       return;
     }
@@ -358,6 +359,59 @@ export class ActionPrompts {
     this.oneShotActive = { trigger: { id: 'global-' + actionName }, untilSec: this._elapsed + duration + 0.1 };
     if (this.playerCamera) this.playerCamera.applyActionZoom();
     if (this.audio) this.audio.playInteract();
+  }
+
+  /**
+   * Swept-capsule clearance for global flips. Casts an upright capsule
+   * (radius 0.4, halfHeight 1.2) that conservatively envelopes the player's
+   * swept volume during the animation:
+   *
+   *   backflip  — cast backward 1.5m AND upward 2.5m
+   *   cartwheel — cast ±sideways 1.5m AND upward 2.5m
+   *
+   * The cast origin is lifted to (feet + 1.65m) so the capsule's bottom
+   * hemisphere sits ~5cm above the ground — flat terrain stays a non-hit,
+   * but a rising slope, low canopy, wall, sign, dock railing, or tree all
+   * trigger refusal because the cast intersects them. This is what stops
+   * hands/feet/head from clipping through static geometry mid-flip.
+   *
+   * Excludes the player's own collider so it never self-blocks.
+   */
+  _hasClearance(actionName) {
+    const physics = this.player && this.player.physics;
+    if (!physics || !physics.ready) return true;
+    const RADIUS = 0.4;
+    const HALF_HEIGHT = 1.2;
+    const SWEEP_BACK = 1.5;
+    const SWEEP_SIDE = 1.5;
+    const SWEEP_UP = 2.5;
+    const SKIN = 0.05;
+    const origin = {
+      x: this.player.position.x,
+      y: this.player.position.y + HALF_HEIGHT + RADIUS + SKIN,
+      z: this.player.position.z,
+    };
+    const yaw = this.player.group.rotation.y;
+    // Forward = (sin(yaw), 0, cos(yaw)); Right = up × forward = (cos(yaw), 0, -sin(yaw))
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const rx = fz;
+    const rz = -fx;
+    const excl = (this.player.body && this.player.body.collider) || null;
+    const UP = { x: 0, y: 1, z: 0 };
+
+    if (actionName === 'backflip') {
+      const okBack = physics.clearanceFor(origin, { x: -fx, y: 0, z: -fz }, SWEEP_BACK, RADIUS, HALF_HEIGHT, excl);
+      const okUp   = physics.clearanceFor(origin, UP, SWEEP_UP, RADIUS, HALF_HEIGHT, excl);
+      return okBack && okUp;
+    }
+    if (actionName === 'cartwheel') {
+      const okRight = physics.clearanceFor(origin, { x: rx, y: 0, z: rz }, SWEEP_SIDE, RADIUS, HALF_HEIGHT, excl);
+      const okLeft  = physics.clearanceFor(origin, { x: -rx, y: 0, z: -rz }, SWEEP_SIDE, RADIUS, HALF_HEIGHT, excl);
+      const okUp    = physics.clearanceFor(origin, UP, SWEEP_UP, RADIUS, HALF_HEIGHT, excl);
+      return okRight && okLeft && okUp;
+    }
+    return true;
   }
 
   _endGlobalPush() {
