@@ -125,11 +125,14 @@ export const NIGHT_PALETTE = Object.freeze({
 });
 
 /**
- * Returns 'day' between 6:00 and 18:59, 'night' otherwise.
+ * Returns 'day' between 06:00 and 19:59, 'night' otherwise.
+ * Boundary matches SUNSET in #calcSunPosition — keeps the moon-arc
+ * domain continuous with the day-arc domain so a clock-driven mode
+ * flip never lands on a gap.
  */
 export function detectAutoMode() {
   const hour = new Date().getHours();
-  return hour >= 21 || hour < 6 ? "night" : "day";
+  return hour >= 20 || hour < 6 ? "night" : "day";
 }
 
 export class TimeOfDay {
@@ -181,6 +184,11 @@ export class TimeOfDay {
     this.playerGroup = playerGroup;
 
     this.mode = detectAutoMode();
+    // Real-time clock drives sun/moon position by default. Set true when
+    // the user clicks the toggle into a mode that disagrees with the
+    // current clock — then the arc pins to a fixed "noon" / "midnight"
+    // angle until they toggle back into the auto-detected mode.
+    this._manualOverride = false;
 
     this.#buildCharacterLights();
     this.#buildStars();
@@ -192,12 +200,20 @@ export class TimeOfDay {
     // Apply the initial mode instantly so the world is rendered correctly
     // on the very first frame.
     this.#applyInstant(this.mode);
+    // Snap sunOffset to the time-of-day-derived direction immediately so
+    // the very first rendered frame already shows the real sun position,
+    // not the static palette seed.
+    this.sunOffset.copy(this.#calcOffset());
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
   setMode(mode, duration = TRANSITION_SECONDS) {
     if (mode !== "day" && mode !== "night") return;
     if (mode === this.mode) return;
+    // If the requested mode disagrees with the real clock the user is
+    // overriding it — pin sun/moon to a peak angle. Returning to the
+    // auto-detected mode clears the override so the live arc resumes.
+    this._manualOverride = mode !== detectAutoMode();
     this.mode = mode;
     this.dispatchEvent?.("change", mode);
     this.#transition(mode, duration);
@@ -213,6 +229,14 @@ export class TimeOfDay {
    *  visible transition. */
   reapply() {
     this.#applyInstant(this.mode);
+  }
+
+  /** Recompute sunOffset from the live clock + mode and snap to it,
+   *  skipping the per-frame lerp. Useful if the system clock jumps
+   *  (e.g. a verify probe stubs Date) and you want the next rendered
+   *  frame to already show the new position. */
+  snapToClock() {
+    if (this.sunOffset) this.sunOffset.copy(this.#calcOffset());
   }
 
   /** No-op kept for backwards compatibility with App.js. Static Lamps
@@ -280,6 +304,13 @@ export class TimeOfDay {
       this.starGroup.visible =
         this.starMaterial.uniforms.uOpacity.value > 0.001;
     }
+    // Real-time sun/moon direction. Calculated each frame from the
+    // local clock (or pinned to a peak angle while the user has the
+    // toggle in manual override). Lerping rather than snapping keeps
+    // mode-toggle transitions smooth — at 0.06 the arc covers a
+    // day→night swap in ~1s, which matches the gsap color tween below.
+    this.sunOffset.lerp(this.#calcOffset(), 0.06);
+
     if (this.moonGroup && camera) {
       this.#updateMoonPosition(camera);
       this.moonGroup.visible = this.moonDisc.material.opacity > 0.001;
@@ -469,11 +500,6 @@ export class TimeOfDay {
     this.moonHalo.renderOrder = 9;
     this.moonGroup.add(this.moonHalo);
 
-    // Fixed direction relative to the camera — moon visible at default
-    // tilt: mostly ahead (+Z), a little right (+X), slightly up (+Y).
-    this._moonDir = new THREE.Vector3(0.4, 0.15, 0.9).normalize();
-    this._moonDist = 150;
-
     this.scene.add(this.moonGroup);
   }
 
@@ -509,16 +535,111 @@ export class TimeOfDay {
   }
 
   #updateMoonPosition(camera) {
-    // Fixed direction relative to the camera so the moon stays in the
-    // same part of the sky regardless of player position or sun
-    // direction. The previous sun-anchored scheme drifted off-screen as
-    // the night-sun moved during the transition tween.
+    // The moon disc rides the same direction as the moonlight that
+    // casts the night-time shadows — i.e. whatever sunOffset is at
+    // night. Camera-anchored at STAR_DOME_RADIUS * 0.7 so the moon
+    // sits clearly inside the star dome but well past nearby props.
     this.moonGroup.position
       .copy(camera.position)
-      .addScaledVector(this._moonDir, this._moonDist);
+      .addScaledVector(this.sunOffset.clone().normalize(), STAR_DOME_RADIUS * 0.7);
     // Halo plane billboards toward the camera so the additive corona
     // is always seen face-on (instead of edge-on, which made it vanish).
     this.moonHalo.quaternion.copy(camera.quaternion);
+  }
+
+  // ── Real-time sun/moon position ───────────────────────────────────────────
+  /** Fractional hours since midnight, system local clock. */
+  #getCurrentHours() {
+    const now = new Date();
+    return now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+  }
+
+  // Arc shape parameters — tuned so the disc stays inside the default
+  // third-person camera's view frustum at every hour. The default camera
+  // sits ~6.7° below horizontal looking north (PlayerCamera initial
+  // setLookAt) with FOV 45°v / 67°h, which means the upper frame edge
+  // sees only ~16° above horizon. After normalize-to-magnitude, we need
+  // y / z < tan(16°) ≈ 0.28 at noon, which is what the values below
+  // give. Earlier attempts with a y peak of 42 + z bias 0.6×distance
+  // put the sun at ~56° elevation — well above the frame.
+  static #ARC = Object.freeze({
+    X_SWING: 15,    // east at moon/sunrise → west at moon/sunset
+    Y_BASE: 7,      // altitude at horizon (low but above the visible ground)
+    Y_SWING: 6,     // y peak at noon = Y_BASE + Y_SWING = 13
+    Z_FORWARD: 50,  // dominant forward (+Z) component so the disc is
+                    // always in front of the north-facing camera
+  });
+
+  /**
+   * Sun offset for a daytime hour. Traces an arc from EAST (+X) at
+   * SUNRISE to WEST (−X) at SUNSET, with a strong forward (+Z) bias
+   * and gentle altitude peak so the visible disc stays inside the
+   * default camera frame. Trades a chunk of real-world geometric
+   * purity for a sun that's actually visible without the user
+   * spinning the camera — the alternative (pure east-west arc) puts
+   * the disc 60-80° off-axis from camera-forward at sunrise / noon /
+   * sunset and was the bug behind the "I don't see the sun anywhere"
+   * report on 2026-05-24.
+   *
+   * Magnitude is normalized to 40 by #calcOffset so the shadow camera
+   * frustum (set in App.js #initLighting) stays inside its far plane.
+   */
+  #calcSunPosition(hours) {
+    const SUNRISE = 6.0;
+    const SUNSET = 20.0;
+    const DAY_LENGTH = SUNSET - SUNRISE;
+    const t = Math.max(0, Math.min(1, (hours - SUNRISE) / DAY_LENGTH));
+    const angle = t * Math.PI;            // 0 east → π west
+    const elevation = Math.sin(angle);    // 0 horizon, 1 noon
+    const A = TimeOfDay.#ARC;
+    return new THREE.Vector3(
+      Math.cos(angle) * A.X_SWING,
+      A.Y_BASE + elevation * A.Y_SWING,
+      A.Z_FORWARD,
+    );
+  }
+
+  /**
+   * Moon offset for a night-time hour. Like the real moon, it rises
+   * in the east at sunset, peaks near midnight, and sets in the west
+   * at sunrise — same X direction as the sun arc, just shifted in
+   * time. The t-mapping wraps midnight: 20:00→0, 00:00→0.4, 06:00→1.
+   * Earlier code (and the original spec) had it traverse west→east,
+   * which placed the moon disc behind the camera at midnight.
+   */
+  #calcMoonPosition(hours) {
+    let t;
+    if (hours >= 20) t = (hours - 20) / 10;
+    else if (hours < 6) t = (hours + 4) / 10;
+    else t = 0;
+    t = Math.max(0, Math.min(1, t));
+    const angle = t * Math.PI;
+    const elevation = Math.sin(angle);
+    const A = TimeOfDay.#ARC;
+    return new THREE.Vector3(
+      Math.cos(angle) * A.X_SWING,
+      A.Y_BASE + elevation * A.Y_SWING,
+      A.Z_FORWARD,
+    );
+  }
+
+  /**
+   * Picks the current target offset based on mode + override state, then
+   * normalizes magnitude so the shadow camera frustum (configured in
+   * App.js #initLighting around the player) stays valid across the
+   * whole arc. Only the *direction* of the offset varies with time;
+   * the *distance* is locked. Returns a fresh Vector3 the caller can
+   * lerp toward or copy from freely.
+   */
+  #calcOffset() {
+    const hours = this._manualOverride
+      ? (this.mode === "day" ? 12 : 0)
+      : this.#getCurrentHours();
+    const off = this.mode === "day"
+      ? this.#calcSunPosition(hours)
+      : this.#calcMoonPosition(hours);
+    const FIXED_MAG = this.mode === "day" ? 40 : 35;
+    return off.normalize().multiplyScalar(FIXED_MAG);
   }
 
   // ── State application ─────────────────────────────────────────────────────
@@ -581,8 +702,13 @@ export class TimeOfDay {
       });
     }
 
-    // Sun offset (for App.js to track in #tick).
-    this.sunOffset = p.sunOffset.clone();
+    // sunOffset is computed every frame from real local time in tick();
+    // the palette value is only a seed for the very first applyInstant
+    // before the constructor snaps it to the real-time direction.
+    // Subsequent reapply() calls (after async loads of water / signs /
+    // lamps) must leave the live offset alone — otherwise the sun
+    // visibly jumps back to the static seed and then lerps out again.
+    if (!this.sunOffset) this.sunOffset = p.sunOffset.clone();
   }
 
   #transition(mode, duration) {
@@ -626,16 +752,9 @@ export class TimeOfDay {
       gsap.to(this.hemi, { intensity: p.hemiIntensity, duration, ease }),
     );
 
-    // Sun follow offset (per-frame writer in App.js reads sunOffset).
-    tweens.push(
-      gsap.to(this.sunOffset, {
-        x: p.sunOffset.x,
-        y: p.sunOffset.y,
-        z: p.sunOffset.z,
-        duration,
-        ease,
-      }),
-    );
+    // Sun follow offset is driven by tick() each frame from the real
+    // local clock — no gsap tween here, otherwise it would fight the
+    // per-frame lerp.
 
     // Sky
     colorTo(this.sky.material.uniforms.uTop.value, p.skyTop);
