@@ -2,45 +2,60 @@ import * as THREE from 'three';
 import { patchShadowTint } from './Palette.js';
 
 /**
- * Large walkable ground plane. The displaced geometry is unchanged from the
- * flat-colour version — physics colliders and the Grass.js shader-field both
- * mirror `heightAt`, so we must not touch the wave or the flat-spawn zone.
+ * Walkable ground plane, sculpted into an island:
+ *   - Inside `ISLAND_RADIUS` (45 m): playable land at y ≈ 0.5, with gentle
+ *     painted hills (sin/cos wave) and a flat spawn plateau.
+ *   - Between `ISLAND_RADIUS` and `ISLAND_RADIUS + SHORE_WIDTH` (45–57 m):
+ *     a sandy shore slope from y ≈ 0.5 down to y ≈ -2.
+ *   - Beyond 57 m: clamped at y = -2 — the ocean floor under the water plane.
+ *
+ * `heightAt(x, z)` mirrors `#displaceVertices`. Physics.addStaticGround() and
+ * Grass placement both read it, so the two must stay in lockstep.
  *
  * Material: a `MeshStandardMaterial` extended via `onBeforeCompile` to blend
- * three tileable PBR sets (grass / dirt / stone) at ~5m UV scale. Blend
- * weights are derived from worldspace Y (dirt in dips) and surface slope
- * (stone on the steepest ridges). All three normal maps are sampled and
- * combined, with TBN reconstructed from screen-space derivatives so we don't
- * need a tangent attribute on the geometry.
- *
- * Tuning constants live as `#UV_SCALE`, `#DIRT_*`, `#STONE_*` on the class so
- * a future polish pass can adjust without spelunking the GLSL.
+ * three tileable PBR sets (grass / dirt / stone) at ~5m UV scale plus two
+ * cheap colour tints on the dirt sample for "sand" (around the waterline)
+ * and "mud" (the submerged ocean floor). Blend weights are derived from
+ * worldspace Y; surface slope still gates the stone band for any future
+ * hand-sculpted ridges.
  */
 export class Terrain {
   static #UV_SCALE = 5.0;
-  // Dirt only fades in for the deepest dips of the sine wave — wave std is
-  // ≈0.27, so DIRT_HIGH=-0.25 means roughly the lowest ~18% of terrain area
-  // starts to show dirt; full saturation at -0.50 is reached only in the rare
-  // deepest pockets. Keeps grass clearly dominant.
-  static #DIRT_HIGH = -0.25;
-  static #DIRT_LOW = -0.50;
-  // Stone gates on surface angle from vertical. STONE_LOW=0.15 corresponds to
-  // dot(n, up) = 0.85, i.e. ~32° from vertical; STONE_HIGH=0.30 ≈ 45°. The
-  // current sine-wave terrain barely exceeds 4° anywhere, so stone is RARE by
-  // design — it's reserved for any future hand-sculpted ridges.
+
+  // Island shape — must match WATER's ISLAND_RADIUS in src/Effects/Water.js.
+  // Inside the island the height formula is the same gentle wave-and-spawn-
+  // flatten the portfolio was originally built against (signs/billboards
+  // placed at y=0 sit on top of the grass). Outside the island radius the
+  // land drops away through a shore slope to the ocean floor.
+  static #ISLAND_RADIUS = 45;
+  static #SHORE_WIDTH = 12;
+  static #OCEAN_FLOOR_Y = -2.0;
+  // Land floor inside the island. Held a few centimetres above the water
+  // plane (y=0) so any wave-dip can't show transparent ocean through itself.
+  static #INNER_FLOOR_Y = 0.02;
+
+  // Material bands (worldspace Y):
+  //   y > #GRASS_Y_LOW              → grass texture
+  //   #SAND_Y_LOW … #GRASS_Y_LOW    → grass→sand blend (visible beach)
+  //   #MUD_Y_LOW  … #SAND_Y_LOW     → sand (dirt-tex × sand tint)
+  //   y < #MUD_Y_LOW                → mud (dirt-tex × mud tint, ocean floor)
+  // Tuned so the full island interior reads as grass and the shore slope
+  // (y dropping from 0 to -2 over ~12 m) gives an ~8-m wide visible sand band.
+  static #GRASS_Y_LOW = -0.05;
+  static #SAND_Y_LOW = -1.50;
+  static #MUD_Y_LOW = -1.80;
   static #STONE_LOW = 0.15;
   static #STONE_HIGH = 0.30;
+  static #SAND_TINT = [0.77, 0.63, 0.38]; // #c4a060
+  static #MUD_TINT = [0.23, 0.19, 0.13];  // #3a3020
   static #TEXTURE_BASE = '/textures/ground';
-  // Wet-rim band — terrain darkens within this distance of any water edge,
-  // and a thin foam highlight sits right at the shoreline. Must match
-  // `#define MAX_WATER` in the fragment shader extension below.
-  static #MAX_WATER = 96;
-  static #WET_RIM_M = 1.0;
-  static #FOAM_BAND_M = 0.18;
 
   #uniforms;
 
-  constructor(scene, loader, { size = 200, segments = 96 } = {}) {
+  // Larger than the legacy 200×200 plane so the physics heightfield extends
+  // beyond Player.MAX_TRAVEL_RADIUS (120 m) in every direction — players
+  // hit the soft horizontal clamp before they could escape the collider.
+  constructor(scene, loader, { size = 260, segments = 170 } = {}) {
     this.size = size;
     this.segments = segments;
 
@@ -50,8 +65,6 @@ export class Terrain {
     geometry.computeVertexNormals();
 
     const material = this.#buildMaterial(loader);
-    // Tint shadowed ground toward magenta-purple rather than fading to black.
-    // patchShadowTint chains onto our existing onBeforeCompile.
     patchShadowTint(material);
 
     this.mesh = new THREE.Mesh(geometry, material);
@@ -62,9 +75,6 @@ export class Terrain {
 
   #buildMaterial(loader) {
     const base = Terrain.#TEXTURE_BASE;
-    // onError fires per missing file so a single typo'd path doesn't silently
-    // weight that texture to zero in the blend (which was hard to distinguish
-    // from a low blend weight when first wiring this up).
     const url = (path) => `${base}/${path}`;
     const onErr = (path) => (err) => {
       console.warn(`[Terrain] failed to load texture: ${url(path)}`, err);
@@ -79,7 +89,6 @@ export class Terrain {
     const normalTex = (path) => {
       const t = loader.texture.load(url(path), undefined, undefined, onErr(path));
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      // Linear sampling — normal maps must not be sRGB-decoded.
       t.anisotropy = 8;
       return t;
     };
@@ -91,26 +100,21 @@ export class Terrain {
     const dirtNorm   = normalTex('dirt/Ground037_1K-PNG_NormalGL.png');
     const stoneNorm  = normalTex('stone/Rock026_1K-PNG_NormalGL.png');
 
-    // Water positions packed as (x, z, radius) per entry. setWaterExclusions
-    // populates these once at boot; default state (count=0) skips the loop.
-    this._waterPositions = new Float32Array(Terrain.#MAX_WATER * 3);
-
     this.#uniforms = {
-      uGrassMap:        { value: grassMap },
-      uDirtMap:         { value: dirtMap },
-      uStoneMap:        { value: stoneMap },
-      uGrassNormal:     { value: grassNorm },
-      uDirtNormal:      { value: dirtNorm },
-      uStoneNormal:     { value: stoneNorm },
-      uTerrainUvScale:  { value: Terrain.#UV_SCALE },
-      uDirtHigh:        { value: Terrain.#DIRT_HIGH },
-      uDirtLow:         { value: Terrain.#DIRT_LOW },
-      uStoneLow:        { value: Terrain.#STONE_LOW },
-      uStoneHigh:       { value: Terrain.#STONE_HIGH },
-      uWaterPositions:  { value: this._waterPositions },
-      uWaterCount:      { value: 0 },
-      uWetRim:          { value: Terrain.#WET_RIM_M },
-      uFoamBand:        { value: Terrain.#FOAM_BAND_M },
+      uGrassMap:       { value: grassMap },
+      uDirtMap:        { value: dirtMap },
+      uStoneMap:       { value: stoneMap },
+      uGrassNormal:    { value: grassNorm },
+      uDirtNormal:     { value: dirtNorm },
+      uStoneNormal:    { value: stoneNorm },
+      uTerrainUvScale: { value: Terrain.#UV_SCALE },
+      uGrassYLow:      { value: Terrain.#GRASS_Y_LOW },
+      uSandYLow:       { value: Terrain.#SAND_Y_LOW },
+      uMudYLow:        { value: Terrain.#MUD_Y_LOW },
+      uStoneLow:       { value: Terrain.#STONE_LOW },
+      uStoneHigh:      { value: Terrain.#STONE_HIGH },
+      uSandTint:       { value: new THREE.Vector3(...Terrain.#SAND_TINT) },
+      uMudTint:        { value: new THREE.Vector3(...Terrain.#MUD_TINT) },
     };
 
     const material = new THREE.MeshStandardMaterial({
@@ -118,8 +122,7 @@ export class Terrain {
       roughness: 0.95,
       metalness: 0,
     });
-    // Assigning a normalMap (any of ours is fine — we override the sampling
-    // in onBeforeCompile) forces three to set USE_NORMALMAP, which is what
+    // Assigning a normalMap forces three to set USE_NORMALMAP, which is what
     // declares `vViewPosition` and the per-channel UV plumbing we rely on
     // inside <normal_fragment_maps>. The texture itself is never read because
     // our chunk replacement samples the three uTexture uniforms instead.
@@ -150,7 +153,6 @@ export class Terrain {
         .replace(
           '#include <common>',
           `#include <common>
-           #define MAX_WATER 96
            varying vec3 vWorldPos;
            varying vec3 vWorldNormalGeom;
            uniform sampler2D uGrassMap;
@@ -160,63 +162,48 @@ export class Terrain {
            uniform sampler2D uDirtNormal;
            uniform sampler2D uStoneNormal;
            uniform float uTerrainUvScale;
-           uniform float uDirtHigh;
-           uniform float uDirtLow;
+           uniform float uGrassYLow;
+           uniform float uSandYLow;
+           uniform float uMudYLow;
            uniform float uStoneLow;
            uniform float uStoneHigh;
-           uniform vec3  uWaterPositions[MAX_WATER];
-           uniform int   uWaterCount;
-           uniform float uWetRim;
-           uniform float uFoamBand;`
+           uniform vec3  uSandTint;
+           uniform vec3  uMudTint;`
         )
         .replace(
           '#include <map_fragment>',
-          // diffuseColor starts as material.color (white) * opacity. We sample
-          // the three diffuse maps at worldspace XZ and layer dirt over grass,
-          // then stone over both. Weights stay as locals (_dirtW, _stoneW)
-          // because <normal_fragment_maps> below reuses them — both chunks
-          // expand at the top level of `void main()` so locals carry over.
+          // Sample three diffuse maps at worldspace XZ. _grassW selects
+          // grass-vs-dirt by height; _mudW shifts the dirt tint from sandy
+          // (beach band) to muddy (submerged) as Y drops. _stoneW overrides
+          // both on steep slopes. Locals are shared with <normal_fragment_maps>.
           `vec2 _terrainUv = vWorldPos.xz / uTerrainUvScale;
            float _slope = clamp(1.0 - vWorldNormalGeom.y, 0.0, 1.0);
-           float _dirtW  = smoothstep(uDirtHigh, uDirtLow, vWorldPos.y);
+           float _grassW = smoothstep(uSandYLow, uGrassYLow, vWorldPos.y);
+           float _mudW   = smoothstep(uSandYLow, uMudYLow, vWorldPos.y);
            float _stoneW = smoothstep(uStoneLow, uStoneHigh, _slope);
+
            vec3 _gCol = texture2D(uGrassMap, _terrainUv).rgb;
            vec3 _dCol = texture2D(uDirtMap,  _terrainUv).rgb;
            vec3 _sCol = texture2D(uStoneMap, _terrainUv).rgb;
-           vec3 _col = mix(_gCol, _dCol, _dirtW);
-           _col = mix(_col, _sCol, _stoneW);
 
-           // Wet shoreline: shortest signed distance from this pixel to any
-           // water disc edge. Negative inside water (those pixels are hidden
-           // by the water mesh anyway), 0 at the rim, positive outside.
-           float _minD = 1e6;
-           for (int i = 0; i < MAX_WATER; i++) {
-             if (i >= uWaterCount) break;
-             vec3 wp = uWaterPositions[i];
-             float d = distance(vec2(vWorldPos.x, vWorldPos.z), wp.xy) - wp.z;
-             _minD = min(_minD, d);
-           }
-           float _outside = max(_minD, 0.0);
-           // Darken within uWetRim of the shoreline (max 45% darker at the
-           // edge, easing back to 0 by uWetRim metres out).
-           float _wet = 1.0 - smoothstep(0.0, uWetRim, _outside);
-           _col *= mix(1.0, 0.55, _wet);
-           // Thin foam band at the waterline.
-           float _foam = (1.0 - smoothstep(0.0, uFoamBand, _outside));
-           _col = mix(_col, vec3(0.92, 0.95, 0.98), _foam * 0.35);
+           // Beach band uses the dirt texture × sand tint; submerged ground
+           // uses the same dirt texture × mud tint. _mudW=0 ⇒ all sand,
+           // _mudW=1 ⇒ all mud, with a smooth transition through the band.
+           vec3 _belowGrass = mix(_dCol * uSandTint, _dCol * uMudTint, _mudW);
+           vec3 _col = mix(_belowGrass, _gCol, _grassW);
+           _col = mix(_col, _sCol, _stoneW);
 
            diffuseColor.rgb *= _col;`
         )
         .replace(
           '#include <normal_fragment_maps>',
           // Blend three tangent-space normals with the same weights, then
-          // reconstruct TBN from screen-space derivatives — three's standard
-          // no-tangent path, just with our blended mapN instead of a single
-          // texture2D(normalMap, vNormalMapUv) sample.
+          // reconstruct TBN from screen-space derivatives. Dirt normal is
+          // used everywhere except where grass dominates.
           `vec3 _nG = texture2D(uGrassNormal, _terrainUv).xyz * 2.0 - 1.0;
            vec3 _nD = texture2D(uDirtNormal,  _terrainUv).xyz * 2.0 - 1.0;
            vec3 _nS = texture2D(uStoneNormal, _terrainUv).xyz * 2.0 - 1.0;
-           vec3 _mapN = mix(_nG, _nD, _dirtW);
+           vec3 _mapN = mix(_nD, _nG, _grassW);
            _mapN = mix(_mapN, _nS, _stoneW);
            _mapN = normalize(_mapN);
 
@@ -240,49 +227,45 @@ export class Terrain {
 
   #displaceVertices(geometry) {
     const pos = geometry.attributes.position;
-    const center = new THREE.Vector2(0, 0);
-    const tmp = new THREE.Vector2();
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
-      tmp.set(x, z);
-      const distance = tmp.distanceTo(center);
-
-      const wave =
-        Math.sin(x * 0.08) * 0.25 +
-        Math.cos(z * 0.07) * 0.22 +
-        Math.sin((x + z) * 0.05) * 0.18;
-      const flatten = THREE.MathUtils.smoothstep(distance, 8, 22);
-      pos.setY(i, wave * flatten);
+      pos.setY(i, this.#islandHeightAt(x, z));
     }
     pos.needsUpdate = true;
   }
 
   /**
-   * Register water footprints so the fragment shader can darken the
-   * shoreline + paint a foam ring. Same format as Grass.setWaterExclusions:
-   * an array of `{x, z, r}` discs. Call once at boot — surfaces don't move.
+   * Inside ISLAND_RADIUS we keep the original gentle wave + spawn-flatten
+   * the rest of the portfolio expects (signs/billboards/paths anchored at
+   * y=0 sit naturally on the grass). Outside the island radius the land
+   * drops away through a shore slope to the ocean floor.
    *
-   * @param {Array<{x:number,z:number,r:number}>} points
+   * Used by physics (heightfield), grass placement and prop scatter — must
+   * stay in lockstep with #displaceVertices, hence the shared helper.
    */
-  setWaterExclusions(points) {
-    const capped = Math.min(points.length, Terrain.#MAX_WATER);
-    for (let i = 0; i < capped; i++) {
-      this._waterPositions[i * 3 + 0] = points[i].x;
-      this._waterPositions[i * 3 + 1] = points[i].z;
-      this._waterPositions[i * 3 + 2] = points[i].r;
+  #islandHeightAt(x, z) {
+    const dist = Math.hypot(x, z);
+    const R = Terrain.#ISLAND_RADIUS;
+    const W = Terrain.#SHORE_WIDTH;
+
+    if (dist <= R) {
+      const wave =
+        Math.sin(x * 0.08) * 0.25 +
+        Math.cos(z * 0.07) * 0.22 +
+        Math.sin((x + z) * 0.05) * 0.18;
+      const flatten = THREE.MathUtils.smoothstep(dist, 8, 22);
+      // INNER_FLOOR_Y keeps the slightest wave-dip above the water plane so
+      // transparent ocean can't bleed through pixels inside the island.
+      return Math.max(wave * flatten, Terrain.#INNER_FLOOR_Y);
     }
-    this._waterPositions.fill(0, capped * 3);
-    this.#uniforms.uWaterCount.value = capped;
+
+    const t = Math.min((dist - R) / W, 1.0);
+    const h = Terrain.#OCEAN_FLOOR_Y * t;
+    return Math.max(h, Terrain.#OCEAN_FLOOR_Y);
   }
 
   heightAt(x, z) {
-    const distance = Math.hypot(x, z);
-    const wave =
-      Math.sin(x * 0.08) * 0.25 +
-      Math.cos(z * 0.07) * 0.22 +
-      Math.sin((x + z) * 0.05) * 0.18;
-    const flatten = THREE.MathUtils.smoothstep(distance, 8, 22);
-    return wave * flatten;
+    return this.#islandHeightAt(x, z);
   }
 }

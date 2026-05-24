@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { Terrain } from './Terrain.js';
 import { Nature } from './Nature.js';
 import { Paths } from './Paths.js';
@@ -58,8 +57,6 @@ export class World {
     this.nature.addExclusion(SECTION_POSITIONS.contact.x, SECTION_POSITIONS.contact.z, 8);
     // Spawn clearing.
     this.nature.addExclusion(0, 0, 9);
-    // (Pond exclusion is now registered by Water.applyExclusionsToNature
-    // below — handles the main pond, the three new pools, and the river.)
     // Thin corridor along the experience trail going north — exclude trees
     // within 2.5u of the chain of sign positions, plus the segments between.
     for (let i = 0; i < SECTION_POSITIONS.experiencePath.length; i++) {
@@ -67,26 +64,12 @@ export class World {
       this.nature.addExclusion(a.x, a.z, 3);
     }
 
-    // ── Water surfaces — 4 pools + meandering east-edge river ──────────────
-    // Built before nature.load() so each surface registers its no-spawn
-    // circle on Nature; trees / bushes / rocks won't land in water.
+    // ── Ocean ───────────────────────────────────────────────────────────────
+    // Single shader-driven plane surrounding the island. The land mass
+    // itself rises above the water; see Terrain.#displaceVertices for the
+    // island shape (radius ~45 with a sandy shore slope to y=-2 by ~r=60).
+    // getExclusionPoints() returns []; no inland water to keep nature out of.
     this.water = new Water(this.scene, loader, this.terrain);
-    this.water.addPool(new THREE.Vector3(-12, 0, 18), 5.5, { isMainPond: true, withEcosystem: true });
-    this.water.addPool(new THREE.Vector3( 3,  0, 28), 3.0);
-    this.water.addPool(new THREE.Vector3(-18, 0, -8), 4.0);
-    this.water.addPool(new THREE.Vector3(22, 0, -2), 1.5);
-    const riverCurve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(52, 0.04,  50),
-      new THREE.Vector3(48, 0.04,  25),
-      new THREE.Vector3(55, 0.04,   0),
-      new THREE.Vector3(49, 0.04, -25),
-      new THREE.Vector3(54, 0.04, -50),
-    ]);
-    this.water.addRiverFromCurve(riverCurve, { width: 3.0, segments: 40 });
-    this.water.applyExclusionsToNature(this.nature);
-    // Hand the same disc list to the terrain so the fragment shader can
-    // darken / foam-band the shoreline pixels.
-    this.terrain.setWaterExclusions(this.water.getExclusionPoints());
 
     // Interactable prop spots — keep trees clear so the player can see them
     // and the prompts have room to read. Coordinates mirror Interactables.js.
@@ -115,6 +98,13 @@ export class World {
     // Birds — try to load a real GLB, fall back to procedural body.
     this.birds = new Birds(this.scene, loader);
     await this.birds.load(this.billboards, this.signs);
+
+    // Shore decor (lily pads, half-submerged rocks, reeds) along the
+    // island waterline. Fire-and-forget — missing GLBs are skipped per-file
+    // inside loadShoreDecor() so a single 404 doesn't block boot.
+    this.water.loadShoreDecor().catch((err) => {
+      console.warn('[Water] shore decor failed', err);
+    });
 
     return {
       nature: result,

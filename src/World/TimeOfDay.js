@@ -38,11 +38,16 @@ export const DAY_PALETTE = Object.freeze({
   hemiIntensity: 0.35,
   skyTop: '#4488cc',
   skyMid: '#88bbee',
-  skyHorizon: '#ddc8a0',
+  // Horizon === fog colour so the ocean fades seamlessly into the sky band
+  // — no visible ring where the water plane ends. Tuned cool-steel-blue to
+  // bridge the deep-ocean tint (#1a4a6a) into the upper sky.
+  skyHorizon: '#88aabb',
   skyGround: '#4a3528',
-  fogColor: '#bbccaa',
-  fogNear: 65,
-  fogFar: 165,
+  fogColor: '#88aabb',
+  // Pulled tighter than the old 65→165 so the ocean plane (extending 150 m
+  // from the island centre) fully dissolves into fog before its edge.
+  fogNear: 50,
+  fogFar: 130,
   grassColor: '#5aa033',
   grassShadowStrength: 0.75,
   fireflyIntensity: 0.55,
@@ -85,13 +90,14 @@ export const NIGHT_PALETTE = Object.freeze({
   hemiGround: '#0a0a15',
   hemiIntensity: 0.12,
   // Lifted from near-black so the night sky still reads as a sky band
-  // rather than the void around the canvas. Bands kept in deep blue-purple
-  // family so stars + moon still stand out brightly against them.
+  // rather than the void around the canvas. Bands kept in deep blue family
+  // so stars + moon still stand out brightly against them. Horizon === fog
+  // so the night ocean dissolves into the sky band at the horizon ring.
   skyTop: '#0c1228',
   skyMid: '#15203f',
-  skyHorizon: '#2a2855',
+  skyHorizon: '#0a1520',
   skyGround: '#0a0a18',
-  fogColor: '#080b18',
+  fogColor: '#0a1520',
   fogNear: 30,
   fogFar: 95,
   grassColor: '#1f3a2a',
@@ -551,7 +557,9 @@ export class TimeOfDay {
 
     if (this.billboards) this.billboards.emissiveBoost = p.billboardEmissiveBoost;
     if (this.lanterns) for (const l of this.lanterns) l.intensity = p.lanternIntensity;
-    if (this.water) this.water.setColor(p.waterColor);
+    // Ocean tints (shallow / deep / foam / sun position) ride day-night
+    // together — see Water.applyTimeOfDay for the colour palettes.
+    if (this.water) this.water.applyTimeOfDay(mode);
     if (this.lamps) {
       this.lamps.apply({
         intensity: p.lampIntensity,
@@ -656,8 +664,8 @@ export class TimeOfDay {
       }
     }
 
-    // Water tint — tweens the shared `color` uniform on every surface.
-    if (this.water) this.water.tweenColor(p.waterColor, duration, ease);
+    // Ocean tint — tweens shallow + deep + foam + sun position together.
+    if (this.water) this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
 
     // Physical lamps — tween each PointLight's intensity, and animate
     // the shared bulb material color (toward target hex × brightness).

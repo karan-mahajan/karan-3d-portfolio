@@ -20,7 +20,9 @@ import { patchShadowTint } from './Palette.js';
  * `baseColor` and calls `syncColor()` per onUpdate to propagate to materials.
  */
 
-const FIELD_RADIUS = 50;
+// Capped at 40 so grass tufts stop before the sandy shore band (r ≈ 40–45)
+// and never spawn on the beach or in the surf.
+const FIELD_RADIUS = 40;
 // Each Quaternius tuft is ~260 triangles (a tuft = several blade meshes).
 // The prompt's 3500+600+600+300 = 5000 totals ≈ 1.3M tris just for grass —
 // 66% of the scene budget at the time, dragging real-GPU FPS to 40-50.

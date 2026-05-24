@@ -12,6 +12,14 @@ export class Player {
   static GRAVITY = -25;
   static JUMP_VELOCITY = 8.5;
   static IDLE_LOOK_AROUND_SECONDS = 8;
+  // Ocean interaction. Must mirror src/Effects/Water.js ISLAND_RADIUS /
+  // WATER_ENTRY_RADIUS. Past WATER_ENTRY the character starts to slow down;
+  // SLOWDOWN_PER_M controls how fast resistance ramps with depth.
+  static WATER_ENTRY_RADIUS = 45;
+  static WATER_SLOWDOWN_PER_M = 0.1;
+  static WATER_SLOWDOWN_MIN = 0.15;
+  static MAX_TRAVEL_RADIUS = 120;
+  static RESPAWN_FALL_Y = -5;
 
   constructor(scene, playerCamera, terrain = null, loader = null, physics = null) {
     this.scene = scene;
@@ -93,6 +101,20 @@ export class Player {
   }
 
   update(delta) {
+    // Ocean wading slowdown — must be set before sample() so the velocity
+    // it returns is already scaled. Distance is XZ-only; depth grows by
+    // 0.1× per metre past the water entry radius and caps at 85% slowdown
+    // (15% original speed) so the player can't get fully stuck.
+    const dx = this.group.position.x;
+    const dz = this.group.position.z;
+    const distFromCenter = Math.hypot(dx, dz);
+    if (distFromCenter > Player.WATER_ENTRY_RADIUS) {
+      const depth = (distFromCenter - Player.WATER_ENTRY_RADIUS) * Player.WATER_SLOWDOWN_PER_M;
+      this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - depth);
+    } else {
+      this.controller.speedMultiplier = 1.0;
+    }
+
     const sample = this.controller.sample(delta);
 
     if (sample.moving) {
@@ -121,6 +143,8 @@ export class Player {
       this.#applyKinematicMotion(sample, delta);
     }
 
+    this.#enforceWorldBounds();
+
     this.#updateAnimationState(sample);
 
     if (this.character) this.character.update(delta);
@@ -145,6 +169,29 @@ export class Player {
     console.log(
       `[Player] pos=(${x.toFixed(2)}, ${y.toFixed(3)}, ${z.toFixed(2)})  terrainY=${ty.toFixed(3)}  Δ=${d.toFixed(3)}m`,
     );
+  }
+
+  /**
+   * Catch falls into the void (y < RESPAWN_FALL_Y → spawn) and clamp the
+   * player inside MAX_TRAVEL_RADIUS so they can't walk past the heightfield
+   * collider. Clamp is hard but the wading slowdown above already makes
+   * the last few metres feel like quicksand, so the wall reads as natural.
+   */
+  #enforceWorldBounds() {
+    const p = this.body ? this.body.position : this.group.position;
+    if (p.y < Player.RESPAWN_FALL_Y) {
+      if (this.body) this.body.teleport(0, 2, 0);
+      this.group.position.set(0, 2, 0);
+      return;
+    }
+    const horiz = Math.hypot(p.x, p.z);
+    if (horiz > Player.MAX_TRAVEL_RADIUS) {
+      const scale = Player.MAX_TRAVEL_RADIUS / horiz;
+      const nx = p.x * scale;
+      const nz = p.z * scale;
+      if (this.body) this.body.teleport(nx, p.y, nz);
+      this.group.position.set(nx, p.y, nz);
+    }
   }
 
   /** Rapier path: capsule + character controller resolve movement against the world. */

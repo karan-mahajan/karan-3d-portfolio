@@ -163,6 +163,9 @@ export class App extends EventTarget {
       }
       this.timeOfDay.water = this.water;
       this.timeOfDay.reapply();
+      // Give Water a handle on AudioManager so wading triggers WAV splashes
+      // (entry one-shot + per-step variant). See Water.update.
+      this.water.audio = this.audio;
     }
 
     // Build the grass field now that paths, water, and trees are placed —
@@ -355,7 +358,7 @@ export class App extends EventTarget {
     if (this.interaction) this.interaction.tick(this.player.position);
     if (this.interactables) this.interactables.update(delta);
     this.fireflies.update(elapsed);
-    if (this.water) this.water.update(elapsed, delta, this.player.position);
+    if (this.water) this.water.update(elapsed, delta, this.player.position, sample);
     this.rain.update(delta);
     this.windLines.update(delta, this.player.position);
     this.leaves.update(delta, this.player.position);
@@ -364,6 +367,13 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
       grounded: this.player._grounded !== false, // default to true so we don't false-trigger on first frame
     });
+    // Ocean ambience volume rides player proximity to the shoreline. Inside
+    // the island it falls off with distance; in the water it's at full level.
+    if (this.audio && this.water) {
+      const px = this.player.position.x;
+      const pz = this.player.position.z;
+      this.audio.setOceanProximity(Math.hypot(px, pz), this.water.islandRadius);
+    }
 
     // Sun + shadow camera follow the player so shadows stay sharp wherever
     // they walk. TimeOfDay owns the offset so it can be lerped between

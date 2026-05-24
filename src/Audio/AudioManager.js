@@ -24,6 +24,21 @@ const FOOTSTEP_INTERVAL_WALK = 0.42;
 const FOOTSTEP_INTERVAL_RUN = 0.28;
 const BIRD_INTERVAL_RANGE = [3.5, 9]; // seconds between random bird chirps
 
+// Mixkit CC0 WAV files in /static/sounds/. `splash-light` is the per-step
+// wading splash, `splash-entry` is the louder one-shot when the player
+// first hits the water; the ocean loop is a single bed whose gain rides
+// the player's proximity to the shoreline (driven from App.js each tick).
+const SPLASH_LIGHT_URL = '/sounds/splash-light.wav';
+const SPLASH_ENTRY_URL = '/sounds/splash-entry.wav';
+const OCEAN_LOOP_URL = '/sounds/ocean-loop.wav';
+// Volume caps for the new water layers — kept relative to the master so
+// muting still kills everything cleanly.
+const SPLASH_STEP_VOL = 0.32;
+const SPLASH_ENTRY_VOL = 0.55;
+const OCEAN_AT_SHORE_VOL = 0.32;   // shore ambience when standing right on the beach
+const OCEAN_IN_WATER_VOL = 0.50;   // bumped when the player is actually wading
+const OCEAN_FALLOFF_M = 30;        // beyond this distance from the shore the ocean is silent
+
 export class AudioManager {
   constructor() {
     this.ctx = null;
@@ -55,6 +70,83 @@ export class AudioManager {
     if (this.ctx.state === 'suspended') this.ctx.resume();
     this.playWelcome();
     this.startAmbient();
+    // Fire-and-forget — splash/ocean play methods no-op until buffers land.
+    this.#loadWaterAudio();
+  }
+
+  /**
+   * Decode the three WAV files dropped under /sounds and start the looping
+   * ocean bed at zero gain. App.js drives gain from player proximity each
+   * tick via setOceanProximity; splash one-shots are triggered by Water.js.
+   */
+  async #loadWaterAudio() {
+    if (!this.ctx || this._waterAudioLoaded) return;
+    this._waterAudioLoaded = true;
+    const fetchBuffer = async (url) => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+        const ab = await res.arrayBuffer();
+        return await this.ctx.decodeAudioData(ab);
+      } catch (err) {
+        console.warn(`[Audio] failed to load ${url}`, err);
+        return null;
+      }
+    };
+    const [light, entry, ocean] = await Promise.all([
+      fetchBuffer(SPLASH_LIGHT_URL),
+      fetchBuffer(SPLASH_ENTRY_URL),
+      fetchBuffer(OCEAN_LOOP_URL),
+    ]);
+    this._splashLight = light;
+    this._splashEntry = entry;
+    if (ocean) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = ocean;
+      src.loop = true;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(gain).connect(this.master);
+      src.start();
+      this.oceanSource = src;
+      this.oceanGain = gain;
+    }
+  }
+
+  /** One-shot splash. `entry` switches to the louder jump-in clip. */
+  playSplash({ entry = false, volume = 1.0 } = {}) {
+    if (!this.ctx || this.muted) return;
+    const buf = entry ? this._splashEntry : this._splashLight;
+    if (!buf) return; // buffer not loaded yet
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    // Small random pitch wobble so consecutive splashes don't feel sampled.
+    src.playbackRate.value = 0.92 + Math.random() * 0.16;
+    const gain = this.ctx.createGain();
+    gain.gain.value = volume * (entry ? SPLASH_ENTRY_VOL : SPLASH_STEP_VOL);
+    src.connect(gain).connect(this.master);
+    src.start();
+  }
+
+  /**
+   * Ride the ocean loop's gain off the player's distance from the shoreline.
+   * Inside the island it falls to silent over OCEAN_FALLOFF_M; once the
+   * player is actually wading we bump up to OCEAN_IN_WATER_VOL. Called from
+   * App.js once per frame; smooth-ramps so the gain change isn't audible.
+   */
+  setOceanProximity(distFromCenter, shoreRadius = 45) {
+    if (!this.ctx || !this.oceanGain) return;
+    let target;
+    if (distFromCenter > shoreRadius) {
+      target = OCEAN_IN_WATER_VOL;
+    } else {
+      const distToShore = shoreRadius - distFromCenter;
+      const proximity = Math.max(0, 1 - distToShore / OCEAN_FALLOFF_M);
+      target = proximity * OCEAN_AT_SHORE_VOL;
+    }
+    const now = this.ctx.currentTime;
+    this.oceanGain.gain.cancelScheduledValues(now);
+    this.oceanGain.gain.linearRampToValueAtTime(target, now + 0.4);
   }
 
   setMuted(value) {

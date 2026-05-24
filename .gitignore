@@ -17,3 +17,7 @@ thumbs.db
 # Verification screenshots — output of .verify-*.mjs harness scripts.
 # The scripts themselves are tracked; the shots they produce are not.
 /.verify-shots/
+
+# Ad-hoc perf probe — playwright-driven scene measurement, regenerated
+# as needed during optimization passes.
+/perf-probe.mjs

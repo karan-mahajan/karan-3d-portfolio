@@ -13,6 +13,9 @@ import { patchShadowTint } from './Palette.js';
  * field in src/World/Grass.js covers the meadow now.
  */
 
+// All ring outer-radii capped at ≤ 40 so trees / bushes / rocks stay clear of
+// the sandy shore (r≈40–45) and the ocean beyond it. Shore decor (half-
+// submerged rocks, reeds, lily pads) is placed separately by Water.loadShoreDecor.
 const PROPS = [
   // ─── QUATERNIUS TREES — Ghibli-style, native foliage colours preserved ──
   // 35 total (down from 68 after the perf pass — each Quaternius tree is
@@ -20,23 +23,23 @@ const PROPS = [
   // all of them at once. 35 keeps the forest feeling dense around the
   // play area without busting the budget.
   // Tree (main fluffy) — 5 × 4 = 20
-  { url: '/models/nature/quaternius/tree-1.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/tree-2.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/tree-3.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/tree-4.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/tree-5.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 55], kind: 'tree' },
+  { url: '/models/nature/quaternius/tree-1.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/tree-2.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/tree-3.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/tree-4.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/tree-5.glb',         count: 4, scale: [0.85, 1.35], ring: [14, 38], kind: 'tree' },
   // Twisted Tree — 5 × 2 = 10
-  { url: '/models/nature/quaternius/twisted-tree-1.glb', count: 2, scale: [0.85, 1.25], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/twisted-tree-2.glb', count: 2, scale: [0.85, 1.25], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/twisted-tree-3.glb', count: 2, scale: [0.85, 1.25], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/twisted-tree-4.glb', count: 2, scale: [0.85, 1.25], ring: [14, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/twisted-tree-5.glb', count: 2, scale: [0.85, 1.25], ring: [14, 55], kind: 'tree' },
+  { url: '/models/nature/quaternius/twisted-tree-1.glb', count: 2, scale: [0.85, 1.25], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/twisted-tree-2.glb', count: 2, scale: [0.85, 1.25], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/twisted-tree-3.glb', count: 2, scale: [0.85, 1.25], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/twisted-tree-4.glb', count: 2, scale: [0.85, 1.25], ring: [14, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/twisted-tree-5.glb', count: 2, scale: [0.85, 1.25], ring: [14, 38], kind: 'tree' },
   // Pine — 5 × 1 = 5
-  { url: '/models/nature/quaternius/pine-1.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/pine-2.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/pine-3.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/pine-4.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 55], kind: 'tree' },
-  { url: '/models/nature/quaternius/pine-5.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 55], kind: 'tree' },
+  { url: '/models/nature/quaternius/pine-1.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/pine-2.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/pine-3.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/pine-4.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 38], kind: 'tree' },
+  { url: '/models/nature/quaternius/pine-5.glb',         count: 1, scale: [0.9, 1.4],   ring: [16, 38], kind: 'tree' },
 
   // ─── FLOWERS — Quaternius, native painted colours preserved ─────────────
   // Groups in the inner ring (cluster look), singles spread wider, petals
@@ -53,23 +56,23 @@ const PROPS = [
 
   // ─── BUSHES ─────────────────────────────────────────────────────────────
   // Bushes get colliders; ferns and plants are walk-through accents.
-  { url: '/models/nature/quaternius/bush.glb',              count: 12, scale: [0.85, 1.3], ring: [10, 50], kind: 'bush' },
+  { url: '/models/nature/quaternius/bush.glb',              count: 12, scale: [0.85, 1.3], ring: [10, 38], kind: 'bush' },
   { url: '/models/nature/quaternius/bush-with-flowers.glb', count: 6,  scale: [0.85, 1.2], ring: [6, 30],  kind: 'bush' },
-  { url: '/models/nature/quaternius/fern.glb',              count: 12, scale: [0.7, 1.1],  ring: [10, 50], kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-1.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 40],  kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-2.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 40],  kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-big-1.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 45],  kind: 'accent' },
-  { url: '/models/nature/quaternius/plant-big-2.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 45],  kind: 'accent' },
+  { url: '/models/nature/quaternius/fern.glb',              count: 12, scale: [0.7, 1.1],  ring: [10, 38], kind: 'accent' },
+  { url: '/models/nature/quaternius/plant-1.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 38],  kind: 'accent' },
+  { url: '/models/nature/quaternius/plant-2.glb',           count: 4,  scale: [0.7, 1.1],  ring: [6, 38],  kind: 'accent' },
+  { url: '/models/nature/quaternius/plant-big-1.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent' },
+  { url: '/models/nature/quaternius/plant-big-2.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent' },
 
   // ─── MUSHROOMS ──────────────────────────────────────────────────────────
-  { url: '/models/nature/quaternius/mushroom.glb',             count: 5, scale: [0.6, 1.0], ring: [12, 45], kind: 'accent' },
-  { url: '/models/nature/quaternius/mushroom-laetiporus.glb',  count: 4, scale: [0.6, 1.0], ring: [14, 45], kind: 'accent' },
+  { url: '/models/nature/quaternius/mushroom.glb',             count: 5, scale: [0.6, 1.0], ring: [12, 38], kind: 'accent' },
+  { url: '/models/nature/quaternius/mushroom-laetiporus.glb',  count: 4, scale: [0.6, 1.0], ring: [14, 38], kind: 'accent' },
 
   // ─── ROCKS ──────────────────────────────────────────────────────────────
   // 3 medium variants placed throughout — some near trees, some standalone.
-  { url: '/models/nature/quaternius/rock-medium-1.glb', count: 4, scale: [0.8, 1.3], ring: [8, 50], kind: 'rock' },
-  { url: '/models/nature/quaternius/rock-medium-2.glb', count: 4, scale: [0.8, 1.3], ring: [8, 50], kind: 'rock' },
-  { url: '/models/nature/quaternius/rock-medium-3.glb', count: 4, scale: [0.8, 1.3], ring: [8, 50], kind: 'rock' },
+  { url: '/models/nature/quaternius/rock-medium-1.glb', count: 4, scale: [0.8, 1.3], ring: [8, 38], kind: 'rock' },
+  { url: '/models/nature/quaternius/rock-medium-2.glb', count: 4, scale: [0.8, 1.3], ring: [8, 38], kind: 'rock' },
+  { url: '/models/nature/quaternius/rock-medium-3.glb', count: 4, scale: [0.8, 1.3], ring: [8, 38], kind: 'rock' },
 
   // ─── PEBBLES ────────────────────────────────────────────────────────────
   // Small surface detail concentrated in the inner ring where paths run.

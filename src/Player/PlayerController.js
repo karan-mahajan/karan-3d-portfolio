@@ -16,6 +16,9 @@ export class PlayerController {
     this.forward = new THREE.Vector3();
     this.right = new THREE.Vector3();
     this.paused = false; // when true, sample() returns a "no movement" reading
+    // Player.update writes this each frame so wading through ocean water
+    // slows the character down without forking the speed constants.
+    this.speedMultiplier = 1.0;
 
     this._onDown = (e) => {
       if (e.repeat) return;
@@ -78,11 +81,12 @@ export class PlayerController {
         .normalize();
     }
 
-    const speed = this.isCrouching
+    const baseSpeed = this.isCrouching
       ? PlayerController.WALK_SPEED * 0.45
       : this.isRunning
       ? PlayerController.RUN_SPEED
       : PlayerController.WALK_SPEED;
+    const speed = baseSpeed * this.speedMultiplier;
 
     return {
       velocity: this.intent.clone().multiplyScalar(speed),
