@@ -16,12 +16,8 @@ import gsap from 'gsap';
  *     a sandy shore to roughly y=-2 (ocean floor) by the time it reaches
  *     the water-plane edge — see Terrain.#displaceVertices.
  *
- * Public API (kept compatible so App.js / Rain.js / TimeOfDay.js / Grass /
- * Terrain don't need to special-case "is this the old water?"):
- *   - getExclusionPoints()              → always []
- *   - applyExclusionsToNature(nature)   → no-op
+ * Public API:
  *   - contains(x, z) / playerOverWater  → XZ distance vs WATER_ENTRY_RADIUS
- *   - mainPondPosition === null, mainPondRadius === 0
  *   - setColor(hex) / tweenColor(hex, …) → sets the shallow tint only
  *   - applyTimeOfDay(mode, opts)        → animates shallow + deep + foam + sun
  *   - update(elapsed, delta, playerPos, sample)
@@ -206,11 +202,6 @@ export class Water {
     this.islandRadius = ISLAND_RADIUS;
     this.waterEntryRadius = WATER_ENTRY_RADIUS;
 
-    // Back-compat: there is no inland pond in this version. App.js +
-    // Rain.js both guard against null so these stay falsy on purpose.
-    this.mainPondPosition = null;
-    this.mainPondRadius = 0;
-
     this.uniforms = {
       uTime:          { value: 0 },
       uShallowColor:  { value: new THREE.Color(DAY_PALETTE.shallow) },
@@ -268,10 +259,7 @@ export class Water {
     this.lilyPads = [];
   }
 
-  // ── Public API (back-compat with the old multi-surface Water) ─────────────
-
-  getExclusionPoints() { return []; }
-  applyExclusionsToNature() { /* no-op */ }
+  // ── Public API ────────────────────────────────────────────────────────────
 
   /** True when the XZ point is past the water entry radius. */
   contains(x, z) {
@@ -378,6 +366,16 @@ export class Water {
    * fire-and-forget from World.loadAssets — missing GLBs are skipped
    * silently so a single 404 doesn't blow up the whole boot.
    */
+  /**
+   * Register a Rapier collider for a shore decoration. Optional — only
+   * passed in by World for the rock decor; lily pads / reeds stay
+   * walk-through. Set on the instance so loadShoreDecor() can use it
+   * without a constructor refactor.
+   */
+  setPhysics(physics) {
+    this.physics = physics;
+  }
+
   async loadShoreDecor() {
     if (!this.loader) return;
 
@@ -402,7 +400,8 @@ export class Water {
       const obj = src.scene.clone(true);
       const size = measureSize(obj);
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      obj.scale.setScalar(targetMax / maxDim);
+      const s = targetMax / maxDim;
+      obj.scale.setScalar(s);
       obj.position.set(x, y, z);
       obj.rotation.y = yaw;
       obj.traverse((c) => {
@@ -413,6 +412,18 @@ export class Water {
         }
       });
       this.shoreGroup.add(obj);
+      // Optional collider for solid shore decor (rocks). Reeds + lily pads
+      // are intentionally walk-through so the player can wade past them.
+      if (opts.collide && this.physics) {
+        const scaledSize = size.clone().multiplyScalar(s);
+        const hx = Math.max(scaledSize.x / 2, 0.18);
+        const hz = Math.max(scaledSize.z / 2, 0.18);
+        const hy = Math.max(scaledSize.y / 2, 0.12);
+        // Cuboid sized to the scaled bounding box. y arg is the bottom of
+        // the cuboid (Physics.addStaticCuboid lifts by hy internally). The
+        // rock GLB origin is at its bbox bottom, so y here is the rock base.
+        this.physics.addStaticCuboid(x, y, z, hx, hy, hz, yaw);
+      }
       return obj;
     };
 
@@ -437,7 +448,8 @@ export class Water {
           ? largeRocks[Math.floor(seed() * largeRocks.length)]
           : (smallRocks[Math.floor(seed() * smallRocks.length)] || largeRocks[0]);
         const targetMax = big ? 1.6 + seed() * 0.5 : 0.7 + seed() * 0.4;
-        place(src, x, y, z, targetMax, seed() * Math.PI * 2, { castShadow: big });
+        // collide:true so the player can't walk through shore boulders.
+        place(src, x, y, z, targetMax, seed() * Math.PI * 2, { castShadow: big, collide: true });
       }
     }
 

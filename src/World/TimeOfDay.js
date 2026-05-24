@@ -215,11 +215,9 @@ export class TimeOfDay {
     this.#applyInstant(this.mode);
   }
 
-  /** No-op kept for backwards compatibility with App.js. The Sprint-11
-   *  optimisation pass deleted per-sign lantern PointLights — 13+ point
-   *  lights in the scene crushed FPS, and one roaming "proximity light"
-   *  (see ProximityLight.js) gives equivalent readability for a fraction
-   *  of the cost. */
+  /** No-op kept for backwards compatibility with App.js. Static Lamps
+   *  (see Lamps.js) cover the role the old per-sign lanterns used to —
+   *  one PointLight per spot, intensity driven by the day/night mode. */
   attachLanterns() {
     this.lanterns = [];
     this._lanternsAttached = true;

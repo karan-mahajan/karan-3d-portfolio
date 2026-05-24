@@ -78,14 +78,12 @@ export class Grass {
    * @param {Float32Array} [opts.pathPositions]   packed [x0,z0,x1,z1,…]
    * @param {number}       [opts.pathCount]
    * @param {number}       [opts.pathRadius=1.4]
-   * @param {Array<{x:number,z:number,r:number}>} [opts.waterPoints]
    * @param {Array<{x:number,z:number}>}          [opts.treePositions]
    */
   async load({
     pathPositions = new Float32Array(0),
     pathCount = 0,
     pathRadius = 1.4,
-    waterPoints = [],
     treePositions = [],
   } = {}) {
     const layers = [
@@ -95,7 +93,7 @@ export class Grass {
       { url: '/models/nature/quaternius/tall-grass.glb',    count: TALL_COUNT,   scale: [0.75, 1.15], ring: [TALL_RING_INNER, TALL_RING_OUTER] },
     ];
 
-    const ex = { pathPositions, pathCount, pathRadius, waterPoints, treePositions };
+    const ex = { pathPositions, pathCount, pathRadius, treePositions };
     const results = await Promise.allSettled(layers.map((cfg) => this.#buildLayer(cfg, ex)));
 
     let placed = 0;
@@ -223,11 +221,6 @@ export class Grass {
       const dx = x - ex.pathPositions[i * 2 + 0];
       const dz = z - ex.pathPositions[i * 2 + 1];
       if (dx * dx + dz * dz < ex.pathRadius * ex.pathRadius) return true;
-    }
-    for (const w of ex.waterPoints) {
-      const dx = x - w.x;
-      const dz = z - w.z;
-      if (dx * dx + dz * dz < w.r * w.r) return true;
     }
     for (const t of ex.treePositions) {
       const dx = x - t.x;

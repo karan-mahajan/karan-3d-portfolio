@@ -28,12 +28,21 @@ const POINT_LIGHT_DECAY = 1.5;
 const LIGHT_COLOR = 0xffd58a;
 
 export class Lamps {
-  constructor(scene, loader) {
+  constructor(scene, loader, terrain = null) {
     this.scene = scene;
     this.loader = loader;
+    // Sample terrain.heightAt for each lamp spot so the lamp base sits on
+    // the grass instead of inside it (lamp anchors are 1.5–2.4m away from
+    // signs/billboards which already terrain-follow; without this lift the
+    // lantern bases were buried 20–60cm past r≈22 from spawn).
+    this.terrain = terrain;
     this.items = [];           // { group, light, bulbMat }
     this.bulbMaterial = null;   // shared across all lamp clones
     this.proto = null;          // GLB scene cached for cloning
+  }
+
+  #groundY(x, z) {
+    return this.terrain ? this.terrain.heightAt(x, z) : 0;
   }
 
   /** Load the lantern GLB once, then place lamps at the planned spots.
@@ -104,8 +113,9 @@ export class Lamps {
   }
 
   #placeLamp(lanternRoot, spot) {
+    const groundY = this.#groundY(spot.x, spot.z);
     const group = new THREE.Group();
-    group.position.set(spot.x, 0, spot.z);
+    group.position.set(spot.x, groundY, spot.z);
     group.name = `lamp:${spot.label}`;
 
     let bulbY = 2.0;

@@ -90,10 +90,16 @@ export class Paths {
    * @param {import('../Utils/Loader.js').Loader} loader
    * @param {import('./Terrain.js').Terrain} terrain
    */
-  constructor(scene, loader, terrain) {
+  constructor(scene, loader, terrain, physics = null) {
     this.scene = scene;
     this.loader = loader;
     this.terrain = terrain;
+    // Optional — when provided, each placed tile gets a thin static cuboid
+    // collider sized to its scaled bbox so the player walks ON the visible
+    // stone surface (not through it and into the terrain heightfield).
+    // Without this the character's feet sink visually into the top face of
+    // each tile because the heightfield is a flat plane underneath.
+    this.physics = physics;
 
     /** Planned tile placements (synchronous, used for exclusions + later mesh build). */
     this.tilePlans = [];
@@ -255,6 +261,26 @@ export class Paths {
       child.castShadow = false;
       child.receiveShadow = true;
     });
+
+    // Static collider sized to the scaled tile bbox so the character
+    // controller's autostep (0.4m) lifts the player ON TOP of the stone
+    // instead of letting their feet sink into it. Yaw is folded into the
+    // collider so it matches the visual orientation.
+    if (this.physics) {
+      // Measure AFTER applying scale/rotation/position so the box reflects
+      // what the player actually sees.
+      node.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(node);
+      if (!box.isEmpty()) {
+        const size = box.getSize(new THREE.Vector3());
+        // The yaw is already baked into the world bbox so the cuboid is
+        // axis-aligned in world space — pass yaw=0.
+        this.physics.addStaticCuboid(
+          plan.x, box.min.y, plan.z,
+          size.x / 2, size.y / 2, size.z / 2,
+        );
+      }
+    }
     return node;
   }
 }

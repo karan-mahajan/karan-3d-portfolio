@@ -493,6 +493,16 @@ export class ActionPrompts {
   }
 
   _advanceCombat(t) {
+    // Direction check — the punch impulse / bag swing both read
+    // `player.group.rotation.y`, so a player facing AWAY from the bag would
+    // make the bag swing the wrong direction. Refuse entry / punch if the
+    // player isn't roughly facing the bag (dot(forward, toBag) > 0.5,
+    // i.e. within ±60°). The check is intentionally lenient so a slight
+    // mis-aim doesn't feel like the input is broken.
+    if (!this.#facing(t.position, 0.5)) {
+      this._showBlockedMessage('Face the bag to square up');
+      return;
+    }
     if (!this.combatState || this.combatState.trigger !== t) {
       const stance = t.stanceAction || 'fightStance';
       const action = this.player.character && this.player.character.actions[stance];
@@ -508,6 +518,27 @@ export class ActionPrompts {
     } else if (this.combatState.ready) {
       this._commitPunch(t);
     }
+  }
+
+  /**
+   * True when the player's forward (yaw) is within an arc of the target XZ
+   * point. `minDot` = cos(half-arc); 0.5 ⇒ ±60°, 0.0 ⇒ ±90°.
+   */
+  #facing(targetPos, minDot) {
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const dx = targetPos.x - px;
+    const dz = targetPos.z - pz;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.05) return true; // standing on the target
+    const yaw = this.player.group.rotation.y;
+    // PlayerController emits facing = atan2(intent.x, intent.z) and the
+    // character mirrors that — so forward in world space is
+    // (sin(yaw), 0, cos(yaw)).
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const dot = (fx * dx + fz * dz) / len;
+    return dot >= minDot;
   }
 
   _commitPunch(t) {

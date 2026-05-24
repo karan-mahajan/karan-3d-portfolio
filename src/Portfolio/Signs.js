@@ -274,9 +274,14 @@ function buildPlank(parent, width, height, depth, y, texture, xOffset = 0, zOffs
 // ─── Public class ───────────────────────────────────────────────────────────
 
 export class Signs {
-  constructor(scene, physics = null) {
+  constructor(scene, physics = null, terrain = null) {
     this.scene = scene;
     this.physics = physics;
+    // Sample terrain.heightAt for each sign so the post bottom sits on the
+    // grass instead of inside it. Past r≈22 from spawn the terrain wave
+    // ranges 0.02–0.65m above y=0; without this lift, signs at +X/+Z far
+    // sections looked sunk into the ground.
+    this.terrain = terrain;
     this.experienceItems = [];
     this.skillsPosition = null;
     this.contactPosition = null;
@@ -287,6 +292,10 @@ export class Signs {
     this.#buildContactZone();
   }
 
+  #groundY(x, z) {
+    return this.terrain ? this.terrain.heightAt(x, z) : 0;
+  }
+
   // ── Welcome board near spawn ──────────────────────────────────────────────
   // A single wide plank facing the player at spawn. Shows all four cardinal
   // directions with correct arrows. Sits a few units forward of spawn so it
@@ -294,8 +303,9 @@ export class Signs {
   #buildCompass() {
     const { x, z } = SECTION_POSITIONS.compass;
     const yaw = Math.PI; // face -Z (toward player at spawn)
+    const groundY = this.#groundY(x, z);
     const group = new THREE.Group();
-    group.position.set(x, 0, z);
+    group.position.set(x, groundY, z);
     group.rotation.y = yaw;
     group.name = 'welcome-board';
 
@@ -314,16 +324,24 @@ export class Signs {
     group.add(beam);
 
     // The plank.
-    buildPlank(group, 3.4, 1.9, 0.08, postHeight - 1.1, welcomeBoardTexture());
+    const plankCenterY = postHeight - 1.1;
+    const plankH = 1.9;
+    buildPlank(group, 3.4, plankH, 0.08, plankCenterY, welcomeBoardTexture());
 
     this.scene.add(group);
     this.compassGroup = group;
-    this.compassPosition = new THREE.Vector3(x, 0, z);
+    this.compassPosition = new THREE.Vector3(x, groundY, z);
 
     if (this.physics) {
-      this.physics.addStaticCylinder(x - span / 2 + 0.25, 0, z, 0.13, postHeight);
-      this.physics.addStaticCylinder(x + span / 2 - 0.25, 0, z, 0.13, postHeight);
-      this.physics.addStaticCuboid(x, 1.0, z, 1.75, 0.95, 0.08, yaw);
+      // Post colliders span groundY → groundY+postHeight (addStaticCylinder lifts by height/2).
+      this.physics.addStaticCylinder(x - span / 2 + 0.25, groundY, z, 0.13, postHeight);
+      this.physics.addStaticCylinder(x + span / 2 - 0.25, groundY, z, 0.13, postHeight);
+      // Plank collider: addStaticCuboid treats `y` as the bottom of the box.
+      // Plank bottom = groundY + plankCenterY - plankH/2.
+      this.physics.addStaticCuboid(
+        x, groundY + plankCenterY - plankH / 2, z,
+        1.75, plankH / 2, 0.08, yaw,
+      );
     }
   }
 
@@ -353,8 +371,9 @@ export class Signs {
 
       const { x, z } = slot;
       const yaw = Math.atan2(-x, -z); // face origin
+      const groundY = this.#groundY(x, z);
       const group = new THREE.Group();
-      group.position.set(x, 0, z);
+      group.position.set(x, groundY, z);
       group.rotation.y = yaw;
       group.name = `experience:${entry.company}`;
 
@@ -396,14 +415,18 @@ export class Signs {
       group.add(cap);
 
       this.scene.add(group);
-      this.experienceItems.push({ entry, group, position: new THREE.Vector3(x, 0, z) });
+      this.experienceItems.push({ entry, group, position: new THREE.Vector3(x, groundY, z) });
 
       if (this.physics) {
-        this.physics.addStaticCylinder(x, 0, z, 0.16, postHeight);
-        // Collider centered on the plank center, not its bottom — the
-        // previous offset left the top half of the plank without a collider
-        // so the player's head clipped through experience signs.
-        this.physics.addStaticCuboid(x, plankCenterY, z, plankW / 2, plankH / 2, 0.09, yaw);
+        this.physics.addStaticCylinder(x, groundY, z, 0.16, postHeight);
+        // addStaticCuboid lifts by hy internally — pass the plank's BOTTOM
+        // (groundY + plankCenterY - plankH/2) so the collider lands on the
+        // visible plank. Previous code passed plankCenterY and the cuboid
+        // ended up floating plankH above the visible plank.
+        this.physics.addStaticCuboid(
+          x, groundY + plankCenterY - plankH / 2, z,
+          plankW / 2, plankH / 2, 0.09, yaw,
+        );
       }
     });
   }
@@ -414,9 +437,10 @@ export class Signs {
   #buildSkillsBoard() {
     const { x, z } = SECTION_POSITIONS.skills;
     const yaw = Math.PI; // face +Z (toward spawn)
+    const groundY = this.#groundY(x, z);
 
     const group = new THREE.Group();
-    group.position.set(x, 0, z);
+    group.position.set(x, groundY, z);
     group.rotation.y = yaw;
     group.name = 'skills-board';
 
@@ -486,14 +510,17 @@ export class Signs {
 
     this.scene.add(group);
     this.skillsGroup = group;
-    this.skillsPosition = new THREE.Vector3(x, 0, z);
+    this.skillsPosition = new THREE.Vector3(x, groundY, z);
 
     if (this.physics) {
-      this.physics.addStaticCylinder(x - span / 2 + 0.3, 0, z, 0.22, postHeight);
-      this.physics.addStaticCylinder(x + span / 2 - 0.3, 0, z, 0.22, postHeight);
-      // Center the collider on the plank, not at its bottom (see same fix
-      // in experience signs).
-      this.physics.addStaticCuboid(x, plankCenterY, z, 2.6, 1.2, 0.1, yaw);
+      this.physics.addStaticCylinder(x - span / 2 + 0.3, groundY, z, 0.22, postHeight);
+      this.physics.addStaticCylinder(x + span / 2 - 0.3, groundY, z, 0.22, postHeight);
+      // Plank: y arg is the BOTTOM of the cuboid (see comment in
+      // experience-trail builder). plank bottom = plankCenterY - plankH/2.
+      this.physics.addStaticCuboid(
+        x, groundY + plankCenterY - plankH / 2, z,
+        2.6, plankH / 2, 0.1, yaw,
+      );
     }
   }
 
@@ -501,9 +528,10 @@ export class Signs {
   #buildContactZone() {
     const { x, z } = SECTION_POSITIONS.contact;
     const yaw = Math.PI / 2; // face +X (toward spawn)
+    const groundY = this.#groundY(x, z);
 
     const group = new THREE.Group();
-    group.position.set(x, 0, z);
+    group.position.set(x, groundY, z);
     group.rotation.y = yaw;
     group.name = 'contact-zone';
 
@@ -585,17 +613,26 @@ export class Signs {
 
     this.scene.add(group);
     this.contactGroup = group;
-    this.contactPosition = new THREE.Vector3(x, 0, z);
+    this.contactPosition = new THREE.Vector3(x, groundY, z);
 
     if (this.physics) {
-      this.physics.addStaticCylinder(x, 0, z, 0.12, 1.2);
+      // Mailbox post (1.2m) + mailbox body (0.7×0.5×0.45 at y=1.45). One
+      // box collider covers both so the player can't walk through the
+      // visible mailbox body (post-only collider used to let them).
+      this.physics.addStaticCylinder(x, groundY, z, 0.12, 1.2);
+      this.physics.addStaticCuboid(x, groundY + 1.20, z, 0.35, 0.25, 0.225, yaw);
       // Name sign at local (2.0, 0, 0) rotated by yaw.
       const nx = x + Math.cos(yaw) * 2.0;
       const nz = z - Math.sin(yaw) * 2.0;
-      this.physics.addStaticCylinder(nx, 0, nz, 0.13, 2.6);
-      // Plank collider centered at the visual plank's Y (was 1.3 which left
-      // the top of the plank with no collider).
-      this.physics.addStaticCuboid(nx, namePlankY, nz, nameW / 2, nameH / 2, 0.08, yaw);
+      // Sample terrain at the name-sign spot too — it can be on a different
+      // height than the mailbox if the player walks across a hill there.
+      const nameGroundY = this.#groundY(nx, nz);
+      this.physics.addStaticCylinder(nx, nameGroundY, nz, 0.13, namePostH);
+      // Plank: y arg is BOTTOM of cuboid.
+      this.physics.addStaticCuboid(
+        nx, nameGroundY + namePlankY - nameH / 2, nz,
+        nameW / 2, nameH / 2, 0.08, yaw,
+      );
     }
   }
 

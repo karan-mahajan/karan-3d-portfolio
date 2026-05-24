@@ -129,6 +129,32 @@ export class Physics {
     return body;
   }
 
+  /**
+   * Dynamic ball — used for the kickable football. The player's character
+   * controller has setApplyImpulsesToDynamicBodies(true), so the player can
+   * push the ball just by walking into it. `kick(yaw, power)` applies a
+   * forward+upward impulse; `respawn(x,y,z)` teleports it back.
+   *
+   * Linear damping (0.4) + Rapier's default contact friction bring the ball
+   * to rest naturally over ~3-4 seconds, matching the old custom rolling
+   * feel without needing per-frame friction math.
+   */
+  addDynamicBall(x, y, z, radius, { density = 0.6, restitution = 0.45, friction = 0.6 } = {}) {
+    const { RAPIER, world } = this;
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(x, y, z)
+      .setLinearDamping(0.4)
+      .setAngularDamping(0.35)
+      .setCcdEnabled(true);
+    const body = world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.ball(radius)
+      .setDensity(density)
+      .setRestitution(restitution)
+      .setFriction(friction);
+    world.createCollider(colliderDesc, body);
+    return body;
+  }
+
   // ── Player ───────────────────────────────────────────────────────────────
 
   /**

@@ -135,6 +135,10 @@ export class Player {
       return d;
     };
     this._currentYaw += wrap(this._currentYaw, this._targetYaw) * PlayerController.TURN_LERP;
+    // Use YXZ Euler order so the slope tilt below applies in the player's
+    // post-yaw local frame (otherwise the lean direction would rotate with
+    // the camera azimuth, which reads as wobble).
+    this.group.rotation.order = 'YXZ';
     this.group.rotation.y = this._currentYaw;
 
     if (this.body) {
@@ -145,30 +149,49 @@ export class Player {
 
     this.#enforceWorldBounds();
 
+    this.#applySlopeTilt();
+
     this.#updateAnimationState(sample);
 
     if (this.character) this.character.update(delta);
     this.playerCamera.follow(this.group.position);
 
-    this.#logFeetVsTerrain(delta);
     return sample;
   }
 
-  // Sprint 9 investigation: is the player visually below the displaced terrain?
-  // Logs once per second (player_y, terrain_y_at_xz, delta). Static ground in
-  // Physics.js is a flat slab at y=0; terrain mesh has a sine-wave displacement
-  // that only kicks in past r≈22 from spawn, so a non-zero delta at distance is
-  // expected. Remove once the question is settled.
-  #logFeetVsTerrain(delta) {
-    this._debugAccum = (this._debugAccum || 0) + delta;
-    if (this._debugAccum < 1.0) return;
-    this._debugAccum = 0;
-    const { x, y, z } = this.group.position;
-    const ty = this.terrain ? this.terrain.heightAt(x, z) : 0;
-    const d = y - ty;
-    console.log(
-      `[Player] pos=(${x.toFixed(2)}, ${y.toFixed(3)}, ${z.toFixed(2)})  terrainY=${ty.toFixed(3)}  Δ=${d.toFixed(3)}m`,
-    );
+  /**
+   * Subtle visual tilt so the character leans into hills instead of skating
+   * vertically up them. Samples the terrain gradient via finite differences
+   * at the player's feet, projects onto the post-yaw forward/right axes,
+   * then exponentially smooths toward the target to avoid jitter.
+   *
+   * Visual only — the kinematic capsule body stays upright so physics
+   * collision response doesn't change.
+   */
+  #applySlopeTilt() {
+    if (!this.terrain) return;
+    const eps = 0.5;
+    const x = this.group.position.x;
+    const z = this.group.position.z;
+    const hL = this.terrain.heightAt(x - eps, z);
+    const hR = this.terrain.heightAt(x + eps, z);
+    const hD = this.terrain.heightAt(x, z - eps);
+    const hU = this.terrain.heightAt(x, z + eps);
+    const dyDx = (hR - hL) / (2 * eps);
+    const dyDz = (hU - hD) / (2 * eps);
+    // Project the world gradient onto the post-yaw local axes.
+    const cy = Math.cos(this._currentYaw);
+    const sy = Math.sin(this._currentYaw);
+    const forwardSlope = sy * dyDx + cy * dyDz;  // +Z (local forward)
+    const rightSlope   = cy * dyDx - sy * dyDz;  // +X (local right)
+    const TILT_SCALE = 0.35;       // keep subtle so it reads as lean, not lay
+    const TILT_LERP = 0.15;        // 0 = no smoothing, 1 = snap
+    const targetX = -Math.atan(forwardSlope) * TILT_SCALE;
+    const targetZ = -Math.atan(rightSlope)   * TILT_SCALE;
+    this._tiltX = (this._tiltX ?? 0) + (targetX - (this._tiltX ?? 0)) * TILT_LERP;
+    this._tiltZ = (this._tiltZ ?? 0) + (targetZ - (this._tiltZ ?? 0)) * TILT_LERP;
+    this.group.rotation.x = this._tiltX;
+    this.group.rotation.z = this._tiltZ;
   }
 
   /**

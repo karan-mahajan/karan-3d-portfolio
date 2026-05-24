@@ -83,7 +83,18 @@ export class Interactables {
     obj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     this.scene.add(obj);
 
-    if (this.physics) this.physics.addStaticCuboid(pos.x, groundY, pos.z, 0.72, 0.72, 0.72);
+    // Measured (rather than hardcoded 0.72³) so non-cubic crate GLBs collide
+    // tight to the visible mesh.
+    if (this.physics) {
+      obj.updateMatrixWorld(true);
+      const scaledBox = new THREE.Box3().setFromObject(obj);
+      const scaledSize = scaledBox.getSize(new THREE.Vector3());
+      this.physics.addStaticCuboid(
+        pos.x, scaledBox.min.y, pos.z,
+        scaledSize.x / 2, scaledSize.y / 2, scaledSize.z / 2,
+        obj.rotation.y,
+      );
+    }
 
     // Crate is a "push spot" — the P-key push hint will surface when the
     // player is near, with crate-flavored jokes ("shipping ETA: never",
@@ -209,53 +220,71 @@ export class Interactables {
     const size = box.getSize(new THREE.Vector3());
     const radius = Math.max(size.x, size.y, size.z) / 2 || 0.25;
 
-    const spawnGround = this.#groundY(7, -8);
-    const startPos = new THREE.Vector3(7, spawnGround + radius, -8);
+    const spawnX = 7, spawnZ = -8;
+    const spawnGround = this.#groundY(spawnX, spawnZ);
+    const startPos = new THREE.Vector3(spawnX, spawnGround + radius, spawnZ);
     obj.position.copy(startPos);
     obj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     this.scene.add(obj);
 
-    // Custom rolling physics — no Rapier dynamic body (simpler + lets us
-    // reset the ball trivially). Velocity → friction → ground clamp.
-    const velocity = new THREE.Vector3();
-    let rollAxis = new THREE.Vector3(1, 0, 0);
-    let spin = 0;
-    const terrain = this.terrain;
+    // Rapier dynamic body — the player's character controller has
+    // setApplyImpulsesToDynamicBodies(true), so just walking into the ball
+    // nudges it. Kick applies a forward+upward impulse. The old custom
+    // rolling physics let the ball pass through every static collider in
+    // the world — this swap fixes that family of bugs at once.
+    const physics = this.physics;
+    const RECOVERY_RADIUS = 50;        // ball further than this → respawn
+    const RECOVERY_Y = -1.0;           // or below this (rolled into ocean)
+    const KICK_POWER = 6.0;            // forward impulse magnitude (m/s of Δv at density 0.6)
+    const KICK_LIFT = 2.2;             // upward impulse so the ball arcs
+    const _tmpV3 = new THREE.Vector3();
+    const _tmpQ = new THREE.Quaternion();
+    let body = null;
+    if (physics) {
+      body = physics.addDynamicBall(startPos.x, startPos.y, startPos.z, radius);
+    }
+
+    const respawn = () => {
+      if (!body) return;
+      const gy = this.#groundY(spawnX, spawnZ);
+      body.setTranslation({ x: spawnX, y: gy + radius, z: spawnZ }, true);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    };
 
     const football = {
       mesh: obj,
+      body,
       kick(yaw) {
-        const power = 7; // m/s
-        velocity.set(Math.sin(yaw) * power, 0.5, Math.cos(yaw) * power);
-        // Rolling axis is perpendicular to travel direction, on the ground.
-        rollAxis.set(Math.cos(yaw), 0, -Math.sin(yaw)).normalize();
-        spin = power / radius;
+        if (!body) return;
+        // Mass = density * (4/3 π r³); applyImpulse uses kg·m/s so scale by mass.
+        const mass = body.mass();
+        body.applyImpulse({
+          x: Math.sin(yaw) * KICK_POWER * mass,
+          y: KICK_LIFT * mass,
+          z: Math.cos(yaw) * KICK_POWER * mass,
+        }, true);
+        // Match the spin to the kick direction so the ball doesn't look like
+        // it slides — a forward kick should produce forward roll.
+        body.applyTorqueImpulse({
+          x: Math.cos(yaw) * KICK_POWER * mass * 0.15,
+          y: 0,
+          z: -Math.sin(yaw) * KICK_POWER * mass * 0.15,
+        }, true);
       },
-      update(delta) {
-        if (velocity.lengthSq() < 0.0001) return;
-        obj.position.x += velocity.x * delta;
-        obj.position.y += velocity.y * delta;
-        obj.position.z += velocity.z * delta;
-        velocity.y -= 9.8 * delta;
-        // Ground bounce + friction. Live terrain sample — the wave reaches
-        // ±0.65m past r≈22 from spawn, so a static y=radius clamp would bury
-        // the ball anywhere outside the flat spawn zone.
-        const groundY = (terrain ? terrain.heightAt(obj.position.x, obj.position.z) : 0) + radius;
-        if (obj.position.y <= groundY) {
-          obj.position.y = groundY;
-          if (velocity.y < 0) velocity.y = -velocity.y * 0.45;
-          velocity.x *= 0.86;
-          velocity.z *= 0.86;
+      respawn,
+      update(_delta) {
+        if (!body) return;
+        const t = body.translation();
+        // Recover if the ball has been kicked into the ocean or way off-island.
+        if (t.y < RECOVERY_Y || (t.x * t.x + t.z * t.z) > RECOVERY_RADIUS * RECOVERY_RADIUS) {
+          respawn();
+          return;
         }
-        // Rolling rotation.
-        const speed = Math.hypot(velocity.x, velocity.z);
-        spin = speed / radius;
-        if (spin > 0.01) {
-          obj.rotateOnWorldAxis(rollAxis, spin * delta);
-        }
-        if (speed < 0.05 && obj.position.y <= groundY + 0.01) {
-          velocity.set(0, 0, 0);
-        }
+        obj.position.set(t.x, t.y, t.z);
+        const r = body.rotation();
+        _tmpQ.set(r.x, r.y, r.z, r.w);
+        obj.quaternion.copy(_tmpQ);
       },
     };
     this.football = football;
@@ -450,9 +479,25 @@ export class Interactables {
       const s = target / Math.max(size.y, 0.001);
       signObj.scale.setScalar(s);
       signObj.position.set(pos.x, groundY, pos.z);
-      signObj.rotation.y = Math.PI; // face south, back toward the player coming from spawn
+      // Face -Z (toward spawn at the south) so the player approaching from
+      // the experience trail reads the sign's front, not its back.
+      signObj.rotation.y = 0;
       signObj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
       this.scene.add(signObj);
+
+      // Static collider so the player can't walk through the post or panel.
+      // Sized to the scaled GLB box; cuboid Y arg is the cuboid's BOTTOM
+      // (Physics.addStaticCuboid lifts by hy internally).
+      if (this.physics) {
+        const scaledBox = new THREE.Box3().setFromObject(signObj);
+        const scaledSize = scaledBox.getSize(new THREE.Vector3());
+        this.physics.addStaticCuboid(
+          pos.x, scaledBox.min.y, pos.z,
+          Math.max(scaledSize.x / 2, 0.18),
+          Math.max(scaledSize.y / 2, 0.1),
+          Math.max(scaledSize.z / 2, 0.06),
+        );
+      }
     }
 
     const label = this.#bakeSignLabel('This is where the resume ends... for now.');
@@ -468,10 +513,21 @@ export class Interactables {
       const tsize = tbox.getSize(new THREE.Vector3());
       const ts = 0.72 / Math.max(tsize.y, 0.001); // +20%
       trophy.scale.setScalar(ts);
-      trophy.position.set(pos.x + 1.2, this.#groundY(pos.x + 1.2, pos.z - 0.3), pos.z - 0.3);
+      const tx = pos.x + 1.2;
+      const tz = pos.z - 0.3;
+      const tgroundY = this.#groundY(tx, tz);
+      trophy.position.set(tx, tgroundY, tz);
       trophy.rotation.y = Math.PI;
       trophy.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
       this.scene.add(trophy);
+
+      // Small cylinder collider so the trophy isn't walk-through.
+      if (this.physics) {
+        const scaledBox = new THREE.Box3().setFromObject(trophy);
+        const scaledSize = scaledBox.getSize(new THREE.Vector3());
+        const trophyR = Math.max(scaledSize.x, scaledSize.z) / 2;
+        this.physics.addStaticCylinder(tx, tgroundY, tz, trophyR, scaledSize.y);
+      }
     } catch (e) {
       // Trophy missing is harmless.
     }

@@ -8,7 +8,6 @@ import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
-import { ProximityLight } from './World/ProximityLight.js';
 import { Lamps } from './World/Lamps.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
@@ -78,12 +77,9 @@ export class App extends EventTarget {
     // — billboards / signs are still loading at this point, so the lanterns
     // they need are attached after boot() completes the world load.
     // Static lantern fixtures at every readable board, with their bulb
-    // emissive + PointLight intensity driven by TimeOfDay. Replaces the
-    // single roaming proximity light — the user explicitly asked for
-    // physical lamps so the "there's something here" cue is on always.
-    this.lamps = new Lamps(this.scene, this.loader);
-    // Kept for backwards compatibility but the scene now uses Lamps.
-    this.proximityLight = new ProximityLight(this.scene);
+    // emissive + PointLight intensity driven by TimeOfDay. Terrain is
+    // passed so each lamp's base sits on the heightfield instead of y=0.
+    this.lamps = new Lamps(this.scene, this.loader, this.world.terrain);
 
     this.timeOfDay = new TimeOfDay({
       scene: this.scene,
@@ -158,9 +154,6 @@ export class App extends EventTarget {
     // grass.load() call.
     this.water = this.world.water;
     if (this.water) {
-      if (this.water.mainPondPosition) {
-        this.rain.setPond(this.water.mainPondPosition, this.water.mainPondRadius);
-      }
       this.timeOfDay.water = this.water;
       this.timeOfDay.reapply();
       // Give Water a handle on AudioManager so wading triggers WAV splashes
@@ -178,7 +171,6 @@ export class App extends EventTarget {
       pathPositions: this.world.paths?.getTilePositions() ?? new Float32Array(0),
       pathCount: this.world.paths?.getTileCount() ?? 0,
       pathRadius: 1.4,
-      waterPoints: this.water?.getExclusionPoints() ?? [],
       treePositions,
     });
 
@@ -232,12 +224,6 @@ export class App extends EventTarget {
       })
       .catch((err) => console.warn('[Lamps] load failed:', err));
 
-    // Proximity light kept around but disabled — Lamps cover the same
-    // role now (always-on, no per-frame work). Leaving it at intensity 0
-    // means it adds zero shading cost (three.js skips lights with
-    // intensity 0).
-    this.proximityLight.collectTargets({ signs: this.world.signs, billboards: this.world.billboards });
-    this.proximityLight.light.intensity = 0;
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
 

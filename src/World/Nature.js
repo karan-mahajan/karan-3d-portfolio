@@ -153,19 +153,28 @@ function pickAutumnColor(url) {
 }
 
 /**
- * Unit-space collider footprints per kind. Multiplied by per-instance scale.
- * Grass / accent (flowers, mushrooms) have no collider — those should be
- * walk-through. Rocks use a cuboid; everything else cylindrical.
+ * Per-kind collider config. Two sizing strategies:
+ *  - 'fixed'    : use the half/radius/height below × per-instance scale.
+ *                 Right for trees (trunk is narrow, foliage shouldn't block
+ *                 the player) and bushes (round-ish, easier to tune).
+ *  - 'bbox'     : measure the source GLB's bounding box at unit scale,
+ *                 then per-instance-scale it. Right for rocks and logs
+ *                 where the player should collide with the visible mesh
+ *                 outline (fixed footprints left visible mesh hanging
+ *                 30-50 cm past the collider on the bigger Quaternius
+ *                 rocks — player could slide into the painted rock and
+ *                 end up visually inside it).
+ *
+ * Grass / accent (flowers, mushrooms, pebbles, clover, ferns) have no
+ * collider — those should be walk-through.
  */
 const COLLIDERS = {
-  // Quaternius trees have native scale ~1 and trunk diameter ≈ 0.6–1 m
-  // visually, so radius 0.35 × per-instance scale (0.85–1.4) gives
-  // colliders in the 0.30–0.49 m range — matches what you see, no clipping.
-  // Height 3 m × scale clears player chest height at all variants.
-  tree: { type: 'cylinder', radius: 0.35, height: 3.0 },
-  bush: { type: 'cylinder', radius: 0.45, height: 0.7 },
-  rock: { type: 'cuboid', half: [0.45, 0.4, 0.45] },
-  log:  { type: 'cuboid', half: [0.6, 0.3, 0.3] },
+  // Trunk radius bumped from 0.35 → 0.45 (audit item #7) so the pine
+  // variants at scale 1.4 collide out to 0.63 m, covering their painted base.
+  tree: { type: 'cylinder', sizing: 'fixed', radius: 0.45, height: 3.0 },
+  bush: { type: 'cylinder', sizing: 'fixed', radius: 0.45, height: 0.7 },
+  rock: { type: 'cuboid',   sizing: 'bbox' },
+  log:  { type: 'cuboid',   sizing: 'bbox' },
 };
 
 export class Nature {
@@ -228,6 +237,16 @@ export class Nature {
     });
     if (protos.length === 0) return 0;
 
+    // Source GLB bbox at unit scale — used for 'bbox'-sized colliders so the
+    // collider fills the actual visible mesh. protoSize × per-instance scale
+    // gives the per-instance footprint; protoCenter lets us align the
+    // collider centre to the visible mesh centre regardless of where the
+    // GLB's origin sits (some Quaternius props are origin-at-base, some
+    // origin-at-centre).
+    const protoBox = new THREE.Box3().setFromObject(root);
+    const protoSize = protoBox.getSize(new THREE.Vector3());
+    const protoCenter = protoBox.getCenter(new THREE.Vector3());
+
     // Compute per-instance world transforms (shared by all sub-meshes).
     const instanceTransforms = [];
     const dummy = new THREE.Object3D();
@@ -251,6 +270,10 @@ export class Nature {
       instanceTransforms.push(dummy.matrix.clone());
 
       // Register per-instance static collider for solid props.
+      // 'fixed' (trees/bushes): use the tuned half/radius constants × scale.
+      // 'bbox'  (rocks/logs)  : derive half-extents from the measured scaled
+      //   bbox, and shift the collider centre to match the visible mesh
+      //   centre so the player can't stand inside the painted rock.
       if (colliderShape) {
         if (colliderShape.type === 'cylinder') {
           this.physics.addStaticCylinder(
@@ -259,11 +282,31 @@ export class Nature {
             colliderShape.height * scale,
           );
         } else if (colliderShape.type === 'cuboid') {
-          const [hx, hy, hz] = colliderShape.half;
-          this.physics.addStaticCuboid(
-            x, y, z,
-            hx * scale, hy * scale, hz * scale,
-          );
+          let hx, hy, hz, yBottom, cx, cz;
+          if (colliderShape.sizing === 'bbox') {
+            hx = (protoSize.x / 2) * scale;
+            hy = (protoSize.y / 2) * scale;
+            hz = (protoSize.z / 2) * scale;
+            // Some Quaternius rock GLBs have their geometry origin offset
+            // ~1 m from the painted mesh's XZ centre. Apply Y-rotation to
+            // the proto-local centre and shift the collider so it lands on
+            // the visible mesh rather than alongside it (otherwise player
+            // walks into the painted rock on the offset side).
+            const cy = Math.cos(dummy.rotation.y);
+            const sy = Math.sin(dummy.rotation.y);
+            cx = x + scale * (cy * protoCenter.x + sy * protoCenter.z);
+            cz = z + scale * (-sy * protoCenter.x + cy * protoCenter.z);
+            yBottom = y + protoCenter.y * scale - hy;
+          } else {
+            [hx, hy, hz] = colliderShape.half;
+            hx *= scale; hy *= scale; hz *= scale;
+            cx = x; cz = z;
+            yBottom = y;
+          }
+          // Rotate the collider with the visible mesh — without this the
+          // axis-aligned cuboid leaves the painted rock corners poking
+          // 30-50 cm past the collider at ~45° yaws.
+          this.physics.addStaticCuboid(cx, yBottom, cz, hx, hy, hz, dummy.rotation.y);
         }
       }
 
@@ -273,16 +316,25 @@ export class Nature {
       // a small "near" buffer the player can stand within before the chip
       // fires.
       if (colliderShape && cfg.kind !== 'bush') {
-        // Generous buffer so the hint fires while approaching, not just on
-        // contact. Trees especially — players orbit a tree from a few metres
-        // away before "walking into" it.
         const buffer = cfg.kind === 'tree' ? 1.8 : 1.2;
-        const surfaceRadius = colliderShape.type === 'cylinder'
-          ? colliderShape.radius * scale + buffer
-          : Math.max(colliderShape.half[0], colliderShape.half[2]) * scale + buffer;
+        let surfaceRadius, spotX = x, spotZ = z;
+        if (colliderShape.type === 'cylinder') {
+          surfaceRadius = colliderShape.radius * scale + buffer;
+        } else if (colliderShape.sizing === 'bbox') {
+          surfaceRadius = Math.max(protoSize.x, protoSize.z) * 0.5 * scale + buffer;
+          // Match the collider's XZ shift so the prompt fires off the
+          // visible mesh, not the GLB-origin point (which can be ~1 m
+          // away from the painted centre on some Quaternius rocks).
+          const cy = Math.cos(dummy.rotation.y);
+          const sy = Math.sin(dummy.rotation.y);
+          spotX = x + scale * (cy * protoCenter.x + sy * protoCenter.z);
+          spotZ = z + scale * (-sy * protoCenter.x + cy * protoCenter.z);
+        } else {
+          surfaceRadius = Math.max(colliderShape.half[0], colliderShape.half[2]) * scale + buffer;
+        }
         if (surfaceRadius >= 1.2) {
           this.pushSpots.push({
-            position: new THREE.Vector3(x, y, z),
+            position: new THREE.Vector3(spotX, y, spotZ),
             type: cfg.kind,           // 'tree' | 'rock' | 'log'
             surfaceRadius,
           });

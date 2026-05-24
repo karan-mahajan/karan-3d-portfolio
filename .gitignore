@@ -14,9 +14,11 @@ thumbs.db
 /Extra/
 /static/models/wildlife/incoming/
 
-# Verification screenshots — output of .verify-*.mjs harness scripts.
-# The scripts themselves are tracked; the shots they produce are not.
-/.verify-shots/
+# Verification sandbox — playwright harness scripts (verify-*.mjs) AND the
+# screenshots they produce. Everything in this folder stays local; future
+# Claude sessions read it to see what's already been driven and write new
+# probes/shots into it. NEVER commit anything from here.
+/.verify/
 
 # Ad-hoc perf probe — playwright-driven scene measurement, regenerated
 # as needed during optimization passes.

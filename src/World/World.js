@@ -2,7 +2,6 @@ import { Terrain } from './Terrain.js';
 import { Nature } from './Nature.js';
 import { Paths } from './Paths.js';
 import { Sky } from './Sky.js';
-import { Birds } from './Birds.js';
 import { Billboards, PROJECTS_CENTER } from '../Portfolio/Billboards.js';
 import { Signs, SECTION_POSITIONS } from '../Portfolio/Signs.js';
 import { Furniture } from '../Portfolio/Furniture.js';
@@ -27,12 +26,14 @@ export class World {
 
   async loadAssets(loader, physics = null) {
     this.billboards = new Billboards(this.scene, physics, loader, this.terrain);
-    this.signs = new Signs(this.scene, physics);
+    this.signs = new Signs(this.scene, physics, this.terrain);
     this.nature = new Nature(this.scene, loader, this.terrain, physics);
 
     // Plan path tiles synchronously and register their no-spawn circles on
-    // Nature BEFORE its scatter runs. Actual tile GLBs load below.
-    this.paths = new Paths(this.scene, loader, this.terrain);
+    // Nature BEFORE its scatter runs. Actual tile GLBs load below. Physics
+    // is passed so each loaded tile gets a thin static collider — without
+    // it the player's feet sink visually into the top of every path stone.
+    this.paths = new Paths(this.scene, loader, this.terrain, physics);
     this.paths.addExclusionsTo(this.nature);
 
     // Per-prop exclusions so trees never spawn right on top of a sign.
@@ -68,8 +69,10 @@ export class World {
     // Single shader-driven plane surrounding the island. The land mass
     // itself rises above the water; see Terrain.#displaceVertices for the
     // island shape (radius ~45 with a sandy shore slope to y=-2 by ~r=60).
-    // getExclusionPoints() returns []; no inland water to keep nature out of.
     this.water = new Water(this.scene, loader, this.terrain);
+    // Hand the physics world to Water so loadShoreDecor() can register
+    // colliders for solid shore rocks (lily pads + reeds remain walk-through).
+    if (physics) this.water.setPhysics(physics);
 
     // Interactable prop spots — keep trees clear so the player can see them
     // and the prompts have room to read. Coordinates mirror Interactables.js.
@@ -95,10 +98,6 @@ export class World {
       return 0;
     });
 
-    // Birds — try to load a real GLB, fall back to procedural body.
-    this.birds = new Birds(this.scene, loader);
-    await this.birds.load(this.billboards, this.signs);
-
     // Shore decor (lily pads, half-submerged rocks, reeds) along the
     // island waterline. Fire-and-forget — missing GLBs are skipped per-file
     // inside loadShoreDecor() so a single 404 doesn't block boot.
@@ -118,6 +117,5 @@ export class World {
   update(elapsed, camera = null, delta = 0) {
     if (camera) this.sky.update(camera.position);
     if (this.billboards) this.billboards.update(elapsed);
-    if (this.birds) this.birds.update(delta, elapsed);
   }
 }
