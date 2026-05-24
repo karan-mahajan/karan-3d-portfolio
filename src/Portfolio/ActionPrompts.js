@@ -118,6 +118,7 @@ export class ActionPrompts {
     this.oneShotActive = null;
     this.globalPushActive = false;
     this.pushStartSec = 0;
+    this.activePushSpot = null;
     this._elapsed = 0;
 
     this.pushSpots = [];
@@ -277,7 +278,8 @@ export class ActionPrompts {
         // against the object, those forward-reaching parts pass through the
         // visible mesh. Snap the player outward along the spot→player ray
         // to a comfortable push distance before the animation plays.
-        this._snapToPushDistance(this.currentPushSpot);
+        this.activePushSpot = this.currentPushSpot;
+        this._snapToPushDistance(this.activePushSpot, 0);
         if (this.player.startLoopAction('push')) {
           this.globalPushActive = true;
           this.pushStartSec = this._elapsed;
@@ -288,6 +290,8 @@ export class ActionPrompts {
           this.controller.paused = true;
           if (this.playerCamera) this.playerCamera.applyActionZoom();
           if (this.audio) this.audio.playInteract();
+        } else {
+          this.activePushSpot = null;
         }
         return;
       }
@@ -417,6 +421,7 @@ export class ActionPrompts {
   _endGlobalPush() {
     this.globalPushActive = false;
     this.pushStartSec = 0;
+    this.activePushSpot = null;
     this._pushJokeDeck = [];
     this._activeJokeText = null;
     this.player.stopLoopAction();
@@ -431,36 +436,41 @@ export class ActionPrompts {
    * extended) lands the hand against the visible surface instead of clipping
    * through it.
    *
-   * Target = colliderRadius (distance from spot centre to the object's
-   * visible surface) + PUSH_HAND_REACH (body radius + max arm extension
-   * at apex). Only ever moves the player AWAY from the spot, never toward —
-   * so a player who's already at a comfortable distance stays put.
+   * Target = colliderRadius (distance from spot centre to the object's visible
+   * surface) + a timed reach offset. The push clip starts with bent arms, then
+   * leans/stretches forward; parking the root at one fixed distance either
+   * clips the full-extension frame or leaves a side-view gap at the start.
    *
    * Falls back to a coarser surfaceRadius-based target if colliderRadius
    * isn't set on the spot. Spots registered by Nature, Interactables, and
    * discoverPushSpots all set it, so the fallback shouldn't normally fire.
    */
-  _snapToPushDistance(spot) {
-    // Body radius (~0.4 m) + arm extension at the push apex (~0.55 m) —
-    // tuned visually so the hand just touches the surface at full reach.
-    const PUSH_HAND_REACH = 0.95;
+  _snapToPushDistance(spot, heldFor = 0) {
+    const reach = this._pushReachAt(heldFor);
     const surface = (spot.colliderRadius != null)
       ? spot.colliderRadius
       : Math.max(0, spot.surfaceRadius - 1.2);
-    const target = surface + PUSH_HAND_REACH;
+    const target = surface + reach;
     const px = this.player.position.x;
     const pz = this.player.position.z;
     const dx = px - spot.position.x;
     const dz = pz - spot.position.z;
     const d = Math.hypot(dx, dz);
     if (d <= 0.05) return; // standing on the spot — nothing sensible to do
-    if (d >= target) return; // already at or past the comfort distance
     const k = target / d;
     const nx = spot.position.x + dx * k;
     const nz = spot.position.z + dz * k;
     const py = this.player.position.y;
     if (this.player.body) this.player.body.teleport(nx, py, nz);
     this.player.group.position.set(nx, py, nz);
+  }
+
+  _pushReachAt(heldFor) {
+    const START_REACH = 0.48;
+    const FULL_REACH = 0.98;
+    const t = Math.min(1, Math.max(0, (heldFor - 0.18) / 0.9));
+    const eased = t * t * (3 - 2 * t);
+    return START_REACH + (FULL_REACH - START_REACH) * eased;
   }
 
   _jokeAt(slot) {
@@ -500,6 +510,7 @@ export class ActionPrompts {
     if (this.globalPushActive) {
       this._hidePushHint();
       const heldFor = this._elapsed - this.pushStartSec;
+      if (this.activePushSpot) this._snapToPushDistance(this.activePushSpot, heldFor);
       if (heldFor > PUSH_JOKE_DELAY) {
         const slot = Math.floor((heldFor - PUSH_JOKE_DELAY) / PUSH_JOKE_INTERVAL);
         const text = this._jokeAt(slot);

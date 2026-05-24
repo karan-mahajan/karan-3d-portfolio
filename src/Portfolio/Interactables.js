@@ -173,8 +173,13 @@ export class Interactables {
         swingT = 0;
       },
       update(delta) {
-        if (swingAmp < 0.001) {
+        const settle = () => {
+          swingAmp = 0;
+          pivot.quaternion.identity();
           if (bagBody && !bagBody.isEnabled()) bagBody.setEnabled(true);
+        };
+        if (swingAmp < 0.001) {
+          settle();
           return;
         }
         if (bagBody && bagBody.isEnabled()) bagBody.setEnabled(false);
@@ -182,10 +187,7 @@ export class Interactables {
         const damp = Math.exp(-swingT * 1.2);
         const phase = Math.sin(swingT * 7) * damp * swingAmp;
         pivot.quaternion.setFromAxisAngle(swingAxis, phase);
-        if (damp < 0.02) {
-          swingAmp = 0;
-          pivot.quaternion.identity();
-        }
+        if ((swingT > 1.2 && Math.abs(phase) < 0.015) || damp < 0.12 || swingT > 2.8) settle();
       },
     };
     this.bag = bag;

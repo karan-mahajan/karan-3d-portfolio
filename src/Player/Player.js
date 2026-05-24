@@ -8,7 +8,7 @@ import { Character } from './Character.js';
  */
 export class Player {
   static HEIGHT = 1.7;
-  static RADIUS = 0.3;
+  static RADIUS = 0.38;
   static GRAVITY = -25;
   static JUMP_VELOCITY = 8.5;
   static IDLE_LOOK_AROUND_SECONDS = 8;

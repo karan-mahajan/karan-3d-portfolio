@@ -67,8 +67,8 @@ const PROPS = [
   { url: '/models/nature/quaternius/plant-big-2.glb',       count: 4,  scale: [0.9, 1.3],  ring: [8, 38],  kind: 'accent', bend: true },
 
   // ─── MUSHROOMS ──────────────────────────────────────────────────────────
-  { url: '/models/nature/quaternius/mushroom.glb',             count: 5, scale: [0.6, 1.0], ring: [12, 38], kind: 'accent' },
-  { url: '/models/nature/quaternius/mushroom-laetiporus.glb',  count: 4, scale: [0.6, 1.0], ring: [14, 38], kind: 'accent' },
+  { url: '/models/nature/quaternius/mushroom.glb',             count: 5, scale: [0.6, 1.0], ring: [12, 38], kind: 'mushroom' },
+  { url: '/models/nature/quaternius/mushroom-laetiporus.glb',  count: 4, scale: [0.6, 1.0], ring: [14, 38], kind: 'mushroom' },
 
   // ─── ROCKS ──────────────────────────────────────────────────────────────
   // 3 medium variants placed throughout — some near trees, some standalone.
@@ -162,13 +162,12 @@ function pickAutumnColor(url) {
  * one-size-fits-all 0.45m. Returns null if no geometry sits in the slice
  * (caller falls back to COLLIDERS default).
  */
-function measureTrunkSlice(root) {
+function measureTrunkSlice(root, sliceLo = 0.5, sliceHi = 1.5) {
   root.updateMatrixWorld(true);
   let minX = Infinity, maxX = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
   let count = 0;
   const v = new THREE.Vector3();
-  const SLICE_LO = 0.5, SLICE_HI = 1.5;
   root.traverse((child) => {
     if (!child.isMesh || !child.geometry) return;
     const pos = child.geometry.attributes.position;
@@ -176,7 +175,7 @@ function measureTrunkSlice(root) {
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos, i);
       child.localToWorld(v);
-      if (v.y < SLICE_LO || v.y > SLICE_HI) continue;
+      if (v.y < sliceLo || v.y > sliceHi) continue;
       if (v.x < minX) minX = v.x;
       if (v.x > maxX) maxX = v.x;
       if (v.z < minZ) minZ = v.z;
@@ -205,8 +204,9 @@ function measureTrunkSlice(root) {
  *                 rocks — player could slide into the painted rock and
  *                 end up visually inside it).
  *
- * Grass / accent (flowers, mushrooms, pebbles, clover, ferns) have no
- * collider — those should be walk-through.
+ * Grass / accent (flowers, pebbles, clover, ferns) have no collider — those
+ * should be walk-through. Mushrooms get small bbox colliders because they read
+ * as distinct props at foot level.
  */
 const COLLIDERS = {
   // Trunk radius bumped from 0.35 → 0.45 (audit item #7) so the pine
@@ -214,6 +214,7 @@ const COLLIDERS = {
   tree: { type: 'cylinder', sizing: 'fixed', radius: 0.45, height: 3.0 },
   bush: { type: 'cylinder', sizing: 'fixed', radius: 0.45, height: 0.7 },
   rock: { type: 'cuboid',   sizing: 'bbox' },
+  mushroom: { type: 'cuboid', sizing: 'bbox' },
   log:  { type: 'cuboid',   sizing: 'bbox' },
 };
 
@@ -315,6 +316,7 @@ export class Nature {
     // past the 0.45m default and the player could stand inside the painted
     // trunk). Computed once per prop and reused across instances.
     const trunkMeasure = (cfg.kind === 'tree') ? measureTrunkSlice(root) : null;
+    const baseMeasure = (cfg.kind === 'tree') ? measureTrunkSlice(root, 0.02, 0.55) : null;
 
     for (let i = 0; i < cfg.count; i++) {
       let x, z, tries = 0;
@@ -357,12 +359,29 @@ export class Nature {
             trunkCx = x + scale * (cy * trunkMeasure.cx + sy * trunkMeasure.cz);
             trunkCz = z + scale * (-sy * trunkMeasure.cx + cy * trunkMeasure.cz);
           }
+          let baseR = 0;
+          let baseCx = trunkCx, baseCz = trunkCz;
+          if (baseMeasure) {
+            baseR = Math.max(trunkR, baseMeasure.radius);
+            const cy = Math.cos(dummy.rotation.y);
+            const sy = Math.sin(dummy.rotation.y);
+            baseCx = x + scale * (cy * baseMeasure.cx + sy * baseMeasure.cz);
+            baseCz = z + scale * (-sy * baseMeasure.cx + cy * baseMeasure.cz);
+          }
           this.physics.addStaticCylinder(
             trunkCx, y, trunkCz,
             trunkR * scale,
             colliderShape.height * scale,
           );
           instanceColliderOuter = trunkR * scale;
+          if (baseR > trunkR * 1.08) {
+            this.physics.addStaticCylinder(
+              baseCx, y, baseCz,
+              baseR * scale,
+              0.9 * scale,
+            );
+            instanceColliderOuter = Math.max(instanceColliderOuter, baseR * scale);
+          }
         } else if (colliderShape.type === 'cuboid') {
           let hx, hy, hz, yBottom, cx, cz;
           if (colliderShape.sizing === 'bbox') {
@@ -400,11 +419,11 @@ export class Nature {
       // shrubbery. The surfaceRadius below = collider half-width × scale +
       // a small "near" buffer the player can stand within before the chip
       // fires.
-      if (colliderShape && cfg.kind !== 'bush') {
+      if (colliderShape && cfg.kind !== 'bush' && cfg.kind !== 'mushroom') {
         const buffer = cfg.kind === 'tree' ? 1.8 : 1.2;
         let surfaceRadius, spotX = x, spotZ = z;
         if (colliderShape.type === 'cylinder') {
-          surfaceRadius = colliderShape.radius * scale + buffer;
+          surfaceRadius = (instanceColliderOuter ?? colliderShape.radius * scale) + buffer;
         } else if (colliderShape.sizing === 'bbox') {
           surfaceRadius = Math.max(protoSize.x, protoSize.z) * 0.5 * scale + buffer;
           // Match the collider's XZ shift so the prompt fires off the
