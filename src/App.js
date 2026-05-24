@@ -17,7 +17,8 @@ import { Interaction } from './Portfolio/Interaction.js';
 import { ActionPrompts } from './Portfolio/ActionPrompts.js';
 import { Interactables } from './Portfolio/Interactables.js';
 import { Fireflies } from './Effects/Fireflies.js';
-import { Water } from './Effects/Water.js';
+// Water is constructed inside World.loadAssets so its exclusions reach
+// Nature before scatter; App.js just grabs `this.world.water` in boot().
 import { Rain } from './Effects/Rain.js';
 import { WindLines } from './Effects/WindLines.js';
 import { Leaves } from './Effects/Leaves.js';
@@ -58,14 +59,11 @@ export class App extends EventTarget {
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
     this.fireflies = new Fireflies(this.scene);
-    // Pond northwest of spawn. Loader is passed so lily-pad GLBs can be
-    // placed on the surface.
-    this.waterPos = new THREE.Vector3(-12, 0.05, 18);
-    this.water = new Water(this.scene, { position: this.waterPos, radius: 5.5, loader: this.loader });
+    // Water (pools + river) is created during world.loadAssets so it can
+    // register Nature exclusions before nature.load() scatters props. The
+    // reference is grabbed in boot() once the world has loaded.
+    this.water = null;
     this.rain = new Rain(this.scene, this.camera);
-    // Let the rain spawn pond-surface ripples (wider, slower, lighter blue)
-    // instead of ground splashes wherever a drop lands inside the water.
-    this.rain.setPond(this.waterPos, 5.5);
     this.windLines = new WindLines(this.scene, this.wind);
     this.leaves = new Leaves(this.scene, this.wind);
 
@@ -96,6 +94,8 @@ export class App extends EventTarget {
       sunMesh: this.sun,
       grass: this.grass,
       fireflies: this.fireflies,
+      // water is wired in boot() once world.loadAssets has created it.
+      water: null,
       playerGroup: null, // wired after player loads in boot()
     });
 
@@ -158,6 +158,19 @@ export class App extends EventTarget {
         this.world.paths.getTilePositions(),
         this.world.paths.getTileCount(),
       );
+    }
+
+    // Water is built inside world.loadAssets so its exclusions feed Nature.
+    // Hook it up to the grass shader (separate exclusion array), the rain
+    // (pond ripple footprint), and TimeOfDay (day/night tint).
+    this.water = this.world.water;
+    if (this.water) {
+      this.grass.setWaterExclusions(this.water.getExclusionPoints());
+      if (this.water.mainPondPosition) {
+        this.rain.setPond(this.water.mainPondPosition, this.water.mainPondRadius);
+      }
+      this.timeOfDay.water = this.water;
+      this.timeOfDay.reapply();
     }
 
     this.interaction = new Interaction({
@@ -333,7 +346,7 @@ export class App extends EventTarget {
     if (this.interaction) this.interaction.tick(this.player.position);
     if (this.interactables) this.interactables.update(delta);
     this.fireflies.update(elapsed);
-    this.water.update(elapsed, delta, this.player.position);
+    if (this.water) this.water.update(elapsed, delta, this.player.position);
     this.rain.update(delta);
     this.windLines.update(delta, this.player.position);
     this.leaves.update(delta, this.player.position);
@@ -353,6 +366,12 @@ export class App extends EventTarget {
     this.lights.sun.target.updateMatrixWorld();
     this.sun.update(this.camera);
     this.timeOfDay.tick(p, this.camera, elapsed);
+
+    // Refresh the shared water reflection + refraction RTs once per frame
+    // BEFORE the composer renders. With one master Reflector / Refractor
+    // shared across every pool + the river, this is 2 scene re-renders per
+    // frame total (vs. 10 if each surface owned its own pair).
+    if (this.water) this.water.preRender(this.renderer, this.camera);
 
     this.debug.tick();
     this.postfx.render(delta);

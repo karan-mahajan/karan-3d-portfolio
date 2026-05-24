@@ -27,9 +27,10 @@ import { DUSK } from './Palette.js';
 
 const FIELD_RADIUS = 40;
 const TILE_SIZE = FIELD_RADIUS * 2;
-// Must match `#define MAX_PATHS` in the vertex shader below. GLSL ES 1.00
-// requires a compile-time-constant for-loop bound, so this size is baked in.
+// Must match `#define MAX_PATHS` / `#define MAX_WATER` in the vertex shader
+// below. GLSL ES 1.00 requires compile-time-constant for-loop bounds.
 const MAX_PATHS = 96;
+const MAX_WATER = 96;
 
 export class Grass {
   /**
@@ -97,6 +98,13 @@ export class Grass {
     uniforms.uPathCount = { value: 0 };
     uniforms.uPathExclusionRadius = { value: 0.5 };
 
+    // Water exclusion uniforms — vec3 per entry (x, z, radius). Each pool
+    // contributes one entry; each river is sampled along its spine. Radius
+    // is per-entry because pools (5.5m) and river samples (1.8m) differ.
+    this.waterPositions = new Float32Array(MAX_WATER * 3);
+    uniforms.uWaterPositions = { value: this.waterPositions };
+    uniforms.uWaterCount = { value: 0 };
+
     this.material = new THREE.ShaderMaterial({
       vertexShader: this.#vertexShader(),
       fragmentShader: this.#fragmentShader(),
@@ -147,6 +155,23 @@ export class Grass {
     this.pathPositions.set(slice);
     this.pathPositions.fill(0, capped * 2);
     this.material.uniforms.uPathCount.value = capped;
+  }
+
+  /**
+   * Register water footprints (pools + sampled river points) whose disks
+   * should fully suppress blade growth. Each entry is (x, z, radius).
+   *
+   * @param {Array<{x:number,z:number,r:number}>} points
+   */
+  setWaterExclusions(points) {
+    const capped = Math.min(points.length, MAX_WATER);
+    for (let i = 0; i < capped; i++) {
+      this.waterPositions[i * 3 + 0] = points[i].x;
+      this.waterPositions[i * 3 + 1] = points[i].z;
+      this.waterPositions[i * 3 + 2] = points[i].r;
+    }
+    this.waterPositions.fill(0, capped * 3);
+    this.material.uniforms.uWaterCount.value = capped;
   }
 
   /**
@@ -244,9 +269,17 @@ export class Grass {
       uniform int   uPathCount;
       uniform float uPathExclusionRadius;
 
+      // Water exclusions — (x, z, radius) per entry. Each pool + each
+      // sampled river point becomes one disc. Blades inside the disc are
+      // fully flattened so the field never grows through water surfaces.
+      #define MAX_WATER 96
+      uniform vec3  uWaterPositions[MAX_WATER];
+      uniform int   uWaterCount;
+
       varying float vTipBlend;
       varying float vSeed;
       varying float vEdgeFade;
+      varying float vWaterCull;
 
       ${Wind.windOffsetGLSL}
 
@@ -320,6 +353,22 @@ export class Grass {
           );
         }
 
+        // Water flatten — same shape but per-entry radius (pools at 5.8m,
+        // river samples at 1.8m). Inside r*0.85 the blade is hard-pressed
+        // (combinedShrink → 1.0), and we set vWaterCull so the fragment
+        // shader can discard any blade whose centre lands in water.
+        float waterFlatten = 0.0;
+        for (int i = 0; i < MAX_WATER; i++) {
+          if (i >= uWaterCount) break;
+          vec3 wp = uWaterPositions[i];
+          float d = distance(wrap, wp.xy);
+          waterFlatten = max(
+            waterFlatten,
+            1.0 - smoothstep(wp.z * 0.85, wp.z * 1.05, d)
+          );
+        }
+        vWaterCull = waterFlatten;
+
         vec3 wpos;
         if (aCorner < 0.5) {
           // base-left — anchored, no sway
@@ -354,8 +403,14 @@ export class Grass {
           // Path tiles use a stronger 0.95 ratio (near-full press) so blades
           // don't grow through the tile face. max() lets either source drive
           // the compression — player-flatten behaviour from Sprint 4 Part A
-          // is preserved unchanged when no tile is nearby.
-          float combinedShrink = max(flattenAmount * uPlayerPush, pathFlatten * 0.95);
+          // is preserved unchanged when no tile is nearby. Water uses the
+          // full 1.0 ratio so blades collapse entirely inside any pool /
+          // river; the fragment shader's vWaterCull discard is a belt-and-
+          // braces guarantee that no surviving fragment shows.
+          float combinedShrink = max(
+            max(flattenAmount * uPlayerPush, pathFlatten * 0.95),
+            waterFlatten
+          );
           float heightFactor = 1.0 - combinedShrink;
           tipY *= heightFactor;
 
@@ -399,9 +454,14 @@ export class Grass {
       varying float vTipBlend;
       varying float vSeed;
       varying float vEdgeFade;
+      varying float vWaterCull;
 
       void main() {
         if (vEdgeFade < 0.02) discard;
+        // Belt-and-braces: any blade whose centre is inside a water disc
+        // is collapsed by vertex displacement, but discarding fragments
+        // outright also kills the small residual base triangle.
+        if (vWaterCull > 0.85) discard;
 
         // Fake AO: base verts darker, tip full color.
         float aoMix = mix(0.55, 1.0, vTipBlend);

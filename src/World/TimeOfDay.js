@@ -68,6 +68,9 @@ export const DAY_PALETTE = Object.freeze({
   // and a glowing bulb that the bloom pass picks up.
   lampIntensity: 0.3,
   lampBulbBrightness: 0.6,
+  // Warm daylight tint on the water — sky-fresh reads as a brighter blue
+  // because the Water2 shader multiplies the reflected colour by this tint.
+  waterColor: '#4a90c4',
 });
 
 export const NIGHT_PALETTE = Object.freeze({
@@ -110,6 +113,9 @@ export const NIGHT_PALETTE = Object.freeze({
   // Night lamps are the primary light source for sign text.
   lampIntensity: 1.2,
   lampBulbBrightness: 1.8,
+  // Cooler, deeper night water — moon + lanterns + stars reflect against
+  // a darker blue-grey base so the night scene reads as cold water.
+  waterColor: '#2a4a64',
 });
 
 /**
@@ -148,6 +154,7 @@ export class TimeOfDay {
     sunMesh,
     grass,
     fireflies,
+    water = null,
     billboards = null,
     signs = null,
     playerGroup,
@@ -162,6 +169,7 @@ export class TimeOfDay {
     this.sunMesh = sunMesh;
     this.grass = grass;
     this.fireflies = fireflies;
+    this.water = water;
     this.billboards = billboards;
     this.signs = signs;
     this.playerGroup = playerGroup;
@@ -544,6 +552,7 @@ export class TimeOfDay {
 
     if (this.billboards) this.billboards.emissiveBoost = p.billboardEmissiveBoost;
     if (this.lanterns) for (const l of this.lanterns) l.intensity = p.lanternIntensity;
+    if (this.water) this.water.setColor(p.waterColor);
     if (this.lamps) {
       this.lamps.apply({
         intensity: p.lampIntensity,
@@ -644,6 +653,9 @@ export class TimeOfDay {
         tweens.push(gsap.to(l, { intensity: p.lanternIntensity, duration, ease }));
       }
     }
+
+    // Water tint — tweens the shared `color` uniform on every surface.
+    if (this.water) this.water.tweenColor(p.waterColor, duration, ease);
 
     // Physical lamps — tween each PointLight's intensity, and animate
     // the shared bulb material color (toward target hex × brightness).

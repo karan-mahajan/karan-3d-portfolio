@@ -31,6 +31,12 @@ export class Terrain {
   static #STONE_LOW = 0.15;
   static #STONE_HIGH = 0.30;
   static #TEXTURE_BASE = '/textures/ground';
+  // Wet-rim band — terrain darkens within this distance of any water edge,
+  // and a thin foam highlight sits right at the shoreline. Must match
+  // `#define MAX_WATER` in the fragment shader extension below.
+  static #MAX_WATER = 96;
+  static #WET_RIM_M = 1.0;
+  static #FOAM_BAND_M = 0.18;
 
   #uniforms;
 
@@ -85,6 +91,10 @@ export class Terrain {
     const dirtNorm   = normalTex('dirt/Ground037_1K-PNG_NormalGL.png');
     const stoneNorm  = normalTex('stone/Rock026_1K-PNG_NormalGL.png');
 
+    // Water positions packed as (x, z, radius) per entry. setWaterExclusions
+    // populates these once at boot; default state (count=0) skips the loop.
+    this._waterPositions = new Float32Array(Terrain.#MAX_WATER * 3);
+
     this.#uniforms = {
       uGrassMap:        { value: grassMap },
       uDirtMap:         { value: dirtMap },
@@ -97,6 +107,10 @@ export class Terrain {
       uDirtLow:         { value: Terrain.#DIRT_LOW },
       uStoneLow:        { value: Terrain.#STONE_LOW },
       uStoneHigh:       { value: Terrain.#STONE_HIGH },
+      uWaterPositions:  { value: this._waterPositions },
+      uWaterCount:      { value: 0 },
+      uWetRim:          { value: Terrain.#WET_RIM_M },
+      uFoamBand:        { value: Terrain.#FOAM_BAND_M },
     };
 
     const material = new THREE.MeshStandardMaterial({
@@ -136,6 +150,7 @@ export class Terrain {
         .replace(
           '#include <common>',
           `#include <common>
+           #define MAX_WATER 96
            varying vec3 vWorldPos;
            varying vec3 vWorldNormalGeom;
            uniform sampler2D uGrassMap;
@@ -148,7 +163,11 @@ export class Terrain {
            uniform float uDirtHigh;
            uniform float uDirtLow;
            uniform float uStoneLow;
-           uniform float uStoneHigh;`
+           uniform float uStoneHigh;
+           uniform vec3  uWaterPositions[MAX_WATER];
+           uniform int   uWaterCount;
+           uniform float uWetRim;
+           uniform float uFoamBand;`
         )
         .replace(
           '#include <map_fragment>',
@@ -166,6 +185,26 @@ export class Terrain {
            vec3 _sCol = texture2D(uStoneMap, _terrainUv).rgb;
            vec3 _col = mix(_gCol, _dCol, _dirtW);
            _col = mix(_col, _sCol, _stoneW);
+
+           // Wet shoreline: shortest signed distance from this pixel to any
+           // water disc edge. Negative inside water (those pixels are hidden
+           // by the water mesh anyway), 0 at the rim, positive outside.
+           float _minD = 1e6;
+           for (int i = 0; i < MAX_WATER; i++) {
+             if (i >= uWaterCount) break;
+             vec3 wp = uWaterPositions[i];
+             float d = distance(vec2(vWorldPos.x, vWorldPos.z), wp.xy) - wp.z;
+             _minD = min(_minD, d);
+           }
+           float _outside = max(_minD, 0.0);
+           // Darken within uWetRim of the shoreline (max 45% darker at the
+           // edge, easing back to 0 by uWetRim metres out).
+           float _wet = 1.0 - smoothstep(0.0, uWetRim, _outside);
+           _col *= mix(1.0, 0.55, _wet);
+           // Thin foam band at the waterline.
+           float _foam = (1.0 - smoothstep(0.0, uFoamBand, _outside));
+           _col = mix(_col, vec3(0.92, 0.95, 0.98), _foam * 0.35);
+
            diffuseColor.rgb *= _col;`
         )
         .replace(
@@ -217,6 +256,24 @@ export class Terrain {
       pos.setY(i, wave * flatten);
     }
     pos.needsUpdate = true;
+  }
+
+  /**
+   * Register water footprints so the fragment shader can darken the
+   * shoreline + paint a foam ring. Same format as Grass.setWaterExclusions:
+   * an array of `{x, z, r}` discs. Call once at boot — surfaces don't move.
+   *
+   * @param {Array<{x:number,z:number,r:number}>} points
+   */
+  setWaterExclusions(points) {
+    const capped = Math.min(points.length, Terrain.#MAX_WATER);
+    for (let i = 0; i < capped; i++) {
+      this._waterPositions[i * 3 + 0] = points[i].x;
+      this._waterPositions[i * 3 + 1] = points[i].z;
+      this._waterPositions[i * 3 + 2] = points[i].r;
+    }
+    this._waterPositions.fill(0, capped * 3);
+    this.#uniforms.uWaterCount.value = capped;
   }
 
   heightAt(x, z) {

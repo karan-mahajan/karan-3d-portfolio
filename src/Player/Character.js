@@ -88,7 +88,15 @@ export class Character {
         child.castShadow = true;
         child.receiveShadow = true;
         const apply = (m) => {
-          if (m && m.envMapIntensity !== undefined) m.envMapIntensity = 0.6;
+          if (!m) return;
+          if (m.envMapIntensity !== undefined) m.envMapIntensity = 0.6;
+          // Force front-side only. Avaturn ships some clothing as DoubleSide
+          // (jackets, hair planes); when the third-person camera momentarily
+          // clips inside the body — e.g. when wading into a pool and
+          // camera-controls slides the camera between player and water — the
+          // back faces fill the viewport with a near-solid silhouette colour.
+          // FrontSide makes those interior faces invisible.
+          m.side = THREE.FrontSide;
         };
         if (Array.isArray(child.material)) child.material.forEach(apply);
         else apply(child.material);
