@@ -124,7 +124,7 @@ export class App extends EventTarget {
     // Pre-populate push spots from the loaded world.
     this.actionPrompts.discoverPushSpots(this.world);
 
-    this.interactables = new Interactables(this.scene, this.loader, this.physics, this.actionPrompts);
+    this.interactables = new Interactables(this.scene, this.loader, this.physics, this.actionPrompts, this.world.terrain);
     // Fire and forget — props load asynchronously and self-register triggers
     // as each one settles. No need to block the boot resolution on this.
     this.interactables.load().catch((err) => console.warn('[Interactables] load failed:', err));

@@ -58,16 +58,24 @@ function makeLabelTexture(text, accent = '#ffd28a') {
 }
 
 export class Billboards {
-  constructor(scene, physics = null, loader = null) {
+  constructor(scene, physics = null, loader = null, terrain = null) {
     this.scene = scene;
     this.physics = physics;
     this.loader = loader;
+    // PROJECTS_CENTER is at distance 36 — well past the r≈22 flatten radius,
+    // so terrain there is ~0.46m above y=0. Without lifting, post bottoms and
+    // their colliders sit ~half a meter under the visual ground.
+    this.terrain = terrain;
     this.items = [];   // { project, group, screen, position, accent }
     this.group = new THREE.Group();
     this.group.name = 'billboards';
     this.scene.add(this.group);
 
     this.#build();
+  }
+
+  #groundY(x, z) {
+    return this.terrain ? this.terrain.heightAt(x, z) : 0;
   }
 
   #build() {
@@ -87,8 +95,9 @@ export class Billboards {
   }
 
   #buildOne(project, index, x, z, yaw) {
+    const groundY = this.#groundY(x, z);
     const group = new THREE.Group();
-    group.position.set(x, 0, z);
+    group.position.set(x, groundY, z);
     group.rotation.y = yaw;
     group.name = `billboard:${project.name}`;
 
@@ -118,7 +127,7 @@ export class Billboards {
         const lx = side * (POST_SPACING / 2);
         const wx = x + Math.cos(yaw) * lx;
         const wz = z + -Math.sin(yaw) * lx;
-        this.physics.addStaticCylinder(wx, 0, wz, POST_RADIUS * 1.3, POST_HEIGHT);
+        this.physics.addStaticCylinder(wx, groundY, wz, POST_RADIUS * 1.3, POST_HEIGHT);
       }
     }
 
@@ -130,7 +139,7 @@ export class Billboards {
       const slabHy = (POST_HEIGHT - 0.4) / 2;
       const slabHz = 0.08;
       this.physics.addStaticCuboid(
-        x, 0.2, z,
+        x, groundY + 0.2, z,
         slabHx, slabHy, slabHz,
         yaw,
       );

@@ -59,12 +59,20 @@ const DESK_FORWARD = 2.4;
 const CHAIR_FORWARD = 3.8;
 
 export class Furniture {
-  constructor(scene, loader, physics, billboards) {
+  constructor(scene, loader, physics, billboards, terrain = null) {
     this.scene = scene;
     this.loader = loader;
     this.physics = physics;
     this.billboards = billboards;
+    // Desks sit in front of the billboards (distance ~36 from spawn); terrain
+    // there is ~0.46m above y=0, so without this they float / sink relative
+    // to the visible ground.
+    this.terrain = terrain;
     this.placed = [];
+  }
+
+  #groundY(x, z) {
+    return this.terrain ? this.terrain.heightAt(x, z) : 0;
   }
 
   async load() {
@@ -93,31 +101,38 @@ export class Furniture {
     const billYaw = Math.atan2(-bx, -bz);
 
     // ── Desk ─────────────────────────────────────────────────────────────
+    const deskX = bx + fx * DESK_FORWARD;
+    const deskZ = bz + fz * DESK_FORWARD;
+    const deskGround = this.#groundY(deskX, deskZ);
     const desk = await this.#loadAt(set.desk, {
-      x: bx + fx * DESK_FORWARD,
-      y: set.desk.y,
-      z: bz + fz * DESK_FORWARD,
+      x: deskX,
+      y: deskGround + set.desk.y,
+      z: deskZ,
       yaw: billYaw,
     });
 
-    // Measure desk's top so the screen sits on it cleanly.
+    // Measure desk's top so the screen sits on it cleanly. deskBox is in world
+    // coords, so deskTopY is already lifted by deskGround above.
     const deskBox = new THREE.Box3().setFromObject(desk);
     const deskTopY = deskBox.max.y;
 
     // ── Screen on desk ───────────────────────────────────────────────────
     const screen = await this.#loadAt(set.screen, {
-      x: bx + fx * DESK_FORWARD,
+      x: deskX,
       y: deskTopY,
-      z: bz + fz * DESK_FORWARD,
+      z: deskZ,
       // Screen faces the chair (away from billboard) → yaw rotated 180°.
       yaw: billYaw + Math.PI,
     });
 
     // ── Chair behind desk ────────────────────────────────────────────────
+    const chairX = bx + fx * CHAIR_FORWARD;
+    const chairZ = bz + fz * CHAIR_FORWARD;
+    const chairGround = this.#groundY(chairX, chairZ);
     const chair = await this.#loadAt(set.chair, {
-      x: bx + fx * CHAIR_FORWARD,
-      y: set.chair.y,
-      z: bz + fz * CHAIR_FORWARD,
+      x: chairX,
+      y: chairGround + set.chair.y,
+      z: chairZ,
       // Chair faces the billboard (its occupant looks toward the screen).
       yaw: billYaw,
     });
@@ -126,22 +141,28 @@ export class Furniture {
     const acc = set.accent;
     const accSide = acc.side ?? 1;
     const accOffset = acc.offset ?? 1.2;
-    const accX = bx + fx * DESK_FORWARD + sx * accSide * accOffset;
-    const accZ = bz + fz * DESK_FORWARD + sz * accSide * accOffset;
-    await this.#loadAt(acc, { x: accX, y: acc.y, z: accZ, yaw: billYaw });
+    const accX = deskX + sx * accSide * accOffset;
+    const accZ = deskZ + sz * accSide * accOffset;
+    await this.#loadAt(acc, {
+      x: accX,
+      y: this.#groundY(accX, accZ) + acc.y,
+      z: accZ,
+      yaw: billYaw,
+    });
 
     // ── Physics colliders for the chunky items ───────────────────────────
     // Desk: a cuboid the size of its bounding box.
     if (this.physics) {
       const deskSize = deskBox.getSize(new THREE.Vector3());
+      const deskHy = (deskTopY - deskGround) / 2;
       this.physics.addStaticCuboid(
-        bx + fx * DESK_FORWARD, 0, bz + fz * DESK_FORWARD,
-        deskSize.x / 2, deskTopY / 2, deskSize.z / 2,
+        deskX, deskGround, deskZ,
+        deskSize.x / 2, deskHy, deskSize.z / 2,
         billYaw,
       );
       // Chair: smaller cuboid (so the player can lean against it).
       this.physics.addStaticCuboid(
-        bx + fx * CHAIR_FORWARD, 0, bz + fz * CHAIR_FORWARD,
+        chairX, chairGround, chairZ,
         0.35, 0.45, 0.35,
         billYaw,
       );

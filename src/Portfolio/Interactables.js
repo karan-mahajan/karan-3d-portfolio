@@ -17,15 +17,24 @@ import gsap from 'gsap';
  *   Disappointed   → (3, 0, 44)    sign + trophy at end of experience trail
  */
 export class Interactables {
-  constructor(scene, loader, physics, actionPrompts) {
+  constructor(scene, loader, physics, actionPrompts, terrain = null) {
     this.scene = scene;
     this.loader = loader;
     this.physics = physics;
     this.prompts = actionPrompts;
+    // Terrain is a heightfield (see Terrain.heightAt). Props placed at y=0
+    // get buried past r≈22 from spawn where the wave exceeds 0.3m. We sample
+    // heightAt(x,z) for every placement so things sit ON the ground rather
+    // than IN it. Also used by the football's rolling clamp.
+    this.terrain = terrain;
 
     this.bag = null;          // { mesh, swing(strength) }
     this.football = null;     // { mesh, kick(yaw) }
     this.danceTile = null;    // { mesh }
+  }
+
+  #groundY(x, z) {
+    return this.terrain ? this.terrain.heightAt(x, z) : 0;
   }
 
   async load() {
@@ -60,6 +69,7 @@ export class Interactables {
     }
     const obj = gltf.scene;
     const pos = new THREE.Vector3(18, 0, 0);
+    const groundY = this.#groundY(pos.x, pos.z);
 
     obj.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(obj);
@@ -68,12 +78,12 @@ export class Interactables {
     const target = 1.44; // +20% over the original 1.2m target
     const s = target / maxDim;
     obj.scale.setScalar(s);
-    obj.position.set(pos.x, 0, pos.z);
+    obj.position.set(pos.x, groundY, pos.z);
     obj.rotation.y = Math.PI * 0.1; // slightly wonky
     obj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     this.scene.add(obj);
 
-    if (this.physics) this.physics.addStaticCuboid(pos.x, 0, pos.z, 0.72, 0.72, 0.72);
+    if (this.physics) this.physics.addStaticCuboid(pos.x, groundY, pos.z, 0.72, 0.72, 0.72);
 
     // Crate is a "push spot" — the P-key push hint will surface when the
     // player is near, with crate-flavored jokes ("shipping ETA: never",
@@ -94,6 +104,7 @@ export class Interactables {
     }
     const obj = gltf.scene;
     const pos = new THREE.Vector3(8, 0, -20);
+    const groundY = this.#groundY(pos.x, pos.z);
 
     // Scale: +20% over the previous 1.6m target.
     obj.updateMatrixWorld(true);
@@ -112,7 +123,7 @@ export class Interactables {
     const bagSize = scaledBox.getSize(new THREE.Vector3());
     const bagTopY = bagSize.y;
     const pivot = new THREE.Group();
-    pivot.position.set(pos.x, bagTopY, pos.z);
+    pivot.position.set(pos.x, groundY + bagTopY, pos.z);
     obj.position.set(0, -bagTopY, 0);
     pivot.add(obj);
     this.scene.add(pivot);
@@ -147,7 +158,7 @@ export class Interactables {
     if (this.physics) {
       // Thin cylindrical collider in the bag's center so the player can't
       // walk through it (but can brush past).
-      this.physics.addStaticCylinder(pos.x, 0, pos.z, 0.34, targetH);
+      this.physics.addStaticCylinder(pos.x, groundY, pos.z, 0.34, targetH);
     }
 
     // Bag is also a "push spot" for the P-key hint — punch with E, push with P.
@@ -198,7 +209,8 @@ export class Interactables {
     const size = box.getSize(new THREE.Vector3());
     const radius = Math.max(size.x, size.y, size.z) / 2 || 0.25;
 
-    const startPos = new THREE.Vector3(7, radius, -8);
+    const spawnGround = this.#groundY(7, -8);
+    const startPos = new THREE.Vector3(7, spawnGround + radius, -8);
     obj.position.copy(startPos);
     obj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     this.scene.add(obj);
@@ -208,6 +220,7 @@ export class Interactables {
     const velocity = new THREE.Vector3();
     let rollAxis = new THREE.Vector3(1, 0, 0);
     let spin = 0;
+    const terrain = this.terrain;
 
     const football = {
       mesh: obj,
@@ -224,9 +237,12 @@ export class Interactables {
         obj.position.y += velocity.y * delta;
         obj.position.z += velocity.z * delta;
         velocity.y -= 9.8 * delta;
-        // Ground bounce + friction.
-        if (obj.position.y <= radius) {
-          obj.position.y = radius;
+        // Ground bounce + friction. Live terrain sample — the wave reaches
+        // ±0.65m past r≈22 from spawn, so a static y=radius clamp would bury
+        // the ball anywhere outside the flat spawn zone.
+        const groundY = (terrain ? terrain.heightAt(obj.position.x, obj.position.z) : 0) + radius;
+        if (obj.position.y <= groundY) {
+          obj.position.y = groundY;
           if (velocity.y < 0) velocity.y = -velocity.y * 0.45;
           velocity.x *= 0.86;
           velocity.z *= 0.86;
@@ -237,7 +253,7 @@ export class Interactables {
         if (spin > 0.01) {
           obj.rotateOnWorldAxis(rollAxis, spin * delta);
         }
-        if (speed < 0.05 && obj.position.y <= radius + 0.01) {
+        if (speed < 0.05 && obj.position.y <= groundY + 0.01) {
           velocity.set(0, 0, 0);
         }
       },
@@ -285,7 +301,7 @@ export class Interactables {
       }),
     );
     disc.rotation.x = -Math.PI / 2;
-    disc.position.set(pos.x, 0.02, pos.z);
+    disc.position.set(pos.x, this.#groundY(pos.x, pos.z) + 0.02, pos.z);
     disc.receiveShadow = true;
     this.scene.add(disc);
     this.danceTile = { mesh: disc };
@@ -313,7 +329,12 @@ export class Interactables {
       console.warn('[Interactables] path-stonecircle missing; using bare ring');
     }
 
-    const pos = new THREE.Vector3(10, 0, -10);
+    // Moved from (10, -10) → (14, -14) so the football (start 7, -8; rolls
+    // freely) can't drift into the cartwheel zone — both prompts had 1.8m
+    // radii at 3.6m separation, so a single kick used to swap the prompt
+    // from "Kick" to "Cartwheel".
+    const pos = new THREE.Vector3(14, 0, -14);
+    const groundY = this.#groundY(pos.x, pos.z);
 
     if (obj) {
       obj.updateMatrixWorld(true);
@@ -322,7 +343,7 @@ export class Interactables {
       const target = 2.88; // +20%
       const s = target / Math.max(size.x, size.z);
       obj.scale.setScalar(s);
-      obj.position.set(pos.x, 0.02, pos.z);
+      obj.position.set(pos.x, groundY + 0.02, pos.z);
       obj.traverse((c) => { if (c.isMesh) { c.receiveShadow = true; } });
       this.scene.add(obj);
     } else {
@@ -331,7 +352,7 @@ export class Interactables {
         new THREE.MeshStandardMaterial({ color: '#f5e6d3', transparent: true, opacity: 0.6, roughness: 1 }),
       );
       ring.rotation.x = -Math.PI / 2;
-      ring.position.set(pos.x, 0.02, pos.z);
+      ring.position.set(pos.x, groundY + 0.02, pos.z);
       this.scene.add(ring);
     }
 
@@ -350,9 +371,11 @@ export class Interactables {
   async #buildDockBackflipTrigger() {
     const url = '/models/extras/dock-long.glb';
     const pondCenter = new THREE.Vector3(-12, 0, 18);
-    // Dock extends from south shore toward the pond.
-    const dockAnchor = new THREE.Vector3(pondCenter.x, 0.05, pondCenter.z - 7);
-    const triggerPos = new THREE.Vector3(pondCenter.x, 0.05, pondCenter.z - 2);
+    // Dock extends from south shore toward the pond. Lift to terrain so it
+    // doesn't bury into the sloped pond bank; keep the 0.05 lift above ground.
+    const dockGroundY = this.#groundY(pondCenter.x, pondCenter.z - 7);
+    const dockAnchor = new THREE.Vector3(pondCenter.x, dockGroundY + 0.05, pondCenter.z - 7);
+    const triggerPos = new THREE.Vector3(pondCenter.x, this.#groundY(pondCenter.x, pondCenter.z - 2) + 0.05, pondCenter.z - 2);
 
     let dockObj = null;
     try {
@@ -409,6 +432,7 @@ export class Interactables {
   async #buildDisappointedSign() {
     const url = '/models/nature/sign.glb';
     const pos = new THREE.Vector3(3, 0, 44);
+    const groundY = this.#groundY(pos.x, pos.z);
 
     let signObj = null;
     try {
@@ -425,15 +449,15 @@ export class Interactables {
       const target = 1.92; // +20%
       const s = target / Math.max(size.y, 0.001);
       signObj.scale.setScalar(s);
-      signObj.position.set(pos.x, 0, pos.z);
+      signObj.position.set(pos.x, groundY, pos.z);
       signObj.rotation.y = Math.PI; // face south, back toward the player coming from spawn
       signObj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
       this.scene.add(signObj);
     }
 
     const label = this.#bakeSignLabel('This is where the resume ends... for now.');
-    label.position.set(pos.x, 2.5, pos.z);
-    label.lookAt(pos.x, 2.5, 0); // face spawn
+    label.position.set(pos.x, groundY + 2.5, pos.z);
+    label.lookAt(pos.x, groundY + 2.5, 0); // face spawn
     this.scene.add(label);
 
     // Sad participation trophy next to the sign.
@@ -444,7 +468,7 @@ export class Interactables {
       const tsize = tbox.getSize(new THREE.Vector3());
       const ts = 0.72 / Math.max(tsize.y, 0.001); // +20%
       trophy.scale.setScalar(ts);
-      trophy.position.set(pos.x + 1.2, 0, pos.z - 0.3);
+      trophy.position.set(pos.x + 1.2, this.#groundY(pos.x + 1.2, pos.z - 0.3), pos.z - 0.3);
       trophy.rotation.y = Math.PI;
       trophy.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
       this.scene.add(trophy);

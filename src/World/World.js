@@ -25,7 +25,7 @@ export class World {
   }
 
   async loadAssets(loader, physics = null) {
-    this.billboards = new Billboards(this.scene, physics, loader);
+    this.billboards = new Billboards(this.scene, physics, loader, this.terrain);
     this.signs = new Signs(this.scene, physics);
     this.nature = new Nature(this.scene, loader, this.terrain, physics);
 
@@ -71,7 +71,7 @@ export class World {
     this.nature.addExclusion( 8, -20, 3);    // punching bag
     this.nature.addExclusion( 7,  -8, 2);    // football
     this.nature.addExclusion(-28, -3, 3);    // dance tile
-    this.nature.addExclusion(10, -10, 2);    // chalk circle
+    this.nature.addExclusion(14, -14, 2);    // chalk circle (moved from 10,-10 to avoid football overlap)
     this.nature.addExclusion( 3,  44, 3);    // disappointed sign + trophy
 
     const result = await this.nature.load();
@@ -83,7 +83,7 @@ export class World {
 
     // Furniture loads after Nature so we know where the billboards are and
     // can register colliders alongside the rest of the world.
-    this.furniture = new Furniture(this.scene, loader, physics, this.billboards);
+    this.furniture = new Furniture(this.scene, loader, physics, this.billboards, this.terrain);
     const furniturePlaced = await this.furniture.load().catch((err) => {
       console.warn('[Furniture] load failed', err);
       return 0;
