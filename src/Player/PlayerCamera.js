@@ -59,6 +59,36 @@ export class PlayerCamera {
     this._target = new THREE.Vector3(0, HEAD_HEIGHT, 0);
     this._tmpOffset = new THREE.Vector3();
     this.locked = false; // when true, update() doesn't move the camera (used by zoom)
+
+    // Dynamic movement-zoom multiplier — applied on top of the user's
+    // own controls.distance (preserved). 1.0 = idle, 1.10 = walking,
+    // 1.18 = running. THREE.MathUtils.damp gives a frame-rate-independent
+    // exponential smoothing with a time-constant of `1/lambda` seconds.
+    // Lambda = 3 → ~95% convergence in 1 second, which matches the
+    // cinematic "weighted but not slow" feel.
+    this._movementZoomFactor = 1.0;
+    this._movementZoomTarget = 1.0;
+
+    // Sprint polar tilt — adds a small extra pitch-down when running so
+    // the character is framed slightly higher on screen during a sprint.
+    // Same 1-second damping as the zoom.
+    this._polarTilt = 0;
+    this._polarTiltTarget = 0;
+  }
+
+  /** Tell the camera what the player is doing this frame so we can
+   *  smoothly zoom out a bit while moving (and a bit more while running). */
+  setMovementState({ moving = false, running = false } = {}) {
+    if (running && moving) {
+      this._movementZoomTarget = 1.18;
+      this._polarTiltTarget = 0.03;
+    } else if (moving) {
+      this._movementZoomTarget = 1.10;
+      this._polarTiltTarget = 0;
+    } else {
+      this._movementZoomTarget = 1.0;
+      this._polarTiltTarget = 0;
+    }
   }
 
   /** Set the orbit pivot to the player's head. Camera position derives from this in update(). */
@@ -95,9 +125,24 @@ export class PlayerCamera {
     if (this.locked) return; // GSAP zoom drives camera directly while locked.
     this.controls.update(delta);
 
-    const distance = this.controls.distance;
+    // Cinematic zoom: lambda=3 → ~95% convergence in 1 second, so the
+    // zoom-out feels smooth and gradual when starting to walk / sprint
+    // and slowly relaxes back when stopping. damp() is frame-rate
+    // independent so this looks identical at 60 / 120 / 144 fps.
+    this._movementZoomFactor = THREE.MathUtils.damp(
+      this._movementZoomFactor, this._movementZoomTarget, 3, delta,
+    );
+    this._polarTilt = THREE.MathUtils.damp(this._polarTilt, this._polarTiltTarget, 3, delta);
+
+    const distance = this.controls.distance * this._movementZoomFactor;
     const azimuth = this.controls.azimuthAngle;
-    const polar = this.controls.polarAngle;
+    // Clamp the tilted polar to the orbit's own min/max so the sprint
+    // pitch can't push the camera through the ground or up past zenith.
+    const polar = THREE.MathUtils.clamp(
+      this.controls.polarAngle + this._polarTilt,
+      this.controls.minPolarAngle,
+      this.controls.maxPolarAngle,
+    );
 
     const sinPolar = Math.sin(polar);
     this._tmpOffset.set(

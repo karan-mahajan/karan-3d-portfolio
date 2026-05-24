@@ -689,6 +689,73 @@ body {
   text-transform: lowercase;
 }
 
+/* ─────────────── Night-mode theming (HUD + bottom buttons) ───────────────
+   App.js writes `data-tod="day"` / `data-tod="night"` to <body> on every
+   toggle. We shift the kbd-key accent + the corner button glow toward
+   cool blue at night so the UI doesn't read as warm-sunset against a
+   dark moonlit world. */
+body[data-tod="night"] #controls-hud {
+  background: rgba(10, 18, 32, 0.62);
+  border-color: rgba(190, 215, 255, 0.18);
+}
+body[data-tod="night"] #controls-hud kbd {
+  color: #cfe0ff;
+  border-color: rgba(180, 210, 255, 0.32);
+  background: rgba(180, 210, 255, 0.07);
+}
+body[data-tod="night"] .audio-toggle,
+body[data-tod="night"] .rain-toggle,
+body[data-tod="night"] .wind-toggle,
+body[data-tod="night"] .leaves-toggle {
+  background: rgba(10, 18, 32, 0.66);
+  border-color: rgba(190, 215, 255, 0.22);
+  color: #cfe0ff;
+}
+
+/* ─────────────── Day / night toggle ─────────────── */
+#tod-toggle {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 50;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--paper);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  opacity: 0.9;
+  padding: 0;
+}
+#tod-toggle:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+#tod-toggle[data-mode="day"] {
+  color: #ffe4a0;
+}
+#tod-toggle[data-mode="day"]:hover {
+  border-color: rgba(255, 200, 100, 0.55);
+  box-shadow: 0 0 22px rgba(255, 180, 80, 0.45);
+}
+#tod-toggle[data-mode="night"] {
+  color: #cfe2ff;
+}
+#tod-toggle[data-mode="night"]:hover {
+  border-color: rgba(140, 180, 255, 0.55);
+  box-shadow: 0 0 22px rgba(120, 170, 255, 0.45);
+}
+#tod-toggle svg {
+  display: block;
+}
+
 /* ─────────────── Audio mute toggle ─────────────── */
 .audio-toggle,
 .rain-toggle,

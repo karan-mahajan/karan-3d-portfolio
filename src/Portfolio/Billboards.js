@@ -69,6 +69,9 @@ export class Billboards {
     this.items = [];   // { project, group, screen, position, accent }
     this.group = new THREE.Group();
     this.group.name = 'billboards';
+    // Day = 1.0 baseline. TimeOfDay lerps this up at night so the screens
+    // pop against the dark world — multiplies the per-frame pulse range.
+    this.emissiveBoost = 1.0;
     this.scene.add(this.group);
 
     this.#build();
@@ -180,8 +183,12 @@ export class Billboards {
     screen.position.set(0, SCREEN_Y, 0);
     group.add(screen);
 
-    // If the project has a screenshot, swap the screen material to show it
-    // (still tinted by the accent emissive glow so the billboard reads warm).
+    // If the project has a screenshot, swap the screen material to show it.
+    // We bind the texture as BOTH the diffuse map and the emissive map so
+    // the screen glows with the image's own pixel colors at night —
+    // crucially, emissive color stays white so the accent never tints
+    // pixels on top of the image (previous behaviour painted a flat pink
+    // wash over the screen and obscured the design).
     if (project.image && this.loader) {
       this.loader.loadTexture(project.image)
         .then((tex) => {
@@ -189,9 +196,14 @@ export class Billboards {
           tex.anisotropy = 8;
           screenMat.map = tex;
           screenMat.color.set('#ffffff');
-          screenMat.emissive = accent;
-          screenMat.emissiveIntensity = 0.25;
+          screenMat.emissive.set('#ffffff');
+          screenMat.emissiveMap = tex;
           screenMat.needsUpdate = true;
+          // Drop this screen's emissive multiplier so the texture isn't
+          // blown out at night — the surrounding world light + a mild
+          // self-glow is enough to read it.
+          const item = this.items.find((it) => it.project === project);
+          if (item) item.emissiveMultiplier = 0.28;
         })
         .catch((err) => console.warn('[Billboards] image load failed', project.image, err));
     }
@@ -213,6 +225,10 @@ export class Billboards {
       screen,
       position: new THREE.Vector3(x, 0, z),
       accent,
+      // Per-item emissive scalar. 1.0 = accent-color glow (the empty
+      // colored screen looks pulsing at full strength). Image-backed
+      // screens drop this so the texture isn't blown-out white at night.
+      emissiveMultiplier: 1.0,
     });
   }
 
@@ -234,8 +250,11 @@ export class Billboards {
 
   /** Subtle screen pulse so they read as "alive". */
   update(elapsed) {
+    const boost = this.emissiveBoost;
     for (const item of this.items) {
-      const pulse = 0.5 + 0.1 * Math.sin(elapsed * 1.5 + item.index * 0.7);
+      const pulse = (0.5 + 0.1 * Math.sin(elapsed * 1.5 + item.index * 0.7))
+        * boost
+        * item.emissiveMultiplier;
       item.screen.material.emissiveIntensity = pulse;
     }
   }

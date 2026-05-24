@@ -13,6 +13,7 @@ const vert = /* glsl */ `
 const frag = /* glsl */ `
   varying vec3 vWorldDir;
   uniform vec3 uTop;
+  uniform vec3 uMid;
   uniform vec3 uHorizon;
   uniform vec3 uGround;
 
@@ -20,10 +21,13 @@ const frag = /* glsl */ `
     float h = vWorldDir.y;
     vec3 color;
     if (h > 0.0) {
-      // VERY sharp transition. Our third-person camera pitches ~20° down so
-      // top-of-screen is only ~2° above horizon (h ≈ 0.04). Anything softer
-      // than this and the sky reads as solid orange.
-      color = mix(uHorizon, uTop, smoothstep(0.005, 0.05, h));
+      // Three-stop gradient: horizon → mid → top. The horizon band is still
+      // sharp (the third-person camera pitches ~20° down and only sees a
+      // sliver of sky) but uMid lets day-mode read as blue once you look
+      // up, and lets night-mode have a deep mid-purple between horizon and
+      // a near-black zenith.
+      vec3 lower = mix(uHorizon, uMid, smoothstep(0.005, 0.08, h));
+      color = mix(lower, uTop, smoothstep(0.1, 0.5, h));
     } else {
       color = mix(uHorizon, uGround, smoothstep(0.0, -0.25, h));
     }
@@ -50,6 +54,11 @@ export class Sky {
       depthWrite: false,
       uniforms: {
         uTop: { value: new THREE.Color(DUSK.skyTop) },
+        // uMid sits between horizon and zenith — TimeOfDay overrides this on
+        // construction; the DUSK fallback keeps the old single-mix behaviour
+        // if Sky is ever used standalone (interpolation collapses to the
+        // original two-stop look when uMid ≈ uTop).
+        uMid: { value: new THREE.Color(DUSK.skyTop) },
         uHorizon: { value: new THREE.Color(DUSK.skyHorizon) },
         uGround: { value: new THREE.Color(DUSK.skyGround) },
       },

@@ -79,9 +79,10 @@ export class PostFX {
 
     // Subtle bloom — only truly bright pixels (sun, fireflies, emissive
     // screens) bloom. Lower strength + higher threshold keeps the sun a
-    // clean glowing disc instead of a blown-out blob.
+    // clean glowing disc instead of a blown-out blob. Resolution is
+    // half-width to roughly quarter the bloom's per-pixel work.
     const bloom = new UnrealBloomPass(
-      new THREE.Vector2(sizes.width, sizes.height),
+      new THREE.Vector2(sizes.width * 0.5, sizes.height * 0.5),
       0.30,   // strength
       0.55,   // radius
       0.92,   // threshold
@@ -112,7 +113,7 @@ export class PostFX {
   resize(width, height, pixelRatio) {
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(width, height);
-    this.bloom.setSize(width, height);
+    this.bloom.setSize(width * 0.5, height * 0.5);
   }
 
   render(delta) {

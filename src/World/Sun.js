@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import gsap from 'gsap';
 import { DUSK } from './Palette.js';
 
 /**
@@ -37,14 +38,18 @@ export class Sun {
     // (0.85 linear). Tonemapping is off so this value reaches the bloom pass
     // unsquashed; OutputPass tonemaps the composite at the end.
     const discColor = new THREE.Color(DUSK.sunColor).multiplyScalar(1.8);
+    // transparent:true so TimeOfDay can fade the visible sun out at night.
+    // The disc still bloom-punches because Bloom samples emissive light
+    // pre-alpha at the threshold pass; alpha just controls the final
+    // composite. depthWrite stays false so the disc doesn't fight the sky.
     const discMat = new THREE.MeshBasicMaterial({
       color: discColor,
-      transparent: false,
+      transparent: true,
       fog: false,
       depthWrite: false,
       toneMapped: false,
     });
-    this.#disc = new THREE.Mesh(new THREE.SphereGeometry(2.5, 32, 32), discMat);
+    this.#disc = new THREE.Mesh(new THREE.SphereGeometry(5.0, 24, 18), discMat);
     this.#disc.frustumCulled = false;
     this.#disc.renderOrder = 10;
 
@@ -59,12 +64,35 @@ export class Sun {
       toneMapped: false,
       side: THREE.DoubleSide,
     });
-    this.#corona = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), coronaMat);
+    this.#corona = new THREE.Mesh(new THREE.PlaneGeometry(22, 22), coronaMat);
     this.#corona.frustumCulled = false;
     this.#corona.renderOrder = 9;
 
     this.#group.add(this.#corona, this.#disc);
     scene.add(this.#group);
+  }
+
+  /** Hard-set the disc + corona alpha. Day = 1, night = 0. */
+  setOpacity(value) {
+    this.#disc.material.opacity = value;
+    this.#corona.material.opacity = value;
+    this.#group.visible = value > 0.001;
+  }
+
+  /** GSAP-tween the visible alpha. Used by TimeOfDay during mode transitions. */
+  tweenOpacity(target, duration, ease = 'sine.inOut') {
+    // Keep the group visible across the entire tween (set to false only when
+    // the end value is ~0 and we've finished animating).
+    this.#group.visible = true;
+    gsap.to(this.#disc.material, { opacity: target, duration, ease });
+    gsap.to(this.#corona.material, {
+      opacity: target,
+      duration,
+      ease,
+      onComplete: () => {
+        if (target <= 0.001) this.#group.visible = false;
+      },
+    });
   }
 
   /**

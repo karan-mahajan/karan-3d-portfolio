@@ -82,6 +82,16 @@ function isFoliageMaterial(color) {
   return hsl.h >= 0.4 && hsl.h <= 0.6;
 }
 
+/** Is this material pink / magenta? One of the KayKit tree GLBs ships with
+ *  a stray #ff00ff material on its trunk — detect any high-saturation
+ *  magenta and rewrite it to brown. */
+function isMagentaMaterial(color) {
+  const hsl = { h: 0, s: 0, l: 0 };
+  color.getHSL(hsl);
+  // Magenta hue band 280-340° → 0.78-0.94 in normalized [0,1]
+  return hsl.h >= 0.78 && hsl.h <= 0.94 && hsl.s > 0.4;
+}
+
 const AUTUMN_PALETTE = ['#cc7722', '#dd8833', '#bb5511'];
 
 /** Deterministic per-URL autumn shade so each fall tree has a stable color. */
@@ -273,6 +283,11 @@ export class Nature {
             material.color.set('#3a8a25');
           }
         }
+        // One tree GLB ships with a stray magenta trunk material —
+        // override to a standard wood brown wherever it appears.
+        if (isMagentaMaterial(material.color)) {
+          material.color.set('#6b4226');
+        }
       }
 
       // Tint shadowed sides toward magenta-purple instead of going black.
@@ -282,7 +297,12 @@ export class Nature {
 
       const actualCount = instanceTransforms.length;
       const inst = new THREE.InstancedMesh(proto.geometry, material, actualCount);
-      inst.castShadow = !isCheap;
+      // Trees / bushes / rocks all live in rings 10–60u from spawn; the
+      // sun's shadow frustum is only ±15u around the player. They'd never
+      // actually appear in the shadow map, but the renderer still
+      // submits them — disable shadow casting outright. Receive stays on
+      // so the player's own shadow can land on them when close.
+      inst.castShadow = false;
       inst.receiveShadow = true;
       inst.name = `nature:${cfg.url.split('/').pop()}:${proto.name || 'mesh'}`;
 

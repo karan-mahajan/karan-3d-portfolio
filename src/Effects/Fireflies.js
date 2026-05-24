@@ -39,6 +39,7 @@ const vert = /* glsl */ `
 `;
 
 const frag = /* glsl */ `
+  uniform float uIntensity;
   varying float vAlpha;
 
   void main() {
@@ -50,7 +51,8 @@ const frag = /* glsl */ `
     // Soft core → bright center, transparent edge.
     float core = smoothstep(0.5, 0.0, d);
     vec3 color = mix(vec3(1.0, 0.65, 0.25), vec3(1.0, 0.92, 0.62), core);
-    gl_FragColor = vec4(color, core * vAlpha);
+    // uIntensity scales the brightness (driven by day/night cycle).
+    gl_FragColor = vec4(color * uIntensity, core * vAlpha * clamp(uIntensity, 0.0, 1.5));
   }
 `;
 
@@ -90,6 +92,9 @@ export class Fireflies {
       blending: THREE.AdditiveBlending,
       uniforms: {
         uTime: { value: 0 },
+        // 1.0 = day baseline. TimeOfDay lerps this up at night so the swarm
+        // reads as more prominent against the dark sky.
+        uIntensity: { value: 1.0 },
       },
     });
 

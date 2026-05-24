@@ -46,13 +46,26 @@ export class Rain {
     this.group.name = 'rain';
     scene.add(this.group);
 
+    // Pond surface — set externally via setPond() so rain over water
+    // spawns a wider, lighter ripple instead of a hard ground splash.
+    this.pond = null;
+
     this.#buildDrops();
     this.splashPool = [];
     this.activeSplashes = [];
+    this.upwardPool = [];
+    this.activeUpward = [];
     this.#buildSplashPool();
+    this.#buildUpwardPool();
 
     this.group.visible = this.enabled;
     this.#installButton();
+  }
+
+  /** Register the water pond so rain landing on its surface spawns a
+   *  ripple instead of a ground splash. */
+  setPond(position, radius) {
+    this.pond = { position: position.clone(), radius };
   }
 
   // ── Drops ────────────────────────────────────────────────────────────────
@@ -92,8 +105,13 @@ export class Rain {
   }
 
   // ── Splash ring pool ─────────────────────────────────────────────────────
+  // Each ring has two parameter sets baked in via userData:
+  //   - 'ground' — small, fast (lifetime 0.3s), color #c8e0f0
+  //   - 'water' — wider, slower (lifetime 0.8s), color #96c8f0
+  // The first index is queried each spawn so we always reuse from the
+  // pool (never new/dispose at runtime).
   #buildSplashPool() {
-    const geom = new THREE.RingGeometry(0.04, 0.08, 16);
+    const geom = new THREE.RingGeometry(0.04, 0.08, 12);
     for (let i = 0; i < 60; i++) {
       const mesh = new THREE.Mesh(
         geom,
@@ -112,15 +130,92 @@ export class Rain {
     }
   }
 
+  /** Tiny upward droplets for splashes close to the camera. Each entry
+   *  is a Group containing 3 small spheres that get re-parented on spawn
+   *  and animated via userData. Pre-built once at boot. */
+  #buildUpwardPool() {
+    const geom = new THREE.SphereGeometry(0.025, 4, 3);
+    for (let i = 0; i < 30; i++) {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xc8e0f0,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      for (let j = 0; j < 3; j++) {
+        const s = new THREE.Mesh(geom, mat);
+        group.add(s);
+      }
+      group.visible = false;
+      group.userData.mat = mat;
+      group.userData.velocities = [
+        new THREE.Vector3(),
+        new THREE.Vector3(),
+        new THREE.Vector3(),
+      ];
+      this.scene.add(group);
+      this.upwardPool.push(group);
+    }
+  }
+
   #spawnSplash(x, z) {
+    const dx = x - this.camera.position.x;
+    const dz = z - this.camera.position.z;
+    const dCam = Math.hypot(dx, dz);
+    // Far splashes are invisible anyway through fog — skip entirely.
+    if (dCam > 25) return;
+
+    const onPond = this.pond
+      && Math.hypot(x - this.pond.position.x, z - this.pond.position.z) < this.pond.radius;
+
     const ring = this.splashPool.find((r) => !r.visible);
     if (!ring) return;
     ring.visible = true;
-    ring.position.set(x, 0.05, z);
+    if (onPond) {
+      ring.position.set(x, this.pond.position.y + 0.02, z);
+      ring.material.color.setHex(0x96c8f0);
+      ring.material.opacity = 0.6;
+      ring.userData.kind = 'water';
+      ring.userData.maxScale = dCam < 10 ? 13 : 7;
+      ring.userData.life = 0;
+      ring.userData.lifetime = 0.8;
+    } else {
+      ring.position.set(x, 0.05, z);
+      ring.material.color.setHex(0xc8e0f0);
+      ring.material.opacity = 0.5;
+      ring.userData.kind = 'ground';
+      // Closer splashes draw a bigger ring so they read at full size.
+      ring.userData.maxScale = dCam < 10 ? 6 : 3;
+      ring.userData.life = 0;
+      ring.userData.lifetime = 0.3;
+    }
     ring.scale.setScalar(1);
-    ring.material.opacity = 0.5;
-    ring.userData.life = 0;
     this.activeSplashes.push(ring);
+
+    // Spawn upward droplets only for the closest splashes (perf budget).
+    if (!onPond && dCam < 10) this.#spawnUpwardParticles(x, z);
+  }
+
+  #spawnUpwardParticles(x, z) {
+    const group = this.upwardPool.find((g) => !g.visible);
+    if (!group) return;
+    group.visible = true;
+    group.position.set(x, 0.02, z);
+    group.userData.life = 0;
+    group.userData.mat.opacity = 0.85;
+    for (let i = 0; i < 3; i++) {
+      const child = group.children[i];
+      child.position.set(0, 0, 0);
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 0.6 + Math.random() * 0.6;
+      group.userData.velocities[i].set(
+        Math.cos(ang) * speed,
+        2.4 + Math.random() * 1.4,
+        Math.sin(ang) * speed,
+      );
+    }
+    this.activeUpward.push(group);
   }
 
   // ── Toggle ───────────────────────────────────────────────────────────────
@@ -155,14 +250,14 @@ export class Rain {
     this.drops.position.set(cx, 0, cz);
 
     // Advance each drop. When a drop falls below y=0, recycle it to the top.
-    let splashBudget = 4; // cap splashes per frame
+    let splashBudget = 8; // cap splashes per frame (was 4 — distance gating skips more now)
     for (let i = 0; i < RAIN_COUNT; i++) {
       this.offsets[i * 3 + 1] -= this.speeds[i] * delta;
       if (this.offsets[i * 3 + 1] < 0) {
         // World x/z of the drop = base offset + camera position.
         const wx = this.offsets[i * 3] + cx;
         const wz = this.offsets[i * 3 + 2] + cz;
-        if (splashBudget > 0 && Math.random() < 0.04) {
+        if (splashBudget > 0 && Math.random() < 0.06) {
           this.#spawnSplash(wx, wz);
           splashBudget--;
         }
@@ -173,18 +268,41 @@ export class Rain {
     }
     this.drops.geometry.attributes.aOffset.needsUpdate = true;
 
-    // Animate splash rings.
+    // Animate splash rings. Each ring carries its own maxScale +
+    // lifetime in userData (set when spawned), so ground vs pond rings
+    // can grow at different rates / sizes from the same pool.
     for (let i = this.activeSplashes.length - 1; i >= 0; i--) {
       const ring = this.activeSplashes[i];
       ring.userData.life += delta;
-      const t = ring.userData.life / 0.45;
+      const t = ring.userData.life / ring.userData.lifetime;
       if (t >= 1) {
         ring.visible = false;
         this.activeSplashes.splice(i, 1);
         continue;
       }
-      ring.scale.setScalar(1 + t * 4);
-      ring.material.opacity = (1 - t) * 0.5;
+      const startOpacity = ring.userData.kind === 'water' ? 0.6 : 0.5;
+      ring.scale.setScalar(1 + t * ring.userData.maxScale);
+      ring.material.opacity = (1 - t) * startOpacity;
+    }
+
+    // Animate upward droplets — gravity-affected, fade out fast.
+    for (let i = this.activeUpward.length - 1; i >= 0; i--) {
+      const group = this.activeUpward[i];
+      group.userData.life += delta;
+      if (group.userData.life >= 0.22) {
+        group.visible = false;
+        this.activeUpward.splice(i, 1);
+        continue;
+      }
+      for (let j = 0; j < 3; j++) {
+        const child = group.children[j];
+        const v = group.userData.velocities[j];
+        child.position.x += v.x * delta;
+        child.position.y += v.y * delta;
+        child.position.z += v.z * delta;
+        v.y -= 9.8 * delta; // gravity
+      }
+      group.userData.mat.opacity = 0.85 * (1 - group.userData.life / 0.22);
     }
   }
 }

@@ -7,6 +7,9 @@ import { DUSK } from './World/Palette.js';
 import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Sun } from './World/Sun.js';
+import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
+import { ProximityLight } from './World/ProximityLight.js';
+import { Lamps } from './World/Lamps.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -60,6 +63,9 @@ export class App extends EventTarget {
     this.waterPos = new THREE.Vector3(-12, 0.05, 18);
     this.water = new Water(this.scene, { position: this.waterPos, radius: 5.5, loader: this.loader });
     this.rain = new Rain(this.scene, this.camera);
+    // Let the rain spawn pond-surface ripples (wider, slower, lighter blue)
+    // instead of ground splashes wherever a drop lands inside the water.
+    this.rain.setPond(this.waterPos, 5.5);
     this.windLines = new WindLines(this.scene, this.wind);
     this.leaves = new Leaves(this.scene, this.wind);
 
@@ -68,7 +74,61 @@ export class App extends EventTarget {
 
     this.audio = new AudioManager();
 
+    // Day / night cycle. Built now so it can drive lights + sky immediately
+    // — billboards / signs are still loading at this point, so the lanterns
+    // they need are attached after boot() completes the world load.
+    // Static lantern fixtures at every readable board, with their bulb
+    // emissive + PointLight intensity driven by TimeOfDay. Replaces the
+    // single roaming proximity light — the user explicitly asked for
+    // physical lamps so the "there's something here" cue is on always.
+    this.lamps = new Lamps(this.scene, this.loader);
+    // Kept for backwards compatibility but the scene now uses Lamps.
+    this.proximityLight = new ProximityLight(this.scene);
+
+    this.timeOfDay = new TimeOfDay({
+      scene: this.scene,
+      fog: this.scene.fog,
+      sun: this.lights.sun,
+      rim: this.lights.rim,
+      ambient: this.lights.ambient,
+      hemi: this.lights.hemi,
+      sky: this.world.sky,
+      sunMesh: this.sun,
+      grass: this.grass,
+      fireflies: this.fireflies,
+      playerGroup: null, // wired after player loads in boot()
+    });
+
     this.#bindResize();
+    this.#bindTimeOfDayToggle();
+  }
+
+  /** Wires the HTML toggle button (#tod-toggle) to setMode. */
+  #bindTimeOfDayToggle() {
+    const btn = document.getElementById('tod-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      this.timeOfDay.toggle();
+      this.#syncTimeOfDayButton();
+    });
+    this.#syncTimeOfDayButton();
+  }
+
+  #syncTimeOfDayButton() {
+    const btn = document.getElementById('tod-toggle');
+    if (!btn) return;
+    const mode = this.timeOfDay.mode;
+    btn.dataset.mode = mode;
+    // Flip a body data-attr so the WASD HUD, rain/audio/wind toggles, and
+    // any other UI overlays can theme themselves to match the world mode.
+    document.body.dataset.tod = mode;
+    // Sun icon during day (click switches TO night) and a moon during
+    // night (click switches TO day) — the icon shows the CURRENT state.
+    btn.innerHTML = mode === 'day'
+      ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>';
+    btn.setAttribute('aria-label', mode === 'day' ? 'Switch to night mode' : 'Switch to day mode');
+    btn.setAttribute('title', mode === 'day' ? 'Switch to night' : 'Switch to day');
   }
 
   /** Loads characters / models; resolves to a summary the loader UI can use. */
@@ -129,6 +189,36 @@ export class App extends EventTarget {
     // as each one settles. No need to block the boot resolution on this.
     this.interactables.load().catch((err) => console.warn('[Interactables] load failed:', err));
 
+    // Now that Signs + Billboards exist, plant sign lanterns and wire the
+    // player ref so the character spotlight / fill light can follow.
+    this.timeOfDay.signs = this.world.signs;
+    this.timeOfDay.billboards = this.world.billboards;
+    this.timeOfDay.playerGroup = this.player.group;
+    this.timeOfDay.attachLanterns();
+    // Re-apply current mode so freshly-loaded lanterns + billboard boost
+    // pick up the right intensity (TimeOfDay was built before they existed).
+    this.timeOfDay.reapply();
+
+    // Build physical lamps now that the signs + billboards exist.
+    // Don't block boot resolution on this — lamps are visual sugar.
+    this.lamps.load({ signs: this.world.signs, billboards: this.world.billboards })
+      .then(() => {
+        this.timeOfDay.lamps = this.lamps;
+        // Re-apply the current mode so the freshly-loaded lamps pick up
+        // the right intensity without a visible step.
+        this.timeOfDay.reapply();
+      })
+      .catch((err) => console.warn('[Lamps] load failed:', err));
+
+    // Proximity light kept around but disabled — Lamps cover the same
+    // role now (always-on, no per-frame work). Leaving it at intensity 0
+    // means it adds zero shading cost (three.js skips lights with
+    // intensity 0).
+    this.proximityLight.collectTargets({ signs: this.world.signs, billboards: this.world.billboards });
+    this.proximityLight.light.intensity = 0;
+    // Sync the current toggle-button icon to the auto-detected mode.
+    this.#syncTimeOfDayButton();
+
     this.#tick();
     return { character: characterResult, world: worldResult };
   }
@@ -144,7 +234,11 @@ export class App extends EventTarget {
     this.renderer.setPixelRatio(this.sizes.pixelRatio);
     this.renderer.setSize(this.sizes.width, this.sizes.height);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // PCFSoftShadowMap brings back the softer character shadow we had
+    // before Sprint-11 — BasicShadowMap was visibly stair-stepped which
+    // read as "shadows broken". PCFSoft is a few-percent slower but the
+    // 144fps machine has plenty of headroom.
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -174,24 +268,25 @@ export class App extends EventTarget {
     const ambient = new THREE.AmbientLight(DUSK.ambientColor, 0.45);
     const hemi = new THREE.HemisphereLight(DUSK.hemiSky, DUSK.hemiGround, 0.55);
     const sun = new THREE.DirectionalLight(DUSK.sunColor, 2.4);
-    // Low ~15° elevation so the sun sits within the third-person camera's
-    // pitch range (maxPolarAngle caps view at ~19° above horizon). Long
-    // shadows are the intended sunset look.
-    this.sunOffset = new THREE.Vector3(36, 11, 22);
-    sun.position.copy(this.sunOffset);
+    // Initial position is overwritten by TimeOfDay on construction; this
+    // just keeps the matrix sane for the first physics + shadow init.
+    sun.position.set(36, 11, 22);
     sun.target.position.set(0, 0, 0);
     this.scene.add(sun.target);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 90;
-    sun.shadow.camera.left = -28;
-    sun.shadow.camera.right = 28;
-    sun.shadow.camera.top = 28;
-    sun.shadow.camera.bottom = -28;
+    // 1024² shadow map + ±25u frustum centered on the player gives
+    // sharp character / tree shadows everywhere within visible range.
+    // (Sprint-11 dropped to 512²+15u for FPS; with 144 fps on the
+    // user's machine there's plenty of headroom to bump back up.)
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 80;
+    sun.shadow.camera.left = -25;
+    sun.shadow.camera.right = 25;
+    sun.shadow.camera.top = 25;
+    sun.shadow.camera.bottom = -25;
     sun.shadow.bias = -0.00015;
     sun.shadow.normalBias = 0.04;
-    sun.shadow.radius = 4;
 
     // Soft warm rim from the opposite side so trees aren't black silhouettes.
     const rim = new THREE.DirectionalLight('#ff6b3d', 0.5);
@@ -223,6 +318,11 @@ export class App extends EventTarget {
 
     this.physics.step(delta);
     const sample = this.player.update(delta);
+    // Drive the camera's dynamic movement-zoom before update() reads it.
+    this.playerCamera.setMovementState({
+      moving: !!sample?.moving,
+      running: this.player.controller.isRunning,
+    });
     this.playerCamera.update(delta);
     this.world.update(elapsed, this.camera, delta);
     this.wind.update(delta);
@@ -243,12 +343,16 @@ export class App extends EventTarget {
       grounded: this.player._grounded !== false, // default to true so we don't false-trigger on first frame
     });
 
-    // Sun + shadow camera follow the player so shadows stay sharp wherever they walk.
+    // Sun + shadow camera follow the player so shadows stay sharp wherever
+    // they walk. TimeOfDay owns the offset so it can be lerped between
+    // day-sun and night-moon positions during the transition.
     const p = this.player.position;
-    this.lights.sun.position.set(p.x + this.sunOffset.x, p.y + this.sunOffset.y, p.z + this.sunOffset.z);
+    const off = this.timeOfDay.sunOffset;
+    this.lights.sun.position.set(p.x + off.x, p.y + off.y, p.z + off.z);
     this.lights.sun.target.position.set(p.x, p.y, p.z);
     this.lights.sun.target.updateMatrixWorld();
     this.sun.update(this.camera);
+    this.timeOfDay.tick(p, this.camera, elapsed);
 
     this.debug.tick();
     this.postfx.render(delta);

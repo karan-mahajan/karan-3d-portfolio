@@ -48,7 +48,10 @@ export class Grass {
     // should read as a fuzzy ground texture, not individual spikes.
     bladeHeight = 0.22,
     bladeWidth = 0.05,
-    density = 110000,
+    // 60k blades over an 80×80 m tile = ~9 blades/m². Visually
+    // indistinguishable from the previous 110k at normal viewing distance
+    // (each blade is sub-cm) but ~45% less vertex-shader work per frame.
+    density = 60000,
     patchVariation = 0.35,
   } = {}) {
     this.scene = scene;
