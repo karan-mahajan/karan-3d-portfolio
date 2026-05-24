@@ -18,7 +18,11 @@ export class Player {
   static WATER_ENTRY_RADIUS = 45;
   static WATER_SLOWDOWN_PER_M = 0.1;
   static WATER_SLOWDOWN_MIN = 0.15;
-  static MAX_TRAVEL_RADIUS = 120;
+  // Soft clamp just past the wading band — island ends at r=45 and the
+  // ocean floor hits y=-2 by r=57, so anything further lets the player
+  // walk fully submerged with no swim animation. 52 lands the wall at
+  // the beach lip; wading slowdown handles the last ~7m organically.
+  static MAX_TRAVEL_RADIUS = 52;
   static RESPAWN_FALL_Y = -5;
 
   constructor(scene, playerCamera, terrain = null, loader = null, physics = null) {
@@ -117,6 +121,23 @@ export class Player {
 
     const sample = this.controller.sample(delta);
 
+    // Soft wall at MAX_TRAVEL_RADIUS. Hard-teleporting here used to fight
+    // the kinematic character controller (move() queues a next-translation
+    // that overrides our setTranslation, and the capsule would oscillate
+    // into the ocean-floor slope and stick). Instead, just cancel the
+    // outward component of velocity — inward motion always passes so the
+    // player can wade back to land.
+    if (sample.moving && distFromCenter >= Player.MAX_TRAVEL_RADIUS) {
+      const ox = dx / distFromCenter;
+      const oz = dz / distFromCenter;
+      const outward = sample.velocity.x * ox + sample.velocity.z * oz;
+      if (outward > 0) {
+        sample.velocity.x -= outward * ox;
+        sample.velocity.z -= outward * oz;
+        if (sample.velocity.lengthSq() < 1e-6) sample.moving = false;
+      }
+    }
+
     if (sample.moving) {
       // Always rotate to face the movement direction — A/D/S all rotate the
       // character so the legs match the visible direction. Strafe / backwards
@@ -195,25 +216,16 @@ export class Player {
   }
 
   /**
-   * Catch falls into the void (y < RESPAWN_FALL_Y → spawn) and clamp the
-   * player inside MAX_TRAVEL_RADIUS so they can't walk past the heightfield
-   * collider. Clamp is hard but the wading slowdown above already makes
-   * the last few metres feel like quicksand, so the wall reads as natural.
+   * Catch falls into the void (y < RESPAWN_FALL_Y → spawn). Horizontal
+   * containment is handled in update() by cancelling outward velocity at
+   * MAX_TRAVEL_RADIUS — see the note there about why a hard teleport here
+   * fought the character controller.
    */
   #enforceWorldBounds() {
     const p = this.body ? this.body.position : this.group.position;
     if (p.y < Player.RESPAWN_FALL_Y) {
       if (this.body) this.body.teleport(0, 2, 0);
       this.group.position.set(0, 2, 0);
-      return;
-    }
-    const horiz = Math.hypot(p.x, p.z);
-    if (horiz > Player.MAX_TRAVEL_RADIUS) {
-      const scale = Player.MAX_TRAVEL_RADIUS / horiz;
-      const nx = p.x * scale;
-      const nz = p.z * scale;
-      if (this.body) this.body.teleport(nx, p.y, nz);
-      this.group.position.set(nx, p.y, nz);
     }
   }
 

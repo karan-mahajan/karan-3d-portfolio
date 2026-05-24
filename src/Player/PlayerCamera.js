@@ -93,7 +93,15 @@ export class PlayerCamera {
 
   /** Set the orbit pivot to the player's head. Camera position derives from this in update(). */
   follow(position) {
-    this._target.set(position.x, position.y + HEAD_HEIGHT, position.z);
+    // Clamp the orbit target above the water surface (WATER_LEVEL_Y=0).
+    // Without this, wading drops target.y below sea level and certain
+    // azimuths push the camera through the back of the double-sided
+    // transparent ocean plane (Effects/Water.js).
+    this._target.set(
+      position.x,
+      Math.max(position.y + HEAD_HEIGHT, 0.4),
+      position.z,
+    );
   }
 
   /** Forward vector on the ground plane, from camera azimuth. */
