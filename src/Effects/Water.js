@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import { Water as Water2 } from 'three/examples/jsm/objects/Water2.js';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
-import { Refractor } from 'three/examples/jsm/objects/Refractor.js';
+// Refractor is intentionally NOT imported — the shader uses a constant
+// faux-refraction colour instead. See preRender() + shader for rationale.
 
 /**
  * Multi-surface realistic water with SHARED planar reflection / refraction.
@@ -132,7 +133,6 @@ const WATER_SHADER = {
     #define HISTORY_COUNT ${HISTORY_COUNT}
 
     uniform sampler2D tReflectionMap;
-    uniform sampler2D tRefractionMap;
     uniform sampler2D tNormalMap0;
     uniform sampler2D tNormalMap1;
 
@@ -229,7 +229,12 @@ const WATER_SHADER = {
       vec2 uv = coord.xy + coord.z * normal.xz * 0.05;
 
       vec4 reflectColor = texture2D( tReflectionMap, vec2( 1.0 - uv.x, uv.y ) );
-      vec4 refractColor = texture2D( tRefractionMap, uv );
+      // Faux refraction: a darker tint of the water colour itself. The
+      // real Refractor pass was eliminated for FPS — nothing meaningful
+      // sits below the water surface in this scene, so the see-through
+      // detail isn't missed. The 0.35 darken keeps low-fresnel (looking
+      // straight down) reading as "deep, dark water" instead of mirror.
+      vec4 refractColor = vec4( color * 0.35, 1.0 );
 
       gl_FragColor = vec4( color, 1.0 ) * mix( refractColor, reflectColor, reflectance );
 
@@ -312,9 +317,13 @@ export class Water {
     this.#buildSplashSystem();
   }
 
-  /** Build the shared master Reflector + Refractor. NOT added to the scene
-   *  — their onBeforeRender is invoked manually from preRender() so they
-   *  run exactly once per frame regardless of how many surfaces exist. */
+  /** Build the shared master Reflector. NOT added to the scene — its
+   *  onBeforeRender is invoked manually from preRender() so it runs at
+   *  most once per frame (half-rate) regardless of surface count.
+   *
+   *  The Refractor was removed entirely in the perf pass — the water
+   *  shader now uses a constant darker tint where refraction used to be.
+   *  See preRender() + the shader's "Faux refraction" comment for why. */
   #buildSharedReflectors(planeY) {
     // 200×200 plane covers the entire walkable world (terrain is 200×200).
     const geom = new THREE.PlaneGeometry(200, 200);
@@ -327,15 +336,6 @@ export class Water {
     this._masterReflector.rotation.x = -Math.PI / 2;
     this._masterReflector.position.y = planeY;
     this._masterReflector.updateMatrixWorld(true);
-
-    this._masterRefractor = new Refractor(geom, {
-      textureWidth: this._rtSize,
-      textureHeight: this._rtSize,
-      clipBias: 0.003,
-    });
-    this._masterRefractor.rotation.x = -Math.PI / 2;
-    this._masterRefractor.position.y = planeY;
-    this._masterRefractor.updateMatrixWorld(true);
 
     this._masterPlaneY = planeY;
   }
@@ -568,21 +568,45 @@ export class Water {
   }
 
   /**
-   * Update the shared reflection + refraction RTs. Call once per frame
-   * from App.js #tick, BEFORE the main composer render. All water meshes
-   * are hidden during the master renders so the RTs don't feedback-sample.
+   * Update the shared reflection RT. Call once per frame from App.js
+   * #tick, BEFORE the main composer render.
+   *
+   * Perf decisions, all chosen to recover the 144fps baseline:
+   *   - Reflection updates on alternate frames only. Stylized scene +
+   *     slow third-person camera = 1-frame lag is invisible.
+   *   - Refraction is NOT updated at all — the water shader sources its
+   *     "refraction" from a constant darker tint instead of a rendered
+   *     view of what's below. Nothing meaningful sits underwater in this
+   *     scene (terrain only), so the see-through detail isn't missed.
+   *   - All water meshes hidden during the render so the RT doesn't
+   *     feedback-sample itself.
+   *   - All meshes tagged with userData.excludeFromReflection (grass
+   *     field, splash particles, etc.) are hidden too — grass alone is
+   *     ~180k vertices with a heavy vertex shader, biggest single win.
    *
    * @param {THREE.WebGLRenderer} renderer
    * @param {THREE.Camera} camera
    */
   preRender(renderer, camera) {
     if (this.surfaces.length === 0) return;
-    for (const s of this.surfaces) s.mesh.visible = false;
+    this._frameCounter = (this._frameCounter | 0) + 1;
+    if (this._frameCounter % 2 !== 0) return; // half-rate refresh
+
+    // Hide water surfaces + any mesh tagged excludeFromReflection.
+    const hidden = [];
+    for (const s of this.surfaces) {
+      if (s.mesh.visible) { s.mesh.visible = false; hidden.push(s.mesh); }
+    }
+    this.scene.traverse((obj) => {
+      if (obj.visible && obj.userData && obj.userData.excludeFromReflection) {
+        obj.visible = false;
+        hidden.push(obj);
+      }
+    });
     try {
       this._masterReflector.onBeforeRender(renderer, this.scene, camera);
-      this._masterRefractor.onBeforeRender(renderer, this.scene, camera);
     } finally {
-      for (const s of this.surfaces) s.mesh.visible = true;
+      for (const m of hidden) m.visible = true;
     }
   }
 
@@ -610,7 +634,10 @@ export class Water {
     material.uniforms.color.value = new THREE.Color().copy(this._currentColor);
     material.uniforms.reflectivity.value = REFLECTIVITY;
     material.uniforms.tReflectionMap.value = this._masterReflector.getRenderTarget().texture;
-    material.uniforms.tRefractionMap.value = this._masterRefractor.getRenderTarget().texture;
+    // tRefractionMap is left null — the faux-refraction in the shader
+    // doesn't sample it. We keep the uniform slot to avoid surgery on
+    // Water2.WaterShader.uniforms (UniformsUtils.merge copies it in).
+    material.uniforms.tRefractionMap.value = null;
     material.uniforms.tNormalMap0.value = this._normalMap0;
     material.uniforms.tNormalMap1.value = this._normalMap1;
     material.uniforms.textureMatrix.value = new THREE.Matrix4();
@@ -783,6 +810,8 @@ export class Water {
     this._splashPoints.frustumCulled = false;
     this._splashPoints.name = 'water-splash';
     this._splashPoints.renderOrder = 6;
+    // Splashes are ephemeral feedback; no value in reflecting them.
+    this._splashPoints.userData.excludeFromReflection = true;
     this.scene.add(this._splashPoints);
   }
 

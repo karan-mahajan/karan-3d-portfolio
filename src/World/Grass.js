@@ -130,6 +130,11 @@ export class Grass {
     this.mesh.receiveShadow = true;
     this.mesh.name = 'grass-shader';
     this.mesh.renderOrder = 0;
+    // Skip the grass field during Water's reflection RT render — 60k blades
+    // × 3 verts × heavy vertex shader (wind / flatten / path / water loops)
+    // is the single biggest cost in the reflection pass, and grass reflects
+    // as a uniform green wash anyway. Recovers significant ms/frame.
+    this.mesh.userData.excludeFromReflection = true;
     scene.add(this.mesh);
   }
 
