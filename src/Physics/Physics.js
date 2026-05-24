@@ -136,16 +136,16 @@ export class Physics {
    * push the ball just by walking into it. `kick(yaw, power)` applies a
    * forward+upward impulse; `respawn(x,y,z)` teleports it back.
    *
-   * Linear damping (0.4) + Rapier's default contact friction bring the ball
+   * Linear damping (0.6) + Rapier's default contact friction bring the ball
    * to rest naturally over ~3-4 seconds, matching the old custom rolling
    * feel without needing per-frame friction math.
    */
-  addDynamicBall(x, y, z, radius, { density = 0.6, restitution = 0.45, friction = 0.6 } = {}) {
+  addDynamicBall(x, y, z, radius, { density = 0.6, restitution = 0.25, friction = 0.75 } = {}) {
     const { RAPIER, world } = this;
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, y, z)
-      .setLinearDamping(0.4)
-      .setAngularDamping(0.35)
+      .setLinearDamping(0.6)
+      .setAngularDamping(0.55)
       .setCcdEnabled(true);
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.ball(radius)

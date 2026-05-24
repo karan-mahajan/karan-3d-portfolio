@@ -149,11 +149,21 @@ export class Interactables {
     pivot.add(obj);
     this.scene.add(pivot);
 
+    // Thin cylindrical collider in the bag's center so the player can't
+    // walk through it (but can brush past). Disabled while the bag is
+    // swinging — see update() — so the painted bag and the collider never
+    // disagree about where the bag is.
+    let bagBody = null;
+    if (this.physics) {
+      bagBody = this.physics.addStaticCylinder(pos.x, groundY, pos.z, 0.34, targetH);
+    }
+
     let swingT = 0;
     let swingAmp = 0;
     const swingAxis = new THREE.Vector3(1, 0, 0); // updated per-punch
     const bag = {
       mesh: pivot,
+      body: bagBody,
       swing(yaw) {
         // The bag pendulums *in the punch direction*. The rotation axis is
         // the horizontal vector 90° to the right of the punch direction, so
@@ -163,7 +173,11 @@ export class Interactables {
         swingT = 0;
       },
       update(delta) {
-        if (swingAmp < 0.001) return;
+        if (swingAmp < 0.001) {
+          if (bagBody && !bagBody.isEnabled()) bagBody.setEnabled(true);
+          return;
+        }
+        if (bagBody && bagBody.isEnabled()) bagBody.setEnabled(false);
         swingT += delta;
         const damp = Math.exp(-swingT * 1.2);
         const phase = Math.sin(swingT * 7) * damp * swingAmp;
@@ -175,12 +189,6 @@ export class Interactables {
       },
     };
     this.bag = bag;
-
-    if (this.physics) {
-      // Thin cylindrical collider in the bag's center so the player can't
-      // walk through it (but can brush past).
-      this.physics.addStaticCylinder(pos.x, groundY, pos.z, 0.34, targetH);
-    }
 
     // Bag is also a "push spot" for the P-key hint — punch with E, push with P.
     // colliderRadius matches the static-cylinder radius (0.34) so the push
@@ -236,7 +244,20 @@ export class Interactables {
     const spawnGround = this.#groundY(spawnX, spawnZ);
     const startPos = new THREE.Vector3(spawnX, spawnGround + radius, spawnZ);
     obj.position.copy(startPos);
-    obj.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    obj.traverse((c) => {
+      if (!c.isMesh) return;
+      c.castShadow = true;
+      c.receiveShadow = true;
+      const materials = Array.isArray(c.material) ? c.material : [c.material];
+      materials.forEach((material) => {
+        if (!material?.isMeshStandardMaterial) return;
+        material.emissive = new THREE.Color('#f8f2df');
+        material.emissiveMap = material.map || material.emissiveMap;
+        material.emissiveIntensity = Math.max(material.emissiveIntensity || 0, material.map ? 0.162 : 0.027);
+        material.roughness = Math.min(material.roughness ?? 0.65, 0.55);
+        material.needsUpdate = true;
+      });
+    });
     this.scene.add(obj);
 
     // Rapier dynamic body — the player's character controller has
