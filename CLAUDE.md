@@ -50,17 +50,18 @@ ferns, reeds, lily pads) get **no** collider.
 
 **Collider must match the visible mesh** — don't hardcode a footprint and hope.
 `new THREE.Box3().setFromObject(node)` on the scaled mesh gives you the real
-extents; pass `box.min.y` as the y arg and `size.{x,y,z}/2` as the half-extents.
-Reference patterns: [Nature.#placeInstances](src/World/Nature.js) (bbox sizing
-for rocks/logs), [Paths.#buildTile](src/World/Paths.js) (tile colliders so the
-player walks on top, not through), [Furniture.#placeOne](src/Portfolio/Furniture.js),
+extents; pass `(box.min.y + box.max.y) / 2` as the y arg and `size.{x,y,z}/2`
+as the half-extents. Reference patterns: [Nature.#placeInstances](src/World/Nature.js)
+(bbox sizing for rocks/logs), [Paths.#buildTile](src/World/Paths.js) (tile
+colliders so the player walks on top, not through),
+[Furniture.#placeOne](src/Portfolio/Furniture.js),
 [Interactables.#buildStuckCrate](src/Portfolio/Interactables.js). Symptoms when
 this is wrong: player's feet sink into the visible mesh, or player stands
 *inside* the painted geometry. Both are user-reported bugs already this sprint.
 
-**Important:** `addStaticCuboid(x, y, z, hx, hy, hz)` treats `y` as the
-cuboid's **bottom** and lifts by `hy` internally — pass `bottom_world_y`, not
-the centre. Passing centre lands the collider `hy` above the visible mesh.
+**Important:** `addStaticCuboid(x, y, z, hx, hy, hz)` takes `y` as the cuboid's
+**centre** (no internal lift). For a mesh whose origin is at the bbox bottom,
+pass `bottom + hy`; for a measured bbox, pass `(box.min.y + box.max.y) / 2`.
 
 ## Stack
 
@@ -161,6 +162,22 @@ Mandatory rules for every probe script:
 3. Run from project root: `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`.
 4. Before adding a new probe, `ls .verify/scripts/` first — don't duplicate
    an existing driver, copy and adapt it.
+5. **Boot + dismiss the welcome screen via the shared helper, ALWAYS.** Every
+   probe must do exactly this after `page.goto`:
+   ```js
+   import { bootAndDismiss } from './_boot.mjs';
+   // ...
+   await page.goto(URL, { waitUntil: 'load', timeout: 30000 });
+   await bootAndDismiss(page);
+   // now safe to screenshot / read app state / press keys
+   ```
+   Do **not** copy-paste a dismissal loop into a new probe. Four different
+   probes have shipped four different ways of getting this wrong (wrong ID,
+   wrong wait, no fade wait, wrong order). All bug fixes live in one file:
+   [.verify/scripts/_boot.mjs](.verify/scripts/_boot.mjs). `bootAndDismiss`
+   waits for the loading screen to hide, dismisses the welcome, waits for
+   the 0.6s CSS opacity fade, focuses the canvas, and throws loudly if the
+   overlay is somehow still visible afterwards.
 
 `.verify/` is gitignored as a whole folder; neither scripts nor shots ever
 get committed. Playwright is not a project dep — install once globally

@@ -419,10 +419,10 @@ export class Water {
         const hx = Math.max(scaledSize.x / 2, 0.18);
         const hz = Math.max(scaledSize.z / 2, 0.18);
         const hy = Math.max(scaledSize.y / 2, 0.12);
-        // Cuboid sized to the scaled bounding box. y arg is the bottom of
-        // the cuboid (Physics.addStaticCuboid lifts by hy internally). The
-        // rock GLB origin is at its bbox bottom, so y here is the rock base.
-        this.physics.addStaticCuboid(x, y, z, hx, hy, hz, yaw);
+        // Cuboid sized to the scaled bounding box. y arg is the CENTRE; the
+        // rock GLB origin is at its bbox bottom, so we lift by hy to place
+        // the collider centre at the bbox midpoint.
+        this.physics.addStaticCuboid(x, y + hy, z, hx, hy, hz, yaw);
       }
       return obj;
     };

@@ -274,9 +274,9 @@ export class Paths {
       if (!box.isEmpty()) {
         const size = box.getSize(new THREE.Vector3());
         // The yaw is already baked into the world bbox so the cuboid is
-        // axis-aligned in world space — pass yaw=0.
+        // axis-aligned in world space — pass yaw=0. Centre Y = midpoint of bbox.
         this.physics.addStaticCuboid(
-          plan.x, box.min.y, plan.z,
+          plan.x, (box.min.y + box.max.y) / 2, plan.z,
           size.x / 2, size.y / 2, size.z / 2,
         );
       }

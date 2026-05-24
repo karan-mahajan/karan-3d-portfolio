@@ -141,8 +141,9 @@ export class Billboards {
       const slabHx = SCREEN_WIDTH / 2 + 0.15;
       const slabHy = (POST_HEIGHT - 0.4) / 2;
       const slabHz = 0.08;
+      // Slab spans local Y in [0.2, POST_HEIGHT - 0.2] → centre = groundY + POST_HEIGHT/2.
       this.physics.addStaticCuboid(
-        x, groundY + 0.2, z,
+        x, groundY + POST_HEIGHT / 2, z,
         slabHx, slabHy, slabHz,
         yaw,
       );

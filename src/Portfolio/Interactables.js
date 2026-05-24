@@ -90,7 +90,7 @@ export class Interactables {
       const scaledBox = new THREE.Box3().setFromObject(obj);
       const scaledSize = scaledBox.getSize(new THREE.Vector3());
       this.physics.addStaticCuboid(
-        pos.x, scaledBox.min.y, pos.z,
+        pos.x, (scaledBox.min.y + scaledBox.max.y) / 2, pos.z,
         scaledSize.x / 2, scaledSize.y / 2, scaledSize.z / 2,
         obj.rotation.y,
       );
@@ -498,13 +498,12 @@ export class Interactables {
       this.scene.add(signObj);
 
       // Static collider so the player can't walk through the post or panel.
-      // Sized to the scaled GLB box; cuboid Y arg is the cuboid's BOTTOM
-      // (Physics.addStaticCuboid lifts by hy internally).
+      // Sized to the scaled GLB box; cuboid Y arg is the cuboid's CENTRE.
       if (this.physics) {
         const scaledBox = new THREE.Box3().setFromObject(signObj);
         const scaledSize = scaledBox.getSize(new THREE.Vector3());
         this.physics.addStaticCuboid(
-          pos.x, scaledBox.min.y, pos.z,
+          pos.x, (scaledBox.min.y + scaledBox.max.y) / 2, pos.z,
           Math.max(scaledSize.x / 2, 0.18),
           Math.max(scaledSize.y / 2, 0.1),
           Math.max(scaledSize.z / 2, 0.06),

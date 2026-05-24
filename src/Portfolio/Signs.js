@@ -333,13 +333,18 @@ export class Signs {
     this.compassPosition = new THREE.Vector3(x, groundY, z);
 
     if (this.physics) {
-      // Post colliders span groundY → groundY+postHeight (addStaticCylinder lifts by height/2).
-      this.physics.addStaticCylinder(x - span / 2 + 0.25, groundY, z, 0.13, postHeight);
-      this.physics.addStaticCylinder(x + span / 2 - 0.25, groundY, z, 0.13, postHeight);
-      // Plank collider: addStaticCuboid treats `y` as the bottom of the box.
-      // Plank bottom = groundY + plankCenterY - plankH/2.
+      // Posts live at local (±(span/2-0.25), 0, 0). Rotate that local X through
+      // yaw to world space — same pattern as Billboards. Hardcoding world X
+      // worked only because yaw=π flips both posts symmetrically; any other
+      // yaw would mirror the colliders away from the visual posts.
+      for (const lx of [-span / 2 + 0.25, +span / 2 - 0.25]) {
+        const wx = x + Math.cos(yaw) * lx;
+        const wz = z + -Math.sin(yaw) * lx;
+        this.physics.addStaticCylinder(wx, groundY, wz, 0.13, postHeight);
+      }
+      // Plank centre Y = groundY + plankCenterY (addStaticCuboid takes centre).
       this.physics.addStaticCuboid(
-        x, groundY + plankCenterY - plankH / 2, z,
+        x, groundY + plankCenterY, z,
         1.75, plankH / 2, 0.08, yaw,
       );
     }
@@ -419,12 +424,9 @@ export class Signs {
 
       if (this.physics) {
         this.physics.addStaticCylinder(x, groundY, z, 0.16, postHeight);
-        // addStaticCuboid lifts by hy internally — pass the plank's BOTTOM
-        // (groundY + plankCenterY - plankH/2) so the collider lands on the
-        // visible plank. Previous code passed plankCenterY and the cuboid
-        // ended up floating plankH above the visible plank.
+        // Plank centre Y = groundY + plankCenterY (addStaticCuboid takes centre).
         this.physics.addStaticCuboid(
-          x, groundY + plankCenterY - plankH / 2, z,
+          x, groundY + plankCenterY, z,
           plankW / 2, plankH / 2, 0.09, yaw,
         );
       }
@@ -513,12 +515,16 @@ export class Signs {
     this.skillsPosition = new THREE.Vector3(x, groundY, z);
 
     if (this.physics) {
-      this.physics.addStaticCylinder(x - span / 2 + 0.3, groundY, z, 0.22, postHeight);
-      this.physics.addStaticCylinder(x + span / 2 - 0.3, groundY, z, 0.22, postHeight);
-      // Plank: y arg is the BOTTOM of the cuboid (see comment in
-      // experience-trail builder). plank bottom = plankCenterY - plankH/2.
+      // Skills posts: local X = ±(span/2 - 0.3). Same yaw-aware transform as
+      // the compass posts so a yaw change wouldn't mirror them.
+      for (const lx of [-span / 2 + 0.3, +span / 2 - 0.3]) {
+        const wx = x + Math.cos(yaw) * lx;
+        const wz = z + -Math.sin(yaw) * lx;
+        this.physics.addStaticCylinder(wx, groundY, wz, 0.22, postHeight);
+      }
+      // Plank centre Y = groundY + plankCenterY (addStaticCuboid takes centre).
       this.physics.addStaticCuboid(
-        x, groundY + plankCenterY - plankH / 2, z,
+        x, groundY + plankCenterY, z,
         2.6, plankH / 2, 0.1, yaw,
       );
     }
@@ -620,7 +626,8 @@ export class Signs {
       // box collider covers both so the player can't walk through the
       // visible mailbox body (post-only collider used to let them).
       this.physics.addStaticCylinder(x, groundY, z, 0.12, 1.2);
-      this.physics.addStaticCuboid(x, groundY + 1.20, z, 0.35, 0.25, 0.225, yaw);
+      // Body centre matches the visible mesh (boxBody.position.y = 1.45).
+      this.physics.addStaticCuboid(x, groundY + 1.45, z, 0.35, 0.25, 0.225, yaw);
       // Name sign at local (2.0, 0, 0) rotated by yaw.
       const nx = x + Math.cos(yaw) * 2.0;
       const nz = z - Math.sin(yaw) * 2.0;
@@ -628,9 +635,9 @@ export class Signs {
       // height than the mailbox if the player walks across a hill there.
       const nameGroundY = this.#groundY(nx, nz);
       this.physics.addStaticCylinder(nx, nameGroundY, nz, 0.13, namePostH);
-      // Plank: y arg is BOTTOM of cuboid.
+      // Plank centre Y = nameGroundY + namePlankY (addStaticCuboid takes centre).
       this.physics.addStaticCuboid(
-        nx, nameGroundY + namePlankY - nameH / 2, nz,
+        nx, nameGroundY + namePlankY, nz,
         nameW / 2, nameH / 2, 0.08, yaw,
       );
     }

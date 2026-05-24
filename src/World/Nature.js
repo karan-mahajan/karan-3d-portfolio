@@ -368,7 +368,7 @@ export class Nature {
           // Rotate the collider with the visible mesh — without this the
           // axis-aligned cuboid leaves the painted rock corners poking
           // 30-50 cm past the collider at ~45° yaws.
-          this.physics.addStaticCuboid(cx, yBottom, cz, hx, hy, hz, dummy.rotation.y);
+          this.physics.addStaticCuboid(cx, yBottom + hy, cz, hx, hy, hz, dummy.rotation.y);
           // Player can hit the cuboid at any face — use the larger XZ
           // half-extent as a reasonable "outer radius" for the push snap.
           instanceColliderOuter = Math.max(hx, hz);

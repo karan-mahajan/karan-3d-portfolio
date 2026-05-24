@@ -124,7 +124,13 @@ export class Interaction {
       this.#hidePrompt();
       return;
     }
-    const nearBillboard = this.billboards.closestWithin(playerPosition, PROXIMITY);
+    let nearBillboard = this.billboards.closestWithin(playerPosition, PROXIMITY);
+    // Suppress the prompt when the player is behind the billboard — pure XZ
+    // distance fires from either side, which lets the player open a project
+    // while staring at the back of the screen.
+    if (nearBillboard && !this.#inFrontOf(nearBillboard, playerPosition)) {
+      nearBillboard = null;
+    }
     const nearContact = this.signs && this.signs.nearContact(playerPosition, CONTACT_PROXIMITY);
     this.candidate = nearBillboard;
     this.contactCandidate = !!nearContact && !nearBillboard;
@@ -142,6 +148,20 @@ export class Interaction {
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
     else if (this.contactCandidate) this.#showPrompt('Contact');
     else this.#hidePrompt();
+  }
+
+  /**
+   * True when the player stands in the billboard's front half-plane. The
+   * billboard's local +Z faces the player side, so world-forward = (sin yaw,
+   * cos yaw). Dot with (player - billboard) > 0 means front-side.
+   */
+  #inFrontOf(item, playerPos) {
+    const yaw = item.group.rotation.y;
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    const dx = playerPos.x - item.position.x;
+    const dz = playerPos.z - item.position.z;
+    return (fx * dx + fz * dz) > 0;
   }
 
   #showPrompt(name) {

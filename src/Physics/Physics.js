@@ -113,11 +113,12 @@ export class Physics {
 
   /**
    * Box collider — used for rocks, billboard screens, signs.
-   * `yaw` (radians) rotates the box around the Y axis. Default 0 = axis-aligned.
+   * `(x, y, z)` is the CENTRE of the box. `yaw` (radians) rotates around Y.
+   * Caller passes the centre directly (no internal lift).
    */
   addStaticCuboid(x, y, z, hx, hy, hz, yaw = 0) {
     const { RAPIER, world } = this;
-    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y + hy, z);
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
     if (yaw) {
       // Quaternion for rotation around Y by `yaw`.
       const half = yaw / 2;

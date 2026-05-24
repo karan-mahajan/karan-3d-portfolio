@@ -151,18 +151,20 @@ export class Furniture {
     });
 
     // ── Physics colliders for the chunky items ───────────────────────────
-    // Desk: a cuboid the size of its bounding box.
+    // Desk: a cuboid the size of its bounding box. Centre = midpoint of the
+    // bbox in Y (deskGround + deskHy).
     if (this.physics) {
       const deskSize = deskBox.getSize(new THREE.Vector3());
       const deskHy = (deskTopY - deskGround) / 2;
       this.physics.addStaticCuboid(
-        deskX, deskGround, deskZ,
+        deskX, deskGround + deskHy, deskZ,
         deskSize.x / 2, deskHy, deskSize.z / 2,
         billYaw,
       );
-      // Chair: smaller cuboid (so the player can lean against it).
+      // Chair: smaller cuboid (so the player can lean against it). Half-height
+      // 0.45 → centre = chairGround + 0.45.
       this.physics.addStaticCuboid(
-        chairX, chairGround, chairZ,
+        chairX, chairGround + 0.45, chairZ,
         0.35, 0.45, 0.35,
         billYaw,
       );
