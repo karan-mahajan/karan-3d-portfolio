@@ -84,6 +84,14 @@ const VOL = {
   toggle: 0.45,
   menuOpen: 0.15,
   menuClose: 0.15,
+  mapOpen: 0.2,
+  mapClose: 0.18,
+  markerHover: 0.16,
+  markerClick: 0.32,
+  teleportWoosh: 0.45,
+  teleportArrive: 0.34,
+  nope: 0.28,
+  flagDrop: 0.25,
 };
 
 const AMBIENT_CROSSFADE_S = 3.0;
@@ -200,6 +208,23 @@ const SOUND_FILES = {
   toggleClick: { src: "/sounds/toggle.mp3", loop: false, vol: VOL.toggle },
   menuOpen: { src: "/sounds/menu-open.mp3", loop: false, vol: VOL.menuOpen },
   menuClose: { src: "/sounds/menu-close.mp3", loop: false, vol: VOL.menuClose },
+  // Map SFX placeholders are 100ms silence until sourced:
+  // map_open ~300ms paper rustle.
+  mapOpen: { src: "/sounds/map-open.mp3", loop: false, vol: VOL.mapOpen },
+  // map_close ~250ms paper fold/close.
+  mapClose: { src: "/sounds/map-close.mp3", loop: false, vol: VOL.mapClose },
+  // marker_hover ~80-120ms gentle tick; pitch varies per section.
+  markerHover: { src: "/sounds/marker-hover.mp3", loop: false, vol: VOL.markerHover },
+  // marker_click ~150ms solid parchment/wood thunk.
+  markerClick: { src: "/sounds/marker-click.mp3", loop: false, vol: VOL.markerClick },
+  // teleport_woosh ~400ms reversed reverb sweep.
+  teleportWoosh: { src: "/sounds/teleport-woosh.mp3", loop: false, vol: VOL.teleportWoosh },
+  // teleport_arrive ~600ms soft chime plus breath of air.
+  teleportArrive: { src: "/sounds/teleport-arrive.mp3", loop: false, vol: VOL.teleportArrive },
+  // nope ~200ms short low buzz for invalid map clicks.
+  nope: { src: "/sounds/nope.mp3", loop: false, vol: VOL.nope },
+  // flag_drop ~150ms small wooden tap.
+  flagDrop: { src: "/sounds/flag-drop.mp3", loop: false, vol: VOL.flagDrop },
 };
 
 // Footstep pool keys per surface — random pick per step.
@@ -225,6 +250,7 @@ export class AudioManager {
     this._wasGrounded = true;
     this._wasRainOn = false;
     this._rainOn = false;
+    this._ambientDuck = 1;
 
     /** Visual footprint cadence hook — see header comment in old version. */
     this.onStep = null;
@@ -264,7 +290,7 @@ export class AudioManager {
     const wind = this.howls.windTrees;
     if (wind && !wind.playing()) {
       wind.play();
-      wind.fade(0, VOL.windTrees, 1500);
+      wind.fade(0, VOL.windTrees * this._ambientDuck, 1500);
     }
     // Ocean + water-waves play at vol=0 from the start; setOcean/Pond ride
     // their gain so they're always "running" and ready to be audible.
@@ -288,9 +314,9 @@ export class AudioManager {
     const day = this.howls.ambientDay;
     const night = this.howls.ambientNight;
     const birds = this.howls.birdsDay;
-    const targetDay = mode === "day" ? VOL.ambientDay : 0;
-    const targetNight = mode === "night" ? VOL.ambientNight : 0;
-    const targetBirds = mode === "day" ? VOL.birdsDay : 0;
+    const targetDay = mode === "day" ? VOL.ambientDay * this._ambientDuck : 0;
+    const targetNight = mode === "night" ? VOL.ambientNight * this._ambientDuck : 0;
+    const targetBirds = mode === "day" ? VOL.birdsDay * this._ambientDuck : 0;
     this.#fadeTo(day, targetDay, ms, /*startIfSilent=*/ mode === "day");
     this.#fadeTo(night, targetNight, ms, /*startIfSilent=*/ mode === "night");
     this.#fadeTo(birds, targetBirds, ms, /*startIfSilent=*/ mode === "day");
@@ -610,6 +636,50 @@ export class AudioManager {
     if (h && h.state() === "loaded") h.play();
   }
 
+  playMapOpen() {
+    this.#playOneShot("mapOpen");
+  }
+
+  playMapClose() {
+    this.#playOneShot("mapClose");
+  }
+
+  playMarkerHover(sectionId = "projects") {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.markerHover;
+    if (!h || h.state() !== "loaded") return;
+    const rates = { projects: 1.0, experience: 1.1, skills: 0.9, contact: 1.2 };
+    const id = h.play();
+    h.rate(rates[sectionId] ?? 1.0, id);
+  }
+
+  playMarkerClick() {
+    this.#playOneShot("markerClick");
+  }
+
+  playTeleportWoosh() {
+    this.#playOneShot("teleportWoosh");
+  }
+
+  playTeleportArrive() {
+    this.#playOneShot("teleportArrive");
+  }
+
+  playNope() {
+    this.#playOneShot("nope");
+  }
+
+  playFlagDrop() {
+    this.#playOneShot("flagDrop");
+  }
+
+  duckAmbient(level = 1, durationMs = 250) {
+    this._ambientDuck = Math.max(0, Math.min(1, level));
+    if (!this._started) return;
+    this.#applyMode(this.mode, durationMs / 1000);
+    this.#fadeTo(this.howls.windTrees, VOL.windTrees * this._ambientDuck, durationMs, true);
+  }
+
   /** Kick the football — meaty soft impact, plays on the foot-meets-ball
    *  beat (Interactables.js fires this with the same delay it uses to start
    *  the ball's physics impulse). */
@@ -661,6 +731,12 @@ export class AudioManager {
       const id = h.play();
       h.rate(0.94 + Math.random() * 0.12, id);
     }
+  }
+
+  #playOneShot(key) {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls[key];
+    if (h && h.state() === "loaded") h.play();
   }
 
   /** Punch the bag — heavier impact than push (impactPunch_heavy). */

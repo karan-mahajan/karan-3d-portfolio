@@ -65,7 +65,7 @@ fair game **only** when debugging a dependency.
 ## Stack
 
 - **three@0.184** — renderer, scene, lights, materials
-- **@dimforge/rapier3d@0.19** — physics (async WASM init; see [Physics.js](src/Physics/Physics.js))
+- **@dimforge/rapier3d-compat@0.12** — physics (async WASM init; see [Physics.js](src/Physics/Physics.js))
 - **camera-controls@3** — third-person follow cam
 - **gsap@3** — UI fades + interaction transitions
 - **howler@2** — audio (ambient + footsteps + ui sfx)
@@ -90,9 +90,10 @@ src/Utils/              # Sizes, Loader, Debug
 src/Physics/Physics.js  # Rapier init + heightfield ground + collider helpers
 src/Player/             # Player, PlayerController, PlayerCamera, Character (Avaturn+Mixamo)
 src/World/              # Terrain, Sky, Nature, Grass, Paths, StreetLights, DistantIslands, TimeOfDay, Sun, Wind, Palette, World
-src/Portfolio/          # Billboards (single Project Showcase), Signs, Interaction, Interactables, ActionPrompts, *Data
+src/Portfolio/          # Billboards (single Project Showcase), Signs, Interaction, Interactables, ActionPrompts, WorldMap (data), *Data
 src/Effects/            # Fireflies, Water, Rain, Thunderstorm, Leaves, Footprints, WindLines, PostFX
-src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast, AchievementPanel
+src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast/Panel, MiniMap, MapOverlay, MapMarkers, Discovery, coords, map.css
+src/Travel/             # TransitionFX (iris wipe), Teleport, Navmask (A* nav grid), ClickToMove (auto-walk)
 src/Systems/            # Achievements (34 unlocks + time tracker), DistanceGame (shore mini-game)
 src/Torch/TorchLight.js # night-mode hand-attached torch + F-aim shoulder IK
 src/Audio/AudioManager.js # howler (ambient + footsteps + ui chimes + splashes)
@@ -118,7 +119,8 @@ static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/,
 ## Tick loop (App.js)
 
 ```
-physics.step → player.update → playerCamera.update → compass.update
+physics.step → player.update → playerCamera.update → discovery.update
+→ clickToMove.update → miniMap.update → mapOverlay.update → compass.update
 → world.update → wind → grass.setPlayerPos → actionPrompts.tick
 → interaction.tick → interactables.update → ui.tick (mobile)
 → fireflies → water → rain → thunderstorm → windLines → leaves
@@ -155,30 +157,28 @@ physics.step → player.update → playerCamera.update → compass.update
   modals/interactions are open.
 - **Distance-guess** (`Systems/DistanceGame.js`): mini-game at the shore.
   Exact-only wins; the win card auto-dismisses.
+- **Map system** (`UI/MiniMap.js`, `UI/MapOverlay.js`, `Travel/*`): parchment
+  mini-map → full overlay on click or `M`; marker click = iris-wipe teleport
+  with collision-clear landing via Navmask; land click drops a flag and
+  auto-walks via `PlayerController.setVirtualInput` (WASD cancels). Data in
+  [WorldMap.js](src/Portfolio/WorldMap.js); sessionStorage key
+  `karan-world-discovered-v1`. Backtick = navmask debug overlay.
 
 ## Verification sandbox — MUST use `.verify/scripts/` + `.verify/shots/<date>/`
 
 No exceptions, no `/tmp/`, no flat `.verify/*.png`. Layout:
 `.verify/scripts/verify-<feature>.mjs` + `.verify/shots/YYYY-MM-DD/<name>.png`.
 
-Rules:
+Rules: (1) compute shots dir at runtime via `new Date().toISOString().slice(0, 10)`
++ `fs.mkdirSync(..., { recursive: true })` — never hardcode a date;
+(2) run from project root with `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`;
+(3) `ls .verify/scripts/` first — copy an existing driver, don't duplicate;
+(4) always boot via `bootAndDismiss(page)` from [\_boot.mjs](.verify/scripts/_boot.mjs)
+— never inline your own dismissal loop.
 
-1. Shots dir computed at runtime via `new Date().toISOString().slice(0, 10)`
-   + `fs.mkdirSync(..., { recursive: true })`. Never hardcode a date.
-2. Run from project root: `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`.
-3. `ls .verify/scripts/` first — copy an existing driver, don't duplicate.
-4. **Always boot via the shared helper:**
-   ```js
-   import { bootAndDismiss } from "./_boot.mjs";
-   await page.goto(URL, { waitUntil: "load", timeout: 30000 });
-   await bootAndDismiss(page);
-   ```
-   All boot/fade/focus fixes live in [\_boot.mjs](.verify/scripts/_boot.mjs).
-   Never inline your own dismissal loop.
-
-`.verify/` is gitignored. Playwright is not a project dep — install once
-globally (`cd /tmp && npm install --no-save playwright`), reuse via `NODE_PATH`.
-Canonical driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
+`.verify/` is gitignored. Playwright is not a project dep — install once globally
+(`cd /tmp && npm install --no-save playwright`), reuse via `NODE_PATH`. Canonical
+driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
 
 ## Known parked work (don't surprise the user with rewrites)
 
@@ -190,7 +190,6 @@ Canonical driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
   add similar global animations.
 - **Furniture pass removed** (commit 12e494a) — don't re-add without asking.
   Grass cleared around interactable props so colliders match visuals (cd996b7).
-- **Minimap + click-to-teleport** — see auto-memory `project_minimap_teleport.md`.
 
 ## When in doubt
 

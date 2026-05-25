@@ -26,6 +26,10 @@ export class PlayerController {
     this.forward = new THREE.Vector3();
     this.right = new THREE.Vector3();
     this.paused = false; // when true, sample() returns a "no movement" reading
+    this._locked = false;
+    this._virtualInput = null;
+    this._virtualCancelledThisFrame = false;
+    this._manualOverrideUntil = 0;
     // Player.update writes this each frame so wading through ocean water
     // slows the character down without forking the speed constants.
     this.speedMultiplier = 1.0;
@@ -52,6 +56,11 @@ export class PlayerController {
     this._onDown = (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
+      if (this._virtualInput && isMovementCode(e.code)) {
+        this.clearVirtualInput();
+        this._virtualCancelledThisFrame = true;
+        this._manualOverrideUntil = performance.now() + 300;
+      }
     };
     this._onUp = (e) => this.keys.delete(e.code);
     window.addEventListener('keydown', this._onDown);
@@ -69,20 +78,49 @@ export class PlayerController {
     this.mobileRunning = !!running && this.mobileIntent.active;
   }
 
+  setVirtualInput({ forward = 0, strafe = 0, worldAngle = 0 } = {}) {
+    this._virtualInput = { forward, strafe, worldAngle };
+  }
+
+  clearVirtualInput() {
+    this._virtualInput = null;
+  }
+
+  lock() {
+    this._locked = true;
+    this.clearVirtualInput();
+  }
+
+  unlock() {
+    this._locked = false;
+  }
+
+  get hasVirtualInput() {
+    return this._virtualInput !== null;
+  }
+
+  get virtualInputCancelledThisFrame() {
+    return this._virtualCancelledThisFrame || performance.now() < this._manualOverrideUntil;
+  }
+
+  get hasManualMovementInput() {
+    return this.#hasManualMovementInput();
+  }
+
   get isRunning() {
-    if (this.paused || this.isCrouching) return false;
+    if (this.paused || this._locked || this.isCrouching || this._virtualInput) return false;
     if (this.mobileRunning) return true;
     return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
   }
 
   get isJumping() {
-    return !this.paused && this.keys.has('Space');
+    return !this.paused && !this._locked && this.keys.has('Space');
   }
 
   get isCrouching() {
     // Z chosen over Ctrl: Ctrl+W closes the browser tab, which made the
     // intended crouch-walk-forward combo destructive.
-    return !this.paused && this.keys.has('KeyZ');
+    return !this.paused && !this._locked && this.keys.has('KeyZ');
   }
 
   /**
@@ -90,28 +128,43 @@ export class PlayerController {
    * Returns { velocity, speed, moving, facing } — caller integrates position.
    */
   sample(delta) {
+    this._virtualCancelledThisFrame = false;
     let x = 0;
     let z = 0;
     let w = false, s = false, a = false, d = false;
-    if (this.paused) {
-      this._currentSpeed = 0;
-      this._currentVelocity.set(0, 0, 0);
-      return {
-        velocity: this._currentVelocity.clone(),
-        speed: 0,
-        moving: false,
-        facing: null,
-        pureBackward: false,
-        pureRight: false,
-        pureLeft: false,
-        delta,
-      };
-    }
+    if (this.paused || this._locked) return this.#zeroSample(delta);
 
     w = this.keys.has('KeyW') || this.keys.has('ArrowUp');
     s = this.keys.has('KeyS') || this.keys.has('ArrowDown');
     a = this.keys.has('KeyA') || this.keys.has('ArrowLeft');
     d = this.keys.has('KeyD') || this.keys.has('ArrowRight');
+
+    if (this._virtualInput && (w || s || a || d || this.mobileIntent.active)) {
+      this.clearVirtualInput();
+      this._virtualCancelledThisFrame = true;
+      this._manualOverrideUntil = performance.now() + 300;
+    }
+
+    if (this._virtualInput) {
+      const { forward, strafe, worldAngle } = this._virtualInput;
+      const fs = Math.sin(worldAngle);
+      const fc = Math.cos(worldAngle);
+      this.intent.set(
+        fs * forward + fc * strafe,
+        0,
+        fc * forward - fs * strafe,
+      );
+      const inputAmount = Math.min(1, this.intent.length());
+      if (inputAmount > 1e-6) this.intent.normalize();
+      return this.#resolveVelocity({
+        delta,
+        inputAmount,
+        pureBackward: false,
+        pureRight: false,
+        pureLeft: false,
+      });
+    }
+
     if (w) z += 1;
     if (s) z -= 1;
     if (a) x -= 1;
@@ -146,6 +199,16 @@ export class PlayerController {
         .normalize();
     }
 
+    return this.#resolveVelocity({
+      delta,
+      inputAmount,
+      pureBackward,
+      pureRight,
+      pureLeft,
+    });
+  }
+
+  #resolveVelocity({ delta, inputAmount, pureBackward, pureRight, pureLeft }) {
     const baseSpeed = this.isCrouching
       ? PlayerController.WALK_SPEED * 0.45
       : this.isRunning
@@ -201,8 +264,38 @@ export class PlayerController {
     };
   }
 
+  #zeroSample(delta) {
+    this._currentSpeed = 0;
+    this._currentVelocity.set(0, 0, 0);
+    return {
+      velocity: this._currentVelocity.clone(),
+      speed: 0,
+      moving: false,
+      facing: null,
+      pureBackward: false,
+      pureRight: false,
+      pureLeft: false,
+      delta,
+    };
+  }
+
+  #hasManualMovementInput() {
+    return this.keys.has('KeyW') || this.keys.has('ArrowUp')
+      || this.keys.has('KeyS') || this.keys.has('ArrowDown')
+      || this.keys.has('KeyA') || this.keys.has('ArrowLeft')
+      || this.keys.has('KeyD') || this.keys.has('ArrowRight')
+      || this.mobileIntent.active;
+  }
+
   dispose() {
     window.removeEventListener('keydown', this._onDown);
     window.removeEventListener('keyup', this._onUp);
   }
+}
+
+function isMovementCode(code) {
+  return code === 'KeyW' || code === 'ArrowUp'
+    || code === 'KeyS' || code === 'ArrowDown'
+    || code === 'KeyA' || code === 'ArrowLeft'
+    || code === 'KeyD' || code === 'ArrowRight';
 }

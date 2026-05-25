@@ -45,8 +45,9 @@ export class Player {
     this.physics = physics;
     this.controller = new PlayerController(playerCamera);
 
+    const spawnY = this.terrain ? this.terrain.heightAt(0, 0) : 0;
     this.group = new THREE.Group();
-    this.group.position.set(0, 0, 0);
+    this.group.position.set(0, spawnY, 0);
     this.scene.add(this.group);
 
     this.placeholder = this.#buildPlaceholderMesh();
@@ -66,7 +67,7 @@ export class Player {
     // character controller helper.
     if (this.physics) {
       this.body = this.physics.createPlayer(
-        { x: 0, y: 0, z: 0 },
+        { x: 0, y: spawnY, z: 0 },
         { height: Player.HEIGHT, radius: Player.RADIUS },
       );
     } else {
@@ -240,8 +241,9 @@ export class Player {
   #enforceWorldBounds() {
     const p = this.body ? this.body.position : this.group.position;
     if (p.y < Player.RESPAWN_FALL_Y) {
-      if (this.body) this.body.teleport(0, 2, 0);
-      this.group.position.set(0, 2, 0);
+      const y = (this.terrain ? this.terrain.heightAt(0, 0) : 0) + 0.1;
+      if (this.body) this.body.teleport(0, y, 0);
+      this.group.position.set(0, y, 0);
     }
   }
 

@@ -207,4 +207,32 @@ export class PlayerCamera {
     this.controls.azimuthAngle = azimuth;
     this.controls.polarAngle = polar;
   }
+
+  snapTo(position, facing = 0) {
+    this.follow(position);
+    const distance = THREE.MathUtils.clamp(this.controls.distance || 4, this.controls.minDistance, this.controls.maxDistance);
+    const polar = THREE.MathUtils.clamp(
+      this.controls.polarAngle || Math.PI * 0.42,
+      this.controls.minPolarAngle,
+      this.controls.maxPolarAngle,
+    );
+    const azimuth = facing + Math.PI;
+    const sinPolar = Math.sin(polar);
+    this._tmpOffset.set(
+      distance * sinPolar * Math.sin(azimuth),
+      distance * Math.cos(polar),
+      distance * sinPolar * Math.cos(azimuth),
+    );
+    const cameraPos = this._target.clone().add(this._tmpOffset);
+    this.controls.setLookAt(
+      cameraPos.x, cameraPos.y, cameraPos.z,
+      this._target.x, this._target.y, this._target.z,
+      false,
+    );
+    this.controls.distance = distance;
+    this.controls.azimuthAngle = azimuth;
+    this.controls.polarAngle = polar;
+    this.camera.position.copy(cameraPos);
+    this.camera.lookAt(this._target);
+  }
 }

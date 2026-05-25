@@ -34,6 +34,15 @@ import { Achievements } from './Systems/Achievements.js';
 import { DistanceGame } from './Systems/DistanceGame.js';
 import { AchievementToast } from './UI/AchievementToast.js';
 import { AchievementPanel } from './UI/AchievementPanel.js';
+import { WORLD_BOUNDS, BLOCKERS, LAMPS } from './Portfolio/WorldMap.js';
+import { assertCoordRoundTrip } from './UI/coords.js';
+import { Discovery } from './UI/Discovery.js';
+import { MiniMap } from './UI/MiniMap.js';
+import { MapOverlay } from './UI/MapOverlay.js';
+import { TransitionFX } from './Travel/TransitionFX.js';
+import { Teleport } from './Travel/Teleport.js';
+import { Navmask } from './Travel/Navmask.js';
+import { ClickToMove } from './Travel/ClickToMove.js';
 
 /**
  * Core application: scene, renderer, camera, render loop, async asset boot.
@@ -63,6 +72,13 @@ export class App extends EventTarget {
     this.playerCamera = new PlayerCamera(this.camera, this.canvas);
     this.compass = new Compass({ playerCamera: this.playerCamera });
     this.player = null;
+    this.discovery = null;
+    this.miniMap = null;
+    this.mapOverlay = null;
+    this.navmask = null;
+    this.clickToMove = null;
+    this.teleport = null;
+    this.transitionFx = null;
 
     // Shared wind source — drives the grass field today; future leaves /
     // water ripples / particle systems will read the same uniforms.
@@ -438,6 +454,8 @@ export class App extends EventTarget {
       interaction: this.interaction,
     });
 
+    this.#initMapSystems();
+
     // First-visit tutorial coachmarks. Constructed eagerly so main.js can
     // call .start() at the right moment (after the welcome overlay clears
     // and the controller is unpaused). No-ops on repeat visits via the
@@ -494,6 +512,109 @@ export class App extends EventTarget {
       console.log(`[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`);
     }
     return { character: characterResult, world: worldResult };
+  }
+
+  #initMapSystems() {
+    assertCoordRoundTrip(WORLD_BOUNDS);
+    const solidPushSpots = this.actionPrompts?.pushSpots ?? this.world.nature?.pushSpots ?? [];
+    const runtimeBlockers = solidPushSpots
+      .filter((spot) => spot.type !== 'log')
+      .map((spot) => ({
+        type: 'circle',
+        center: [spot.position.x, spot.position.z],
+        radius: this.#navBlockerRadius(spot),
+        label: spot.type ?? 'solid',
+      }));
+    const lampBlockers = LAMPS.map(([x, z]) => ({
+      type: 'circle',
+      center: [x, z],
+      radius: 1.15,
+      label: 'lamp',
+    }));
+
+    this.discovery = new Discovery();
+    this.navmask = new Navmask({
+      bounds: WORLD_BOUNDS,
+      blockers: [...BLOCKERS, ...runtimeBlockers, ...lampBlockers],
+    });
+    this.transitionFx = new TransitionFX(document.getElementById('transition-root'));
+    this.teleport = new Teleport({
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      terrain: this.world.terrain,
+      navmask: this.navmask,
+      transitionFx: this.transitionFx,
+      audio: this.audio,
+      discovery: this.discovery,
+    });
+    this.clickToMove = new ClickToMove({
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      navmask: this.navmask,
+      scene: this.scene,
+      terrain: this.world.terrain,
+      audio: this.audio,
+    });
+    this.miniMap = new MiniMap({
+      player: this.player,
+      playerCamera: this.playerCamera,
+      discovery: this.discovery,
+      teleport: this.teleport,
+      audio: this.audio,
+      onExpand: (rect) => this.mapOverlay?.open(rect),
+    });
+    this.mapOverlay = new MapOverlay({
+      player: this.player,
+      controller: this.player.controller,
+      discovery: this.discovery,
+      teleport: this.teleport,
+      clickToMove: this.clickToMove,
+      navmask: this.navmask,
+      audio: this.audio,
+      miniMap: this.miniMap,
+    });
+    this.discovery.onDiscover((id) => {
+      if (id) this.audio?.playMarkerClick?.();
+    });
+    this.#bindMapKeys();
+  }
+
+  #navBlockerRadius(spot) {
+    if (spot.type === 'tree') return 0.6;
+    if (spot.type === 'rock') return Math.max(0.8, Math.min(1.4, spot.colliderRadius ?? 1.0));
+    if (spot.type === 'board') return 3.2;
+    if (spot.type === 'section') return 3.4;
+    if (spot.type === 'sign') return 1.8;
+    return Math.max(0.6, Math.min(1.2, spot.colliderRadius ?? 0.8));
+  }
+
+  #bindMapKeys() {
+    if (this._mapKeysBound) return;
+    this._mapKeysBound = true;
+    window.addEventListener('keydown', (e) => {
+      if (document.body.classList.contains('booting')) return;
+      if (e.code === 'KeyM') {
+        e.preventDefault();
+        this.mapOverlay?.toggle?.();
+      } else if (e.code === 'Escape' && this.mapOverlay?.isOpen) {
+        e.preventDefault();
+        this.mapOverlay.close();
+      } else if (e.code === 'Backquote' && this.navmask) {
+        this.#toggleNavmaskDebug();
+      }
+    });
+  }
+
+  #toggleNavmaskDebug() {
+    if (this._navmaskCanvas?.isConnected) {
+      this._navmaskCanvas.remove();
+      this._navmaskCanvas = null;
+      return;
+    }
+    this._navmaskCanvas = this.navmask.getDebugCanvas();
+    document.body.appendChild(this._navmaskCanvas);
   }
 
   #initRenderer() {
@@ -613,6 +734,10 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
     });
     this.playerCamera.update(delta);
+    if (this.discovery) this.discovery.update(this.player.position.x, this.player.position.z);
+    if (this.clickToMove) this.clickToMove.update(delta);
+    if (this.miniMap) this.miniMap.update();
+    if (this.mapOverlay) this.mapOverlay.update();
     if (this.compass) this.compass.update();
     this.world.update(elapsed, this.camera, delta, this.player.position);
     this.wind.update(delta);
