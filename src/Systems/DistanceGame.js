@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import gsap from 'gsap';
+import gsap from "gsap";
+import * as THREE from "three";
 
 /**
  * Distance-guess mini-game. Triggers when the player is standing still at
@@ -22,18 +22,19 @@ import gsap from 'gsap';
 
 const SHORE_RADIUS = 38;
 const FACING_OUTWARD_DOT = 0.3;
-const CAMERA_CONE_RAD = 0.26;           // ≈ 15° half-angle
+const CAMERA_CONE_RAD = 0.26; // ≈ 15° half-angle
 const SLIDER_MIN = 10;
 const SLIDER_MAX = 200;
-const LINE_DURATION = 1.6;              // line grow time (slightly longer for drama)
-const LINE_HOLD = 4.5;                  // line/label visible after growth
-const LINE_FADE = 1.0;                  // fade-out time
-const TRIGGER_COOLDOWN = 0.4;           // brief cooldown after skip / close
-const STILL_HYSTERESIS = 0.3;           // standing-still time before first show
-const NO_TARGET_GRACE = 0.6;            // panel auto-hides after this long with no target in cone
-const LINE_ARC_COEFF = 0.11;            // taller arc — gives the line more visible "projection"
-const TRACER_RADIUS = 0.6;              // bright core tracer
-const TRACER_GLOW_RADIUS = 1.6;         // additive halo around tracer for comet-head look
+const LINE_DURATION = 1.6; // line grow time (slightly longer for drama)
+const LINE_HOLD = 4.5; // line/label visible after growth
+const LINE_FADE = 1.0; // fade-out time
+const TRIGGER_COOLDOWN = 0.4; // brief cooldown after skip / close
+const STILL_HYSTERESIS = 0.3; // standing-still time before first show
+const NO_TARGET_GRACE = 0.6; // panel auto-hides after this long with no target in cone
+const LINE_ARC_COEFF = 0.11; // taller arc — gives the line more visible "projection"
+const TRACER_RADIUS = 0.6; // bright core tracer
+const TRACER_GLOW_RADIUS = 1.6; // additive halo around tracer for comet-head look
+const AUTO_CLOSE_AFTER_WIN = 2.0; // seconds the "Bullseye!" card lingers before auto-dismiss
 
 // Accuracy bands. Cartographer fires on EXACT; Eagle Eye fires on EAGLE_EYE
 // or better. Anything past EAGLE_EYE is treated as "wrong" — the panel keeps
@@ -88,16 +89,16 @@ export class DistanceGame {
   #arrow;
 
   // State
-  #active = false;                      // panel visible / awaiting input
-  #lineActive = false;                  // 3D line + tracer in the scene
+  #active = false; // panel visible / awaiting input
+  #lineActive = false; // 3D line + tracer in the scene
   #stillTimer = 0;
   #cooldown = 0;
-  #noTargetTimer = 0;                   // accumulates while panel is open but no island in cone
+  #noTargetTimer = 0; // accumulates while panel is open but no island in cone
   #targetIsland = null;
-  #guessedIds = new Set();              // correctly-guessed islands this session
-  #skippedIds = new Set();              // explicitly-skipped islands this session
-  #disabled = false;                    // session-only flag flipped by "Don't show again"
-  #showingCorrectResult = false;        // line is animating; suppress live re-targeting
+  #guessedIds = new Set(); // correctly-guessed islands this session
+  #skippedIds = new Set(); // explicitly-skipped islands this session
+  #disabled = false; // session-only flag flipped by "Don't show again"
+  #showingCorrectResult = false; // line is animating; suppress live re-targeting
   #isNight = false;
 
   // 3D line state
@@ -109,12 +110,12 @@ export class DistanceGame {
   #tracer = null;
   #tracerMaterial = null;
   #animElapsed = 0;
-  #animPhase = 'idle';                  // 'growing' | 'holding' | 'fading' | 'idle'
+  #animPhase = "idle"; // 'growing' | 'holding' | 'fading' | 'idle'
   #lineStart = new THREE.Vector3();
   #lineEnd = new THREE.Vector3();
   #lineArcLift = 0;
   #lineFadeTimer = 0;
-  #lineShowLabel = false;               // whether to reveal the distance label (correct guess only)
+  #lineShowLabel = false; // whether to reveal the distance label (correct guess only)
 
   // Auto-zoom state: when an arrow would project above the viewport we
   // pull the third-person camera back so the player can see the whole
@@ -123,6 +124,7 @@ export class DistanceGame {
   // can detect whether the user manually adjusted the wheel mid-zoom.
   #cameraZoomSaved = null;
   #lastAutoZoomApplied = null;
+  #autoCloseTimer = null; // setTimeout id; null when no auto-close pending
 
   constructor({ scene, camera, playerCamera, islands, achievements, audio }) {
     this.#scene = scene;
@@ -132,19 +134,19 @@ export class DistanceGame {
     this.#achievements = achievements;
     this.#audio = audio;
 
-    this.#root = document.getElementById('distance-game');
-    this.#panel = document.getElementById('dg-panel');
-    this.#slider = document.getElementById('dg-slider');
-    this.#guessValue = document.getElementById('dg-guess-value');
-    this.#submitBtn = document.getElementById('dg-submit');
-    this.#skipBtn = document.getElementById('dg-skip');
-    this.#muteBtn = document.getElementById('dg-mute');
-    this.#resultEl = document.getElementById('dg-result');
-    this.#distanceLabel = document.getElementById('dg-distance-label');
-    this.#arrow = document.getElementById('dg-target-arrow');
+    this.#root = document.getElementById("distance-game");
+    this.#panel = document.getElementById("dg-panel");
+    this.#slider = document.getElementById("dg-slider");
+    this.#guessValue = document.getElementById("dg-guess-value");
+    this.#submitBtn = document.getElementById("dg-submit");
+    this.#skipBtn = document.getElementById("dg-skip");
+    this.#muteBtn = document.getElementById("dg-mute");
+    this.#resultEl = document.getElementById("dg-result");
+    this.#distanceLabel = document.getElementById("dg-distance-label");
+    this.#arrow = document.getElementById("dg-target-arrow");
 
     if (!this.#root || !this.#slider || !this.#submitBtn) {
-      console.warn('[DistanceGame] missing DOM nodes; mini-game disabled.');
+      console.warn("[DistanceGame] missing DOM nodes; mini-game disabled.");
       return;
     }
 
@@ -167,7 +169,8 @@ export class DistanceGame {
     if (this.#disabled) return;
     this.#isNight = isNight;
 
-    if (this.#cooldown > 0) this.#cooldown = Math.max(0, this.#cooldown - delta);
+    if (this.#cooldown > 0)
+      this.#cooldown = Math.max(0, this.#cooldown - delta);
 
     if (this.#lineActive) this.#tickLine(delta);
 
@@ -181,7 +184,8 @@ export class DistanceGame {
     if (!inShore || moving) {
       this.#stillTimer = 0;
       this.#hideArrow();
-      if (this.#active) this.#close({ cooldown: TRIGGER_COOLDOWN, silent: true });
+      if (this.#active)
+        this.#close({ cooldown: TRIGGER_COOLDOWN, silent: true });
       return;
     }
 
@@ -205,7 +209,11 @@ export class DistanceGame {
     const target = this.#findLookedAtIsland(playerPos);
     // Both solved and skipped islands are "off the table" for the rest of
     // the session — neither retriggers the panel.
-    if (!target || this.#guessedIds.has(target.id) || this.#skippedIds.has(target.id)) {
+    if (
+      !target ||
+      this.#guessedIds.has(target.id) ||
+      this.#skippedIds.has(target.id)
+    ) {
       this.#noTargetTimer += delta;
       this.#hideArrow();
       if (this.#active && this.#noTargetTimer > NO_TARGET_GRACE) {
@@ -234,7 +242,9 @@ export class DistanceGame {
 
   // ── Trigger detection ─────────────────────────────────────────────────────
   #cameraFacingOutward(playerPos) {
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.#camera.quaternion);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+      this.#camera.quaternion,
+    );
     forward.y = 0;
     if (forward.lengthSq() < 1e-6) return false;
     forward.normalize();
@@ -247,7 +257,9 @@ export class DistanceGame {
   #findLookedAtIsland(playerPos) {
     const list = this.#islands?.getIslands?.() ?? [];
     if (!list.length) return null;
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.#camera.quaternion);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(
+      this.#camera.quaternion,
+    );
     forward.y = 0;
     if (forward.lengthSq() < 1e-6) return null;
     forward.normalize();
@@ -275,14 +287,14 @@ export class DistanceGame {
 
   // ── UI ────────────────────────────────────────────────────────────────────
   #wireUI() {
-    this.#slider.addEventListener('input', () => {
+    this.#slider.addEventListener("input", () => {
       this.#guessValue.textContent = `${this.#slider.value}m`;
     });
-    this.#submitBtn.addEventListener('click', () => this.#onSubmit());
-    this.#skipBtn.addEventListener('click', () => this.#onSkip());
-    this.#muteBtn?.addEventListener('click', () => this.#onMute());
-    this.#slider.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+    this.#submitBtn.addEventListener("click", () => this.#onSubmit());
+    this.#skipBtn.addEventListener("click", () => this.#onSkip());
+    this.#muteBtn?.addEventListener("click", () => this.#onMute());
+    this.#slider.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
         e.preventDefault();
         this.#onSubmit();
       }
@@ -292,15 +304,15 @@ export class DistanceGame {
   #open(island) {
     this.#active = true;
     this.#targetIsland = island;
-    this.#resultEl.classList.add('hidden');
-    this.#resultEl.innerHTML = '';
-    this.#panel.classList.remove('hidden');
+    this.#resultEl.classList.add("hidden");
+    this.#resultEl.innerHTML = "";
+    this.#panel.classList.remove("hidden");
     const seed = Math.round((SLIDER_MIN + SLIDER_MAX) / 2 / 5) * 5;
     this.#slider.value = String(seed);
     this.#guessValue.textContent = `${seed}m`;
     this.#submitBtn.disabled = false;
     this.#noTargetTimer = 0;
-    this.#root.classList.remove('hidden');
+    this.#root.classList.remove("hidden");
     this.#audio?.playMenuOpen?.();
   }
 
@@ -310,15 +322,36 @@ export class DistanceGame {
     this.#active = false;
     this.#showingCorrectResult = false;
     this.#targetIsland = null;
-    this.#root.classList.add('hidden');
-    this.#resultEl.classList.add('hidden');
-    this.#resultEl.innerHTML = '';
+    this.#root.classList.add("hidden");
+    this.#resultEl.classList.add("hidden");
+    this.#resultEl.innerHTML = "";
     this.#cooldown = cooldown;
     this.#stillTimer = 0;
     this.#noTargetTimer = 0;
     this.#hideArrow();
     this.#restoreCameraZoom();
+    this.#cancelAutoClose();
     if (!silent) this.#audio?.playMenuClose?.();
+  }
+
+  /** Auto-dismiss the success card after `delaySec`. Re-entrant safe:
+   *  scheduling a new timer cancels any pending one. */
+  #scheduleAutoClose(delaySec) {
+    this.#cancelAutoClose();
+    this.#autoCloseTimer = setTimeout(() => {
+      this.#autoCloseTimer = null;
+      // Only auto-close if we're still showing the win card — if the
+      // player already clicked Try Another, the panel is gone and we
+      // should leave them alone.
+      if (this.#showingCorrectResult) this.#close({ silent: true });
+    }, delaySec * 1000);
+  }
+
+  #cancelAutoClose() {
+    if (this.#autoCloseTimer != null) {
+      clearTimeout(this.#autoCloseTimer);
+      this.#autoCloseTimer = null;
+    }
   }
 
   #onSkip() {
@@ -342,58 +375,66 @@ export class DistanceGame {
     const guess = Number(this.#slider.value);
     const actual = this.#targetIsland.distance;
     const diff = Math.abs(guess - actual);
-    const exactMatch = diff <= ACCURACY.EXACT;
-    const close = diff <= ACCURACY.CLOSE;
-    const eagle = diff <= ACCURACY.EAGLE_EYE;
+    const exactMatch = diff === 0;
 
     this.#audio?.playClick?.();
 
-    if (eagle) {
-      // Correct (within 10m). Unlock both achievements as applicable and
-      // mark the island solved so the panel won't ask about it again.
-      if (exactMatch) this.#achievements?.trigger?.('distance_master');
-      this.#achievements?.trigger?.('distance_guesser');
+    if (exactMatch) {
+      // Only an EXACT match counts as a win — "close enough" was confusing
+      // ("you were off by 5m but you won" reads weirdly). Both achievements
+      // fire on the first exact guess; the island goes into #guessedIds so
+      // the panel never asks about it again.
+      this.#achievements?.trigger?.("distance_master");
+      this.#achievements?.trigger?.("distance_guesser");
       this.#guessedIds.add(this.#targetIsland.id);
       this.#submitBtn.disabled = true;
-      // Shoot line first (it disposes any previous animation), then set
-      // the flag — disposeLine reads/manages its own state but the live
-      // re-target gate has to remain true for the duration of the new
-      // animation.
-      this.#shootLine(this.#targetIsland, { exactMatch, close, eagle, showLabel: true });
+      this.#shootLine(this.#targetIsland, {
+        exactMatch: true,
+        close: false,
+        eagle: false,
+        showLabel: true,
+      });
       this.#showingCorrectResult = true;
-      this.#renderCorrectResult({ guess, actual, diff, exactMatch, close });
+      this.#renderCorrectResult({ guess, actual });
+      // Don't camp on the win screen forever — let the player keep
+      // exploring without having to find the "Try Another Island" button.
+      this.#scheduleAutoClose(AUTO_CLOSE_AFTER_WIN);
     } else {
-      // Wrong. Shoot the line so the player still sees where the island
-      // is — but DON'T pin a label with the actual distance and don't
-      // reveal the number in the result text. Keeps "try again" honest.
-      this.#shootLine(this.#targetIsland, { exactMatch: false, close: false, eagle: false, showLabel: false });
+      // Anything off-by-anything is wrong. Line still draws toward the
+      // island for the visual cue (sans distance label), and the result
+      // card delivers a math expression on the player's last guess.
+      this.#shootLine(this.#targetIsland, {
+        exactMatch: false,
+        close: false,
+        eagle: false,
+        showLabel: false,
+      });
       this.#renderWrongResult(diff);
     }
   }
 
   /**
-   * Correct-guess card — shows the actual distance, the 3D line, and a
-   * "Try Another Island" button. Locks the target until the player
-   * dismisses.
+   * Bullseye card — only shown on an exact-match guess. Reveals the actual
+   * distance, leaves the 3D line + label up, and either auto-closes after
+   * AUTO_CLOSE_AFTER_WIN seconds or the player can dismiss early via
+   * "Try Another Island".
    */
-  #renderCorrectResult({ guess, actual, diff, exactMatch, close }) {
-    let emoji, color, message;
-    if (exactMatch) { emoji = '🎯'; color = '#aaee44'; message = 'Bullseye! Exact distance.'; }
-    else if (close) { emoji = '🔥'; color = '#aaee44'; message = `So close — off by ${diff}m`; }
-    else            { emoji = '🦅'; color = '#ffcc33'; message = `Eagle eye! Off by ${diff}m`; }
-
+  #renderCorrectResult({ guess, actual }) {
     this.#resultEl.innerHTML = `
-      <div class="dg-result-emoji">${emoji}</div>
-      <div class="dg-result-message" style="color: ${color}">${escapeHTML(message)}</div>
+      <div class="dg-result-emoji">🎯</div>
+      <div class="dg-result-message" style="color: #aaee44">Bullseye! Exact distance.</div>
       <div class="dg-result-actual">Actual: ${Math.round(actual)}m · Your guess: ${guess}m</div>
       <button class="dg-try-another" id="dg-try-another" type="button">Try Another Island</button>
     `;
-    this.#resultEl.classList.remove('hidden');
-    document.getElementById('dg-try-another')?.addEventListener('click', () => {
-      this.#audio?.playClick?.();
-      this.#showingCorrectResult = false;
-      this.#close();
-    }, { once: true });
+    this.#resultEl.classList.remove("hidden");
+    document.getElementById("dg-try-another")?.addEventListener(
+      "click",
+      () => {
+        this.#audio?.playClick?.();
+        this.#close();
+      },
+      { once: true },
+    );
   }
 
   /**
@@ -408,13 +449,14 @@ export class DistanceGame {
     const guess = Number(this.#slider.value);
     const actual = this.#targetIsland.distance;
     const expr = this.#makeMathHint(guess, actual);
-    const tagline = WRONG_TAGLINES[Math.floor(Math.random() * WRONG_TAGLINES.length)];
+    const tagline =
+      WRONG_TAGLINES[Math.floor(Math.random() * WRONG_TAGLINES.length)];
     this.#resultEl.innerHTML = `
       <div class="dg-result-emoji">🤔</div>
       <div class="dg-result-message" style="color: #ffcc33">${escapeHTML(expr)}</div>
       <div class="dg-result-hint">${escapeHTML(tagline)}</div>
     `;
-    this.#resultEl.classList.remove('hidden');
+    this.#resultEl.classList.remove("hidden");
     this.#submitBtn.disabled = false;
   }
 
@@ -451,9 +493,9 @@ export class DistanceGame {
    *  previous island so the panel reads fresh for the new one. */
   #clearWrongResult() {
     if (this.#showingCorrectResult) return;
-    if (this.#resultEl.classList.contains('hidden')) return;
-    this.#resultEl.classList.add('hidden');
-    this.#resultEl.innerHTML = '';
+    if (this.#resultEl.classList.contains("hidden")) return;
+    this.#resultEl.classList.add("hidden");
+    this.#resultEl.innerHTML = "";
     this.#submitBtn.disabled = false;
   }
 
@@ -465,7 +507,8 @@ export class DistanceGame {
     if (!this.#arrow || !this.#targetIsland) return this.#hideArrow();
     if (this.#showingCorrectResult) return this.#hideArrow();
 
-    const peakLift = 4 * this.#targetIsland.scale * this.#targetIsland.heightScale + 2;
+    const peakLift =
+      4 * this.#targetIsland.scale * this.#targetIsland.heightScale + 2;
     const world = new THREE.Vector3(
       this.#targetIsland.position.x,
       peakLift,
@@ -490,11 +533,11 @@ export class DistanceGame {
     const cy = Math.max(40, Math.min(window.innerHeight - 40, y));
     this.#arrow.style.left = `${cx}px`;
     this.#arrow.style.top = `${cy}px`;
-    this.#arrow.classList.remove('hidden');
+    this.#arrow.classList.remove("hidden");
   }
 
   #hideArrow() {
-    this.#arrow?.classList.add('hidden');
+    this.#arrow?.classList.add("hidden");
   }
 
   /** Pull the third-person camera out enough to keep the targeted peak
@@ -523,8 +566,10 @@ export class DistanceGame {
     if (this.#cameraZoomSaved == null) return;
     const ctrl = this.#playerCamera?.controls;
     if (!ctrl) return;
-    if (this.#lastAutoZoomApplied != null
-        && Math.abs(ctrl.distance - this.#lastAutoZoomApplied) > 0.5) {
+    if (
+      this.#lastAutoZoomApplied != null &&
+      Math.abs(ctrl.distance - this.#lastAutoZoomApplied) > 0.5
+    ) {
       // User scrolled mid-zoom — keep their new value, drop the snapshot.
       this.#cameraZoomSaved = null;
       this.#lastAutoZoomApplied = null;
@@ -562,7 +607,10 @@ export class DistanceGame {
 
     this.#linePositions = new Float32Array(this.#lineMaxSegments * 3);
     this.#lineGeometry = new THREE.BufferGeometry();
-    this.#lineGeometry.setAttribute('position', new THREE.BufferAttribute(this.#linePositions, 3));
+    this.#lineGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(this.#linePositions, 3),
+    );
     this.#lineGeometry.setDrawRange(0, 2);
     this.#lineMaterial = new THREE.LineBasicMaterial({
       color,
@@ -619,29 +667,29 @@ export class DistanceGame {
     this.#tracer.add(halo);
 
     this.#lineActive = true;
-    this.#animPhase = 'growing';
+    this.#animPhase = "growing";
     this.#animElapsed = 0;
     this.#lineFadeTimer = 0;
 
     this.#distanceLabel.textContent = `${Math.round(island.distance)}m`;
-    this.#distanceLabel.classList.add('hidden');
+    this.#distanceLabel.classList.add("hidden");
   }
 
   #pickLineColor({ exactMatch, close, eagle }) {
     if (this.#isNight) {
       if (exactMatch) return new THREE.Color(0x88bbff);
-      if (close)      return new THREE.Color(0xaaccff);
-      if (eagle)      return new THREE.Color(0xffdd66);
+      if (close) return new THREE.Color(0xaaccff);
+      if (eagle) return new THREE.Color(0xffdd66);
       return new THREE.Color(0xff88aa);
     }
     if (exactMatch) return new THREE.Color(0xaaee44);
-    if (close)      return new THREE.Color(0xddff66);
-    if (eagle)      return new THREE.Color(0xffcc33);
+    if (close) return new THREE.Color(0xddff66);
+    if (eagle) return new THREE.Color(0xffcc33);
     return new THREE.Color(0xff8844);
   }
 
   #tickLine(delta) {
-    if (this.#animPhase === 'growing') {
+    if (this.#animPhase === "growing") {
       this.#animElapsed += delta;
       const t = Math.min(this.#animElapsed / LINE_DURATION, 1);
       const eased = 1 - Math.pow(1 - t, 3);
@@ -649,11 +697,11 @@ export class DistanceGame {
       this.#positionTracer(eased);
 
       if (t >= 1) {
-        this.#animPhase = 'holding';
+        this.#animPhase = "holding";
         this.#lineFadeTimer = 0;
-        if (this.#lineShowLabel) this.#distanceLabel.classList.remove('hidden');
+        if (this.#lineShowLabel) this.#distanceLabel.classList.remove("hidden");
       }
-    } else if (this.#animPhase === 'holding') {
+    } else if (this.#animPhase === "holding") {
       this.#lineFadeTimer += delta;
       if (this.#lineShowLabel) this.#updateDistanceLabel();
       this.#positionTracer(1);
@@ -661,22 +709,26 @@ export class DistanceGame {
       // the "try again" prompt; correct lines stay for the full hold.
       const hold = this.#lineShowLabel ? LINE_HOLD : 2.0;
       if (this.#lineFadeTimer >= hold) this.#startFade();
-    } else if (this.#animPhase === 'fading') {
+    } else if (this.#animPhase === "fading") {
       if (this.#lineShowLabel) this.#updateDistanceLabel();
     }
   }
 
   #writeLineArc(progress) {
-    const segments = Math.max(1, Math.floor(progress * (this.#lineMaxSegments - 1)) + 1);
+    const segments = Math.max(
+      1,
+      Math.floor(progress * (this.#lineMaxSegments - 1)) + 1,
+    );
     for (let i = 0; i <= segments; i++) {
       const segT = i / (this.#lineMaxSegments - 1);
       const t = Math.min(segT, progress);
       const px = THREE.MathUtils.lerp(this.#lineStart.x, this.#lineEnd.x, t);
-      const py = THREE.MathUtils.lerp(this.#lineStart.y, this.#lineEnd.y, t)
-        + Math.sin(t * Math.PI) * this.#lineArcLift;
+      const py =
+        THREE.MathUtils.lerp(this.#lineStart.y, this.#lineEnd.y, t) +
+        Math.sin(t * Math.PI) * this.#lineArcLift;
       const pz = THREE.MathUtils.lerp(this.#lineStart.z, this.#lineEnd.z, t);
       const idx = i * 3;
-      this.#linePositions[idx]     = px;
+      this.#linePositions[idx] = px;
       this.#linePositions[idx + 1] = py;
       this.#linePositions[idx + 2] = pz;
     }
@@ -687,8 +739,9 @@ export class DistanceGame {
   #positionTracer(progress) {
     const t = progress;
     const px = THREE.MathUtils.lerp(this.#lineStart.x, this.#lineEnd.x, t);
-    const py = THREE.MathUtils.lerp(this.#lineStart.y, this.#lineEnd.y, t)
-      + Math.sin(t * Math.PI) * this.#lineArcLift;
+    const py =
+      THREE.MathUtils.lerp(this.#lineStart.y, this.#lineEnd.y, t) +
+      Math.sin(t * Math.PI) * this.#lineArcLift;
     const pz = THREE.MathUtils.lerp(this.#lineStart.z, this.#lineEnd.z, t);
     this.#tracer.position.set(px, py, pz);
   }
@@ -698,21 +751,22 @@ export class DistanceGame {
     // Pin to the world-space midpoint above the arc apex.
     const midX = (this.#lineStart.x + this.#lineEnd.x) / 2;
     const midZ = (this.#lineStart.z + this.#lineEnd.z) / 2;
-    const midY = (this.#lineStart.y + this.#lineEnd.y) / 2 + this.#lineArcLift + 1.0;
+    const midY =
+      (this.#lineStart.y + this.#lineEnd.y) / 2 + this.#lineArcLift + 1.0;
     const v = new THREE.Vector3(midX, midY, midZ).project(this.#camera);
     if (v.z > 1 || v.z < -1) {
-      this.#distanceLabel.style.opacity = '0';
+      this.#distanceLabel.style.opacity = "0";
       return;
     }
     const x = (v.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-v.y * 0.5 + 0.5) * window.innerHeight;
     this.#distanceLabel.style.left = `${x}px`;
     this.#distanceLabel.style.top = `${y}px`;
-    this.#distanceLabel.style.opacity = '1';
+    this.#distanceLabel.style.opacity = "1";
   }
 
   #startFade() {
-    this.#animPhase = 'fading';
+    this.#animPhase = "fading";
     if (this.#lineMaterial) {
       gsap.to(this.#lineMaterial, { opacity: 0, duration: LINE_FADE });
     }
@@ -737,7 +791,7 @@ export class DistanceGame {
     gsap.to(this.#distanceLabel, {
       opacity: 0,
       duration: LINE_FADE,
-      onComplete: () => this.#distanceLabel.classList.add('hidden'),
+      onComplete: () => this.#distanceLabel.classList.add("hidden"),
     });
   }
 
@@ -765,9 +819,9 @@ export class DistanceGame {
     this.#tracer = null;
     this.#tracerMaterial = null;
     this.#lineActive = false;
-    this.#animPhase = 'idle';
-    this.#distanceLabel.classList.add('hidden');
-    this.#distanceLabel.style.opacity = '';
+    this.#animPhase = "idle";
+    this.#distanceLabel.classList.add("hidden");
+    this.#distanceLabel.style.opacity = "";
     // NOTE: do NOT clear #showingCorrectResult here — disposeLine runs at
     // the *start* of every shootLine (to clean any prior animation) and
     // clearing the flag would let the live-target gate close the panel
@@ -777,7 +831,15 @@ export class DistanceGame {
 }
 
 function escapeHTML(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c]);
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c],
+  );
 }
