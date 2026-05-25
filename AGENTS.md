@@ -38,8 +38,7 @@ The terrain is an island with a 0.02m inner floor and waves up to ±0.65m past
 r≈22 from spawn. Anything placed at hardcoded `y=0` is buried 0.02–0.65m.
 **Always** sample `terrain.heightAt(x, z)` for the group/mesh Y *and* every
 physics collider Y. Reference patterns: [Billboards.js](src/Portfolio/Billboards.js),
-[Furniture.js](src/Portfolio/Furniture.js), [Signs.js](src/Portfolio/Signs.js),
-[Lamps.js](src/World/Lamps.js).
+[Signs.js](src/Portfolio/Signs.js), [Lamps.js](src/World/Lamps.js).
 
 ### 5. New solid props need a Rapier collider — sized to the **visible** mesh
 If the player should not walk through it OR should stand on top of it, register
@@ -54,7 +53,6 @@ extents; pass `(box.min.y + box.max.y) / 2` as the y arg and `size.{x,y,z}/2`
 as the half-extents. Reference patterns: [Nature.#placeInstances](src/World/Nature.js)
 (bbox sizing for rocks/logs), [Paths.#buildTile](src/World/Paths.js) (tile
 colliders so the player walks on top, not through),
-[Furniture.#placeOne](src/Portfolio/Furniture.js),
 [Interactables.#buildStuckCrate](src/Portfolio/Interactables.js). Symptoms when
 this is wrong: player's feet sink into the visible mesh, or player stands
 *inside* the painted geometry. Both are user-reported bugs already this sprint.
@@ -96,7 +94,7 @@ src/Player/
   Character.js              # Avaturn GLB + Mixamo FBX clips → AnimationMixer
 
 src/World/                  # Terrain, Sky, Nature, Grass, Paths, Lamps, TimeOfDay, Sun, Wind, Palette, World
-src/Portfolio/              # Billboards, Signs, Furniture, Interaction, Interactables, ActionPrompts, *Data
+src/Portfolio/              # Billboards, Signs, Interaction, Interactables, ActionPrompts, *Data
 src/Effects/                # Fireflies, Water (ocean), Rain, Leaves, WindLines, PostFX
 src/Audio/AudioManager.js   # ambient + footsteps + ui chimes + water splashes (howler)
 static/models/              # character/ (Avaturn+Mixamo), nature/, furniture/, extras/, props/

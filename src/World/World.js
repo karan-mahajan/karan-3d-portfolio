@@ -4,7 +4,6 @@ import { Paths } from './Paths.js';
 import { Sky } from './Sky.js';
 import { Billboards, PROJECTS_CENTER } from '../Portfolio/Billboards.js';
 import { Signs, SECTION_POSITIONS } from '../Portfolio/Signs.js';
-import { Furniture } from '../Portfolio/Furniture.js';
 import { INTERACTABLE_PROP_EXCLUSIONS } from '../Portfolio/Interactables.js';
 import { Water } from '../Effects/Water.js';
 
@@ -89,14 +88,6 @@ export class World {
       return { placed: 0 };
     });
 
-    // Furniture loads after Nature so we know where the billboards are and
-    // can register colliders alongside the rest of the world.
-    this.furniture = new Furniture(this.scene, loader, physics, this.billboards, this.terrain);
-    const furniturePlaced = await this.furniture.load().catch((err) => {
-      console.warn('[Furniture] load failed', err);
-      return 0;
-    });
-
     // Shore decor (lily pads, half-submerged rocks, reeds) along the
     // island waterline. Fire-and-forget — missing GLBs are skipped per-file
     // inside loadShoreDecor() so a single 404 doesn't block boot.
@@ -108,7 +99,6 @@ export class World {
       nature: result,
       billboards: this.billboards.items.length,
       experience: this.signs.experienceItems.length,
-      furniture: furniturePlaced,
       paths: pathsResult.placed,
     };
   }

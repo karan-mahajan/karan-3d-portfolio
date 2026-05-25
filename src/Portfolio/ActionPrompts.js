@@ -427,7 +427,7 @@ export class ActionPrompts {
   _triggerGlobalAction(actionName, blockMessage) {
     // Swept-capsule clearance against the static world (incl. heightfield
     // ground). The old proximity-only check using currentPushSpot only
-    // covered tagged push spots — walls, dock railings, furniture, mailbox
+    // covered tagged push spots — walls, dock railings, mailbox
     // body, slopes, and tree canopies weren't blocked, so limbs clipped
     // through them.
     if (!this._hasClearance(actionName)) {
