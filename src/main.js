@@ -5,6 +5,7 @@ injectSpeedInsights();
 
 const loadingScreen = document.getElementById('loading-screen');
 const loadingBar = document.getElementById('loading-bar-fill');
+const loadingPercent = document.getElementById('loading-percent');
 const loadingStatus = document.getElementById('loading-status');
 
 const statuses = [
@@ -21,8 +22,16 @@ const statusInterval = setInterval(() => {
   if (loadingStatus) loadingStatus.textContent = statuses[statusIndex];
 }, 900);
 
+let lastPct = 0;
 function setProgress(ratio) {
-  if (loadingBar) loadingBar.style.width = `${Math.min(100, ratio * 100)}%`;
+  const raw = Math.min(100, Math.max(0, Math.round(ratio * 100)));
+  // Concurrent loaders fire progress events out of order — a chunky GLB can
+  // resolve before smaller earlier ones, so the raw ratio occasionally dips
+  // (e.g. 70 → 50 → 70). Clamp upward-only so the number is monotonic.
+  const pct = Math.max(lastPct, raw);
+  lastPct = pct;
+  if (loadingBar) loadingBar.style.width = `${pct}%`;
+  if (loadingPercent) loadingPercent.textContent = `${pct}%`;
 }
 
 async function bootstrap() {

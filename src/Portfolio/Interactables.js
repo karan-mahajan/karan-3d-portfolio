@@ -70,7 +70,7 @@ export class Interactables {
   // ── 1. Stuck crate (push) ────────────────────────────────────────────────
 
   async #buildStuckCrate() {
-    const url = '/models/furniture/cardboardboxclosed.glb';
+    const url = '/models/props/cardboardboxclosed.glb';
     let gltf;
     try {
       gltf = await this.loader.loadGLTF(url);

@@ -93,9 +93,9 @@ export class Terrain {
       return t;
     };
 
-    const grassMap   = colorTex('grass/Grass001_1K-PNG_Color.png');
-    const dirtMap    = colorTex('dirt/Ground037_1K-PNG_Color.png');
-    const stoneMap   = colorTex('stone/Rock026_1K-PNG_Color.png');
+    const grassMap   = colorTex('grass/Grass001_1K-PNG_Color.jpg');
+    const dirtMap    = colorTex('dirt/Ground037_1K-PNG_Color.jpg');
+    const stoneMap   = colorTex('stone/Rock026_1K-PNG_Color.jpg');
     const grassNorm  = normalTex('grass/Grass001_1K-PNG_NormalGL.png');
     const dirtNorm   = normalTex('dirt/Ground037_1K-PNG_NormalGL.png');
     const stoneNorm  = normalTex('stone/Rock026_1K-PNG_NormalGL.png');

@@ -56,6 +56,8 @@ export class App extends EventTarget {
     this.#initCamera();
     this.#initLighting();
 
+    this.debug.setRenderer(this.renderer);
+
     this.physics = new Physics();
     this.world = new World(this.scene, this.loader);
     this.playerCamera = new PlayerCamera(this.camera, this.canvas);
@@ -166,6 +168,18 @@ export class App extends EventTarget {
 
     this.#bindResize();
     this.#bindTimeOfDayToggle();
+
+    // Tab-hidden frame throttle — when the tab is backgrounded, drop to
+    // 1/6 the normal cadence (browsers already throttle rAF to ~1 Hz when
+    // hidden anyway, but this saves CPU+GPU on machines where rAF still
+    // ticks). Pairs with the audio-on-blur pause already in place; the
+    // visible state of the tab is the single source of truth.
+    this._backgroundMode = false;
+    this._bgFrame = 0;
+    document.addEventListener('visibilitychange', () => {
+      this._backgroundMode = document.hidden;
+      this._bgFrame = 0;
+    });
   }
 
   /** Wires the HTML toggle button (#tod-toggle) to setMode. */
@@ -244,6 +258,7 @@ export class App extends EventTarget {
 
   /** Loads characters / models; resolves to a summary the loader UI can use. */
   async boot() {
+    const bootStart = performance.now();
     await this.physics.init();
     this.physics.addStaticGround(this.world.terrain);
 
@@ -287,6 +302,26 @@ export class App extends EventTarget {
     this.distantIslands = new DistantIslands(this.scene);
     this.timeOfDay.distantIslands = this.distantIslands;
     this.distantIslands.setMode(this.timeOfDay.mode, 0);
+
+    // Kick off street-light load NOW in parallel with grass + interaction
+    // wiring below. Billboards + signs are needed for arm-rotation alignment
+    // and were resolved by world.loadAssets above. The promise is awaited
+    // (and the post-load wiring done) right before the boot() returns.
+    this.streetLights = new StreetLights(
+      this.scene,
+      this.loader,
+      this.world.terrain,
+      this.physics,
+    );
+    const streetLightsPromise = this.streetLights
+      .load({
+        billboards: this.world.billboards,
+        signs: this.world.signs,
+      })
+      .catch((err) => {
+        console.warn('[StreetLights] load failed:', err);
+        return null;
+      });
 
     // Distance-guess mini-game wired against the islands above. Constructed
     // before the player is loaded — its update() is a no-op until the
@@ -422,33 +457,21 @@ export class App extends EventTarget {
     // also fires setTorchVisible() if we booted into night.
     this.timeOfDay.reapply();
 
-    // Street lights — placed around the island so night mode reads. Each
-    // pole has a Rapier collider so the player bumps into it; PointLights
-    // are managed by proximity so only the closest few are ever active.
-    this.streetLights = new StreetLights(
-      this.scene,
-      this.loader,
-      this.world.terrain,
-      this.physics,
-    );
-    // Block boot resolution until street lights are loaded AND shaders
-    // for both day + night light-counts are pre-compiled. Without this,
-    // the first in-session toggle hitches mid-walk as freshly-uncovered
-    // geometry JIT-compiles its alternate program variant. The cost is
-    // front-loaded into the loading screen where waiting is expected.
-    try {
-      // billboards + signs are loaded above; pass them so each lamp can
-      // rotate its arm to face the nearest readable element within range.
-      await this.streetLights.load({
-        billboards: this.world.billboards,
-        signs: this.world.signs,
-      });
-      this.timeOfDay.streetLights = this.streetLights;
-      this.streetLights.setMode(this.timeOfDay.mode, 0);
-      await this.#prewarmDayNightShaders();
-    } catch (err) {
-      console.warn('[StreetLights] load/prewarm failed:', err);
-    }
+    // Street lights — kicked off above in parallel with the grass/UI
+    // block. Await here just to wire setMode + TimeOfDay; the load itself
+    // has been overlapping with everything below.
+    await streetLightsPromise;
+    this.timeOfDay.streetLights = this.streetLights;
+    this.streetLights.setMode(this.timeOfDay.mode, 0);
+
+    // Shader prewarm is moved off the critical path. boot() now resolves
+    // ~the cost of one compileAsync earlier; the first day/night toggle
+    // can hitch briefly if the user flips before this completes. The
+    // common case is the user spends 2-5 s reading the welcome overlay,
+    // which is plenty of time for compileAsync to finish in the background.
+    this.shaderPrewarmPromise = this.#prewarmDayNightShaders().catch((err) => {
+      console.warn('[App] deferred prewarm failed:', err);
+    });
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
@@ -467,6 +490,9 @@ export class App extends EventTarget {
     this.interaction.torchLight = this.torchLight;
 
     this.#tick();
+    if (this.debug?.enabled) {
+      console.log(`[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`);
+    }
     return { character: characterResult, world: worldResult };
   }
 
@@ -491,6 +517,10 @@ export class App extends EventTarget {
     // warmer painted greens/browns read brighter under the same warm-sun rig.
     this.renderer.toneMappingExposure = 1.3;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Disable per-render auto-reset so renderer.info accumulates across the
+    // frame's water pre-render + every composer pass. #tick resets once at
+    // frame start; the debug HUD reads the full per-frame totals.
+    this.renderer.info.autoReset = false;
   }
 
   #initScene() {
@@ -562,8 +592,18 @@ export class App extends EventTarget {
   }
 
   #tick = () => {
+    // Skip 5 of every 6 frames while the tab is hidden. Don't burn the
+    // clock's delta on the skipped frames — getDelta() is only called on
+    // frames we actually process, so the player doesn't teleport on resume.
+    if (this._backgroundMode && (++this._bgFrame % 6) !== 0) {
+      requestAnimationFrame(this.#tick);
+      return;
+    }
+
     const delta = Math.min(this.clock.getDelta(), 1 / 30);
     const elapsed = this.clock.getElapsedTime();
+
+    this.renderer.info.reset();
 
     this.physics.step(delta);
     const sample = this.player.update(delta);
@@ -687,8 +727,8 @@ export class App extends EventTarget {
     // frame total (vs. 10 if each surface owned its own pair).
     if (this.water) this.water.preRender(this.renderer, this.camera);
 
-    this.debug.tick();
     this.postfx.render(delta);
+    this.debug.tick();
     requestAnimationFrame(this.#tick);
   };
 

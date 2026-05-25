@@ -165,16 +165,28 @@ export class Paths {
     if (variants.stone.length === 0) console.warn('[Paths] no stone tile GLBs loaded — stone directions empty');
     if (variants.wood.length === 0)  console.warn('[Paths] no wood tile GLBs loaded — wood directions empty');
 
-    let placed = 0;
+    // Bucket plans by (material, variantIndex) so each bucket maps to one
+    // proto scene. Each bucket becomes ONE InstancedMesh per proto-mesh
+    // (typically one mesh per tile GLB), collapsing ~60 individual cloned
+    // groups → ~8 instanced draw calls. Per-tile colliders are still
+    // registered one-per-plan inside #placeBucket.
+    const buckets = new Map();
     for (const plan of this.tilePlans) {
       const protos = variants[plan.material];
       if (!protos || protos.length === 0) continue;
-      const proto = protos[plan.variantIdx % protos.length];
-      const tile = this.#buildTile(proto, plan);
-      if (tile) {
-        this.group.add(tile);
-        placed += 1;
+      const variantIndex = plan.variantIdx % protos.length;
+      const key = `${plan.material}:${variantIndex}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { proto: protos[variantIndex], plans: [], material: plan.material };
+        buckets.set(key, bucket);
       }
+      bucket.plans.push(plan);
+    }
+
+    let placed = 0;
+    for (const bucket of buckets.values()) {
+      placed += this.#placeBucket(bucket);
     }
     return { placed };
   }
@@ -240,47 +252,82 @@ export class Paths {
     }
   }
 
-  #buildTile(protoScene, plan) {
-    const node = protoScene.clone(true);
-    const y = (this.terrain ? this.terrain.heightAt(plan.x, plan.z) : 0) + TILE_LIFT;
-    node.position.set(plan.x, y, plan.z);
-    node.rotation.y = plan.yaw;
-    node.scale.setScalar(TILE_SCALE);
-    node.name = `path:${plan.material}`;
+  // Builds one InstancedMesh per mesh inside the bucket's proto scene, plus
+  // one static cuboid collider per plan so the character controller still
+  // walks on top of each tile (autostep 0.4 m needs a physical surface).
+  // Mirrors Nature.js's instancing pattern: per-proto material cloned once,
+  // per-instance world matrix = tileTransform × proto.matrixWorld.
+  #placeBucket({ proto, plans, material }) {
+    proto.updateMatrixWorld(true);
 
-    // Clone each material so the shadow-tint patch (and any future per-tile
-    // override) doesn't leak across tiles.
-    node.traverse((child) => {
-      if (!child.isMesh) return;
-      const src = Array.isArray(child.material) ? child.material[0] : child.material;
+    const meshProtos = [];
+    proto.traverse((child) => {
+      if (child.isMesh) meshProtos.push(child);
+    });
+    if (meshProtos.length === 0) return 0;
+
+    // Proto-local bbox (in proto root frame) drives both collider sizing
+    // and tile Y placement so the visible mesh sits flush with the terrain
+    // sample + TILE_LIFT.
+    const protoBox = new THREE.Box3().setFromObject(proto);
+    const protoSize = protoBox.getSize(new THREE.Vector3());
+    const protoCenter = protoBox.getCenter(new THREE.Vector3());
+
+    // Pre-compute per-plan tile world matrices (shared across every mesh in
+    // this bucket).
+    const _pos = new THREE.Vector3();
+    const _quat = new THREE.Quaternion();
+    const _scale = new THREE.Vector3(TILE_SCALE, TILE_SCALE, TILE_SCALE);
+    const _euler = new THREE.Euler();
+    const tileMatrices = new Array(plans.length);
+    for (let i = 0; i < plans.length; i++) {
+      const plan = plans[i];
+      const y = (this.terrain ? this.terrain.heightAt(plan.x, plan.z) : 0) + TILE_LIFT;
+      _pos.set(plan.x, y, plan.z);
+      _euler.set(0, plan.yaw, 0);
+      _quat.setFromEuler(_euler);
+      tileMatrices[i] = new THREE.Matrix4().compose(_pos, _quat, _scale);
+    }
+
+    const finalMatrix = new THREE.Matrix4();
+    for (const meshProto of meshProtos) {
+      const src = Array.isArray(meshProto.material) ? meshProto.material[0] : meshProto.material;
       const mat = src.clone();
       mat.metalness = 0;
       if (mat.roughness !== undefined) mat.roughness = Math.max(mat.roughness, 0.85);
       if (mat.isMeshStandardMaterial) patchShadowTint(mat, DUSK, SHADOW_TINT_STRENGTH);
-      child.material = mat;
-      child.castShadow = false;
-      child.receiveShadow = true;
-    });
 
-    // Static collider sized to the scaled tile bbox so the character
-    // controller's autostep (0.4m) lifts the player ON TOP of the stone
-    // instead of letting their feet sink into it. Yaw is folded into the
-    // collider so it matches the visual orientation.
+      const inst = new THREE.InstancedMesh(meshProto.geometry, mat, plans.length);
+      inst.castShadow = false;
+      inst.receiveShadow = true;
+      inst.name = `path:${material}:${meshProto.name || 'mesh'}`;
+      for (let i = 0; i < plans.length; i++) {
+        finalMatrix.multiplyMatrices(tileMatrices[i], meshProto.matrixWorld);
+        inst.setMatrixAt(i, finalMatrix);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      this.group.add(inst);
+    }
+
+    // Per-tile colliders preserve the existing autostep-friendly walk-on-top
+    // behaviour. Compute yaw-aware AABB once from the precomputed protoSize
+    // instead of building a temp scene + Box3.setFromObject per plan.
     if (this.physics) {
-      // Measure AFTER applying scale/rotation/position so the box reflects
-      // what the player actually sees.
-      node.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(node);
-      if (!box.isEmpty()) {
-        const size = box.getSize(new THREE.Vector3());
-        // The yaw is already baked into the world bbox so the cuboid is
-        // axis-aligned in world space — pass yaw=0. Centre Y = midpoint of bbox.
-        this.physics.addStaticCuboid(
-          plan.x, (box.min.y + box.max.y) / 2, plan.z,
-          size.x / 2, size.y / 2, size.z / 2,
-        );
+      const halfX = (protoSize.x * TILE_SCALE) / 2;
+      const halfY = (protoSize.y * TILE_SCALE) / 2;
+      const halfZ = (protoSize.z * TILE_SCALE) / 2;
+      const centerYOffset = protoCenter.y * TILE_SCALE;
+      for (const plan of plans) {
+        const y = (this.terrain ? this.terrain.heightAt(plan.x, plan.z) : 0) + TILE_LIFT;
+        const cy = y + centerYOffset;
+        const absCos = Math.abs(Math.cos(plan.yaw));
+        const absSin = Math.abs(Math.sin(plan.yaw));
+        const worldHalfX = halfX * absCos + halfZ * absSin;
+        const worldHalfZ = halfX * absSin + halfZ * absCos;
+        this.physics.addStaticCuboid(plan.x, cy, plan.z, worldHalfX, halfY, worldHalfZ);
       }
     }
-    return node;
+
+    return plans.length;
   }
 }
