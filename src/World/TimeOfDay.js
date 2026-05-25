@@ -50,7 +50,7 @@ export const DAY_PALETTE = Object.freeze({
   fogFar: 130,
   grassColor: "#5aa033",
   grassShadowStrength: 0.75,
-  fireflyIntensity: 0.55,
+  fireflyIntensity: 0,
   starsOpacity: 0,
   moonOpacity: 0,
   // Subtle 0.6 fill from above in day mode so the character's face has a
@@ -68,11 +68,11 @@ export const DAY_PALETTE = Object.freeze({
   fillIntensity: 1.8,
   sunMeshOpacity: 1,
   billboardEmissiveBoost: 1.0,
-  lanternIntensity: 0,
-  // Physical lamp lights — subtle in daylight (just a hint of warmth)
-  // and a glowing bulb that the bloom pass picks up.
-  lampIntensity: 0.3,
-  lampBulbBrightness: 0.6,
+  // Street lamps are dark during the day — the model is visible (physical
+  // structure) but the bulb glow + PointLight are off. StreetLights.js reads
+  // these values in setMode().
+  streetLightIntensity: 0,
+  streetLightBulbEmissive: 0,
   // Warm daylight tint on the water — sky-fresh reads as a brighter blue
   // because the Water2 shader multiplies the reflected colour by this tint.
   waterColor: "#4a90c4",
@@ -85,7 +85,9 @@ export const NIGHT_PALETTE = Object.freeze({
   rimColor: "#3a4d80",
   rimIntensity: 0.0,
   ambientColor: "#0a1525",
-  ambientIntensity: 0.18,
+  // Lifted from 0.18 so the world between street lamps isn't pitch black —
+  // first-time visitors should be able to see paths + trees as silhouettes.
+  ambientIntensity: 0.25,
   hemiSky: "#112244",
   hemiGround: "#0a0a15",
   hemiIntensity: 0.12,
@@ -102,7 +104,7 @@ export const NIGHT_PALETTE = Object.freeze({
   fogFar: 95,
   grassColor: "#1f3a2a",
   grassShadowStrength: 0.25,
-  fireflyIntensity: 1.6,
+  fireflyIntensity: 2.2,
   starsOpacity: 1,
   moonOpacity: 1,
   spotlightIntensity: 9.0,
@@ -114,12 +116,12 @@ export const NIGHT_PALETTE = Object.freeze({
   fillColor: "#ccd6ec",
   fillIntensity: 2.5,
   sunMeshOpacity: 0,
-  billboardEmissiveBoost: 2.2,
-  lanternIntensity: 0.55,
-  // Night lamps are the primary light source for sign text.
-  lampIntensity: 1.2,
-  lampBulbBrightness: 1.8,
-  // Cooler, deeper night water — moon + lanterns + stars reflect against
+  billboardEmissiveBoost: 3.0,
+  // Night street lamps + bulb emissive: the primary light source for
+  // navigation. Five closest lights are active at a time (see StreetLights).
+  streetLightIntensity: 1.5,
+  streetLightBulbEmissive: 2.0,
+  // Cooler, deeper night water — moon + street lamps + stars reflect against
   // a darker blue-grey base so the night scene reads as cold water.
   waterColor: "#2a4a64",
 });
@@ -193,9 +195,6 @@ export class TimeOfDay {
     this.#buildCharacterLights();
     this.#buildStars();
     this.#buildMoon();
-    // Sign lanterns are wired lazily — if Signs / Billboards aren't ready
-    // yet (they load async), call attachLanterns() once they exist.
-    if (signs || billboards) this.attachLanterns();
 
     // Apply the initial mode instantly so the world is rendered correctly
     // on the very first frame.
@@ -239,19 +238,22 @@ export class TimeOfDay {
     if (this.sunOffset) this.sunOffset.copy(this.#calcOffset());
   }
 
-  /** No-op kept for backwards compatibility with App.js. Static Lamps
-   *  (see Lamps.js) cover the role the old per-sign lanterns used to —
-   *  one PointLight per spot, intensity driven by the day/night mode. */
-  attachLanterns() {
-    this.lanterns = [];
-    this._lanternsAttached = true;
-  }
-
   /**
    * Update per-frame state — spotlight + fill light tracking the player,
    * stars + moon following the camera.
    */
   tick(playerPos, camera, elapsed) {
+    // Hide the rim DirectionalLight entirely while it's at night-zero so
+    // it's pulled out of the lighting uniforms and the shader skips its
+    // contribution. Threshold matches the live tween — flipping near
+    // intensity≈0 has no visible "pop" since a 0-intensity light already
+    // contributes nothing. First toggle in each direction compiles a new
+    // shader program for the new dir-light count (a one-time hitch);
+    // subsequent toggles re-use the cached programs.
+    if (this.rim) {
+      const visible = this.rim.intensity > 0.001;
+      if (this.rim.visible !== visible) this.rim.visible = visible;
+    }
     if (this.fillLight && playerGroupExists(this.playerGroup) && camera) {
       // Position the fill BETWEEN the camera and the player so it always
       // lights whichever side of the character the camera is seeing.
@@ -335,7 +337,9 @@ export class TimeOfDay {
       0xddeeff,
       0, // intensity (set by mode)
       20, // distance
-      Math.PI / 5, // 36° cone (half-angle)
+      Math.PI / 4, // 45° cone (half-angle) — wider than PI/5 so the ground
+                   // pool around the player at night is large enough to read
+                   // surroundings, not just the character.
       0.6, // penumbra (soft edges)
       1, // linear decay (decay=2 dilutes too aggressively at this distance)
     );
@@ -689,18 +693,10 @@ export class TimeOfDay {
 
     if (this.billboards)
       this.billboards.emissiveBoost = p.billboardEmissiveBoost;
-    if (this.lanterns)
-      for (const l of this.lanterns) l.intensity = p.lanternIntensity;
     // Ocean tints (shallow / deep / foam / sun position) ride day-night
     // together — see Water.applyTimeOfDay for the colour palettes.
     if (this.water) this.water.applyTimeOfDay(mode);
-    if (this.lamps) {
-      this.lamps.apply({
-        intensity: p.lampIntensity,
-        bulbColor: 0xffe9b0,
-        bulbBrightness: p.lampBulbBrightness,
-      });
-    }
+    if (this.streetLights) this.streetLights.setMode(mode, 0);
 
     // sunOffset is computed every frame from real local time in tick();
     // the palette value is only a seed for the very first applyInstant
@@ -850,40 +846,13 @@ export class TimeOfDay {
       );
     }
 
-    // Lanterns
-    if (this.lanterns) {
-      for (const l of this.lanterns) {
-        tweens.push(
-          gsap.to(l, { intensity: p.lanternIntensity, duration, ease }),
-        );
-      }
-    }
-
     // Ocean tint — tweens shallow + deep + foam + sun position together.
     if (this.water)
       this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
 
-    // Physical lamps — tween each PointLight's intensity, and animate
-    // the shared bulb material color (toward target hex × brightness).
-    if (this.lamps && this.lamps.items.length) {
-      for (const item of this.lamps.items) {
-        tweens.push(
-          gsap.to(item.light, { intensity: p.lampIntensity, duration, ease }),
-        );
-      }
-      const tmp = new THREE.Color(0xffe9b0).multiplyScalar(
-        p.lampBulbBrightness,
-      );
-      tweens.push(
-        gsap.to(this.lamps.bulbMaterial.color, {
-          r: tmp.r,
-          g: tmp.g,
-          b: tmp.b,
-          duration,
-          ease,
-        }),
-      );
-    }
+    // Street lamps — owns its own gsap tweens for PointLight intensity +
+    // bulb emissive across all instances, lerped over the same duration.
+    if (this.streetLights) this.streetLights.setMode(mode, duration);
 
     // Note: we deliberately do NOT schedule a delayed visibility hide
     // here — a previous tween's delayedCall firing mid-way through the

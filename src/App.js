@@ -8,7 +8,7 @@ import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
-import { Lamps } from './World/Lamps.js';
+import { StreetLights } from './World/StreetLights.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -98,13 +98,8 @@ export class App extends EventTarget {
     };
 
     // Day / night cycle. Built now so it can drive lights + sky immediately
-    // — billboards / signs are still loading at this point, so the lanterns
-    // they need are attached after boot() completes the world load.
-    // Static lantern fixtures at every readable board, with their bulb
-    // emissive + PointLight intensity driven by TimeOfDay. Terrain is
-    // passed so each lamp's base sits on the heightfield instead of y=0.
-    this.lamps = new Lamps(this.scene, this.loader, this.world.terrain);
-
+    // — billboards / signs are still loading at this point, so they are
+    // wired into TimeOfDay after boot() completes the world load.
     this.timeOfDay = new TimeOfDay({
       scene: this.scene,
       fog: this.scene.fog,
@@ -152,6 +147,51 @@ export class App extends EventTarget {
       : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>';
     btn.setAttribute('aria-label', mode === 'day' ? 'Switch to night mode' : 'Switch to day mode');
     btn.setAttribute('title', mode === 'day' ? 'Switch to night' : 'Switch to day');
+  }
+
+  /**
+   * Pre-compile shader programs for BOTH the day and night lighting
+   * configurations. THREE's shader cache key includes the active light
+   * count; when our visibility toggles flip the rim + 5 pool point lights
+   * on/off, the count changes and every material's program has to be
+   * fetched anew. The fetch is LAZY — programs are compiled the first
+   * time a material is actually rendered with that light count. Without
+   * pre-warm, the first toggle in each direction compiles materials
+   * currently on screen, but subsequent player movement uncovers more
+   * geometry whose materials then JIT-compile mid-walk → the lag spike.
+   *
+   * Strategy: snap to night, force visibility toggles to settle, call
+   * compileAsync on the whole scene; snap back to the original mode,
+   * settle, compile again. Both program variants now sit warm in the
+   * cache. The user pays this cost once during the post-load window
+   * (where waiting is expected) instead of during gameplay.
+   */
+  async #prewarmDayNightShaders() {
+    if (!this.renderer || !this.scene || !this.camera) return;
+    if (typeof this.renderer.compileAsync !== 'function') return; // r152+
+    const original = this.timeOfDay.mode;
+    const playerPos = this.player?.position ?? { x: 0, y: 0, z: 0 };
+
+    // Hard-snap via reapply() (which calls #applyInstant) instead of
+    // setMode(). setMode would kick off GSAP tweens that may not flush
+    // synchronously across an `await`, leaving lighting state mid-tween
+    // when compileAsync runs.
+    const applyAndSettle = (mode) => {
+      this.timeOfDay.mode = mode;
+      this.timeOfDay.reapply();
+      this.streetLights?.update(playerPos);
+      this.timeOfDay.tick(playerPos, this.camera, 0);
+    };
+
+    try {
+      applyAndSettle(original === 'day' ? 'night' : 'day');
+      await this.renderer.compileAsync(this.scene, this.camera);
+      applyAndSettle(original);
+      await this.renderer.compileAsync(this.scene, this.camera);
+    } catch (err) {
+      console.warn('[App] shader prewarm failed:', err);
+      applyAndSettle(original); // always restore original mode
+    }
   }
 
   /** Loads characters / models; resolves to a summary the loader UI can use. */
@@ -250,26 +290,37 @@ export class App extends EventTarget {
     // as each one settles. No need to block the boot resolution on this.
     this.interactables.load().catch((err) => console.warn('[Interactables] load failed:', err));
 
-    // Now that Signs + Billboards exist, plant sign lanterns and wire the
-    // player ref so the character spotlight / fill light can follow.
+    // Now that Signs + Billboards exist, wire the player ref so the
+    // character spotlight / fill light can follow.
     this.timeOfDay.signs = this.world.signs;
     this.timeOfDay.billboards = this.world.billboards;
     this.timeOfDay.playerGroup = this.player.group;
-    this.timeOfDay.attachLanterns();
-    // Re-apply current mode so freshly-loaded lanterns + billboard boost
-    // pick up the right intensity (TimeOfDay was built before they existed).
+    // Re-apply current mode so freshly-loaded billboard boost picks up
+    // the right intensity (TimeOfDay was built before they existed).
     this.timeOfDay.reapply();
 
-    // Build physical lamps now that the signs + billboards exist.
-    // Don't block boot resolution on this — lamps are visual sugar.
-    this.lamps.load({ signs: this.world.signs, billboards: this.world.billboards })
-      .then(() => {
-        this.timeOfDay.lamps = this.lamps;
-        // Re-apply the current mode so the freshly-loaded lamps pick up
-        // the right intensity without a visible step.
-        this.timeOfDay.reapply();
-      })
-      .catch((err) => console.warn('[Lamps] load failed:', err));
+    // Street lights — placed around the island so night mode reads. Each
+    // pole has a Rapier collider so the player bumps into it; PointLights
+    // are managed by proximity so only the closest few are ever active.
+    this.streetLights = new StreetLights(
+      this.scene,
+      this.loader,
+      this.world.terrain,
+      this.physics,
+    );
+    // Block boot resolution until street lights are loaded AND shaders
+    // for both day + night light-counts are pre-compiled. Without this,
+    // the first in-session toggle hitches mid-walk as freshly-uncovered
+    // geometry JIT-compiles its alternate program variant. The cost is
+    // front-loaded into the loading screen where waiting is expected.
+    try {
+      await this.streetLights.load();
+      this.timeOfDay.streetLights = this.streetLights;
+      this.streetLights.setMode(this.timeOfDay.mode, 0);
+      await this.#prewarmDayNightShaders();
+    } catch (err) {
+      console.warn('[StreetLights] load/prewarm failed:', err);
+    }
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
@@ -438,6 +489,7 @@ export class App extends EventTarget {
     this.lights.sun.target.updateMatrixWorld();
     this.sun.update(this.camera);
     this.timeOfDay.tick(p, this.camera, elapsed);
+    this.streetLights?.update(p);
 
     // Refresh the shared water reflection + refraction RTs once per frame
     // BEFORE the composer renders. With one master Reflector / Refractor

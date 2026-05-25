@@ -6,7 +6,10 @@ import * as THREE from 'three';
  * round disc with a warm-amber tint; the bloom pass adds the glow halo.
  */
 
-const COUNT = 120;
+// 144 — dialed down 20% from the earlier 180 bump. User felt the swarm
+// was too dense at night; still ~20% above the original 120 so there's
+// some extra breadcrumb effect between street lamps.
+const COUNT = 144;
 const SPREAD = 60;          // half-extent of the firefly spawn box
 const HEIGHT_BAND = [0.6, 3.0];
 
@@ -106,5 +109,9 @@ export class Fireflies {
 
   update(elapsed) {
     this.material.uniforms.uTime.value = elapsed;
+    // Skip the entire draw (vertex + fragment shader) when fully faded —
+    // day mode sets uIntensity to 0 so 144 point-sprite invocations per
+    // frame are saved. Matches the same pattern stars + moon use.
+    this.points.visible = this.material.uniforms.uIntensity.value > 0.001;
   }
 }
