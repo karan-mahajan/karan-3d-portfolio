@@ -1,76 +1,66 @@
 # karan-portfolio — Claude context
 
-Bruno-Simon-style 3D walkable portfolio. Vanilla Three.js + Rapier3D + Vite. No
-React, no framework. The player spawns at origin and walks toward cardinal
-sections (Projects E, Skills S, Contact W, Experience N) on a small island
-surrounded by ocean.
+3D walkable portfolio. Vanilla Three.js + Rapier3D + Vite. No React, no
+framework. The player spawns at origin and walks toward cardinal sections
+(Projects E, Skills S, Contact W, Experience N) on a small island surrounded
+by ocean.
 
 ## Critical rules
 
 ### 1. Never invent assets — ask first
-If a feature needs a 3D model, texture, sound, or animation that is **not
-already** under `static/models/`, `static/textures/`, or `static/sounds/`:
 
-1. **Stop.** Do not procedurally fake it, do not pick a "close enough" GLB from
-   another folder, do not write code that loads a path that may not exist.
-2. Tell the user exactly what asset is missing — name, format (GLB/FBX/GLTF),
-   rough scale, and what it's for.
-3. Ask: *"How would you like me to source this — Kenney pack, Sketchfab,
-   Mixamo, or one you'll drop in?"*
-4. Wait for the user to provide / point to the file before writing the loader
-   code.
-
-This applies to **animations** especially (Mixamo FBX clips). Procedural
-placeholders are acceptable **only** as an explicit fallback inside a
-`try/catch` after a real load attempt — and only when the user has agreed.
+If a feature needs a 3D model, texture, sound, or animation **not already**
+under `static/models|textures|sounds/`: stop, name exactly what's missing
+(file, format, scale, purpose), ask the user how to source it (Kenney /
+Sketchfab / Mixamo / they'll drop it in), and wait. Don't procedurally fake
+it or load a path that may not exist. Applies especially to Mixamo FBX clips.
+Procedural placeholders are OK **only** as an explicit `try/catch` fallback
+after a real load attempt, with user buy-in.
 
 ### 2. Keep this file < 200 lines
+
 When updating CLAUDE.md, prune before adding. Index-level facts only — no
 tutorials, no code blocks longer than ~10 lines, no per-file walkthroughs.
 
 ### 3. Match the existing code style
+
 Vanilla ES modules, `class` syntax, private fields with `#`. No TypeScript. No
 comments that just restate what code does — only WHY a non-obvious choice was
 made. JSDoc summaries on classes/methods are fine.
 
 ### 4. Place new props on the terrain heightfield, not at y=0
+
 The terrain is an island with a 0.02m inner floor and waves up to ±0.65m past
 r≈22 from spawn. Anything placed at hardcoded `y=0` is buried 0.02–0.65m.
-**Always** sample `terrain.heightAt(x, z)` for the group/mesh Y *and* every
+**Always** sample `terrain.heightAt(x, z)` for the group/mesh Y _and_ every
 physics collider Y. Reference patterns: [Billboards.js](src/Portfolio/Billboards.js),
-[Furniture.js](src/Portfolio/Furniture.js), [Signs.js](src/Portfolio/Signs.js),
-[Lamps.js](src/World/Lamps.js).
+[Signs.js](src/Portfolio/Signs.js), [StreetLights.js](src/World/StreetLights.js).
 
 ### 5. New solid props need a Rapier collider — sized to the **visible** mesh
-If the player should not walk through it OR should stand on top of it, register
-one in [Physics.js](src/Physics/Physics.js): `addStaticCylinder` /
-`addStaticCuboid` for static, `addDynamicBall` for things that should react to
-being pushed/kicked. Walk-through accents (grass, flowers, mushrooms, pebbles,
-ferns, reeds, lily pads) get **no** collider.
 
-**Collider must match the visible mesh** — don't hardcode a footprint and hope.
-`new THREE.Box3().setFromObject(node)` on the scaled mesh gives you the real
-extents; pass `(box.min.y + box.max.y) / 2` as the y arg and `size.{x,y,z}/2`
-as the half-extents. Reference patterns: [Nature.#placeInstances](src/World/Nature.js)
-(bbox sizing for rocks/logs), [Paths.#buildTile](src/World/Paths.js) (tile
-colliders so the player walks on top, not through),
-[Furniture.#placeOne](src/Portfolio/Furniture.js),
-[Interactables.#buildStuckCrate](src/Portfolio/Interactables.js). Symptoms when
-this is wrong: player's feet sink into the visible mesh, or player stands
-*inside* the painted geometry. Both are user-reported bugs already this sprint.
+If the player shouldn't walk through it OR should stand on top, register one
+in [Physics.js](src/Physics/Physics.js): `addStaticCylinder` /
+`addStaticCuboid` for static, `addDynamicBall` for pushable. Walk-through
+accents (grass, flowers, ferns, pebbles…) get **no** collider.
 
-**Important:** `addStaticCuboid(x, y, z, hx, hy, hz)` takes `y` as the cuboid's
-**centre** (no internal lift). For a mesh whose origin is at the bbox bottom,
-pass `bottom + hy`; for a measured bbox, pass `(box.min.y + box.max.y) / 2`.
+**Collider must match the visible mesh.** Use `new THREE.Box3().setFromObject(node)`
+on the scaled mesh; pass `(box.min.y + box.max.y) / 2` as `y` and
+`size.{x,y,z}/2` as half-extents. Reference:
+[Nature.#placeInstances](src/World/Nature.js),
+[Paths.#buildTile](src/World/Paths.js),
+[Interactables.#buildStuckCrate](src/Portfolio/Interactables.js). Wrong sizing
+= feet sink in or float inside.
+
+**Note:** `addStaticCuboid(x, y, z, hx, hy, hz)` — `y` is the cuboid's
+**centre**, no internal lift. Mesh origin at bbox bottom → `bottom + hy`;
+measured bbox → `(box.min.y + box.max.y) / 2`.
 
 ### 6. Don't search `node_modules/` for user-referenced files
-When the user says "I placed X" or "find the Y file", search only project
-source: `src/`, `static/`, `index.html`, `package.json`, and other repo-root
-files. Never grep/find/glob into `node_modules/`, `dist/`, or `.verify/` to
-locate something the user gave you — those are dependency / build / sandbox
-trees and the matches are noise. `node_modules/` is fair game **only** when
-debugging a dependency's behavior (reading a lib's source for a bug), never
-for locating user-supplied files.
+
+When the user says "I placed X" or "find the Y file", search only `src/`,
+`static/`, `index.html`, `package.json`, repo-root. Never grep into
+`node_modules/`, `dist/`, or `.verify/` for user files. `node_modules/` is
+fair game **only** when debugging a dependency.
 
 ## Stack
 
@@ -80,6 +70,7 @@ for locating user-supplied files.
 - **gsap@3** — UI fades + interaction transitions
 - **howler@2** — audio (ambient + footsteps + ui sfx)
 - **vite@8** — dev server, `publicDir: 'static'`, GLB/FBX/HDR included as assets
+- **@vercel/speed-insights** — perf telemetry; Google Tag Manager (GTM-TFN8MHCZ) injected from `index.html`
 
 ```
 npm run dev      # vite, serves on http://localhost:5173
@@ -90,56 +81,60 @@ npm run preview  # preview built bundle
 ## File map
 
 ```
-index.html                  # loading screen, welcome overlay, controls HUD
-src/main.js                 # bootstrap: load → welcome → start journey
-src/App.js                  # renderer, scene, lights, tick loop, wires all modules
-src/style.css               # all CSS (overlay, HUD, sign tooltips)
+index.html              # loading screen, welcome overlay, controls HUD, GTM
+src/main.js             # bootstrap: load → welcome → start journey
+src/App.js              # renderer, scene, lights, tick loop, wires all modules
+src/style.css           # all CSS
 
-src/Utils/                  # Sizes, Loader, Debug
-src/Physics/Physics.js      # Rapier init + heightfield ground + static + dynamic helpers
-
-src/Player/
-  Player.js                 # owns mesh + controller + physics body + wading slowdown
-  PlayerController.js       # WASD/space/shift input + speedMultiplier
-  PlayerCamera.js           # camera-controls wrapper, smoothed follow
-  Character.js              # Avaturn GLB + Mixamo FBX clips → AnimationMixer
-
-src/World/                  # Terrain, Sky, Nature, Grass, Paths, Lamps, TimeOfDay, Sun, Wind, Palette, World
-src/Portfolio/              # Billboards, Signs, Furniture, Interaction, Interactables, ActionPrompts, *Data
-src/Effects/                # Fireflies, Water (ocean), Rain, Leaves, WindLines, PostFX
-src/Audio/AudioManager.js   # ambient + footsteps + ui chimes + water splashes (howler)
-static/models/              # character/ (Avaturn+Mixamo), nature/, furniture/, extras/, props/
+src/Utils/              # Sizes, Loader, Debug
+src/Physics/Physics.js  # Rapier init + heightfield ground + collider helpers
+src/Player/             # Player, PlayerController, PlayerCamera, Character (Avaturn+Mixamo)
+src/World/              # Terrain, Sky, Nature, Grass, Paths, StreetLights, DistantIslands, TimeOfDay, Sun, Wind, Palette, World
+src/Portfolio/          # Billboards (single Project Showcase), Signs, Interaction, Interactables, ActionPrompts, *Data
+src/Effects/            # Fireflies, Water, Rain, Thunderstorm, Leaves, Footprints, WindLines, PostFX
+src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast, AchievementPanel
+src/Systems/            # Achievements (34 unlocks + time tracker), DistanceGame (shore mini-game)
+src/Torch/TorchLight.js # night-mode hand-attached torch + F-aim shoulder IK
+src/Audio/AudioManager.js # howler (ambient + footsteps + ui chimes + splashes)
+static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/, wildlife/
 ```
 
 ## World layout
 
 - Spawn at (0, 0.02, 0). Player faces north (+Z).
 - Island radius ≈ 45m; shore slope 45→57m down to y=-2 ocean floor.
-- **Projects** — east, centered near `PROJECTS_CENTER` (Billboards.js)
+- **Projects** — east, **single Project Showcase** screen at `PROJECTS_CENTER`
+  (Billboards.js) that cycles through projects. Replaced the old per-project
+  fan; legacy `world.billboards.items[0]` is the showcase itself.
 - **Experience** — north, signs along `SECTION_POSITIONS.experiencePath`
 - **Skills** — south, around `SECTION_POSITIONS.skills`
 - **Contact** — west, around `SECTION_POSITIONS.contact`
-- Past r=45 the player wades (slowdown ramps to 15% speed); past r=120 a soft
-  clamp teleports them back. Falls below y=-5 respawn at origin.
+- Past r=45 player wades (→ 15% speed); past r=120 soft-clamps back. Below
+  y=-5 respawns at origin.
+- Distant islands ring the horizon (DistantIslands.js) — visual only, no colliders.
 - `Nature.addExclusion(x, z, r)` keeps trees out of clearings; always exclude
   new sections so trees don't clip props.
 
 ## Tick loop (App.js)
 
 ```
-physics.step → player.update → playerCamera.update → world.update
-→ actionPrompts.tick → interaction.tick → interactables.update
-→ fireflies → water → rain → audio.tick → postfx.render
+physics.step → player.update → playerCamera.update → compass.update
+→ world.update → wind → grass.setPlayerPos → actionPrompts.tick
+→ interaction.tick → interactables.update → ui.tick (mobile)
+→ fireflies → water → rain → thunderstorm → windLines → leaves
+→ footprints → audio.tick → achievements.tick → distanceGame.update
+→ sun + shadow follow player → timeOfDay.tick → streetLights.update
+→ torchLight.tick → water.preRender → postfx.render
 ```
-
-Sun + shadow camera follow the player so shadows stay sharp.
 
 ## Conventions
 
 - Boot is async; `App.boot()` returns `{ character, world }`. Loader emits
   `progress` events; main.js drives the loading-bar fill.
-- A `session-storage` flag (`karan-portfolio:journey-started`) skips the
-  welcome overlay on subsequent reloads in the same tab.
+- `session-storage` flag `karan-portfolio:journey-started` skips the welcome
+  overlay on subsequent reloads. Loading + welcome overlays must sit above
+  ALL HUD layers (torch hint, compass, achievement toast — they hide until
+  overlays clear).
 - Controller is **paused** while overlays (loading, welcome, interaction
   modal, action one-shots) are up, then unpaused.
 - Audio must start on a user gesture (browser policy) — handled in main.js.
@@ -147,67 +142,58 @@ Sun + shadow camera follow the player so shadows stay sharp.
   Rapier's kinematic-position character controller; football is the only
   dynamic body. Variable timestep — known wart, not yet fixed.
 - Fog tinted `#ffb084`, range 65→165, so distant trees fade into sunset.
+- **Achievements** (`Systems/Achievements.js`): 34 unlocks, time tracker, toast
+  on unlock, full panel on key. Persists to localStorage. App tick feeds it
+  player pos / moving / running / grounded / inWater / mode / isRaining.
+- **Tutorial** (`UI/Tutorial.js`): first-visit coachmarks for WASD/joystick,
+  drag-to-look, zoom. Detects look/zoom from raw input events, NOT camera
+  state (camera-controls smoothes and gives false positives).
+- **Compass** (`UI/Compass.js`): camera-linked HUD ring, rotates with camera
+  yaw, hidden on mobile.
+- **Torch** (`Torch/TorchLight.js`): night-only, hand-attached mesh, F to aim
+  mouse beam with smoothed one-bone IK on the shoulder. Suppressed while
+  modals/interactions are open.
+- **Distance-guess** (`Systems/DistanceGame.js`): mini-game at the shore.
+  Exact-only wins; the win card auto-dismisses.
 
 ## Verification sandbox — MUST use `.verify/scripts/` + `.verify/shots/<date>/`
 
-When you write or run a verification / playwright probe in this project,
-you **must** use this exact layout. No exceptions, no `/tmp/`, no flat
-`.verify/*.png`, no shots in the same folder as the script:
+No exceptions, no `/tmp/`, no flat `.verify/*.png`. Layout:
+`.verify/scripts/verify-<feature>.mjs` + `.verify/shots/YYYY-MM-DD/<name>.png`.
 
-```
-.verify/
-  scripts/                 # all probe .mjs files (verify-walk.mjs, verify-water.mjs, …)
-  shots/
-    YYYY-MM-DD/            # one folder per day, auto-created on each run
-      NN-step.png          # or any other screenshot name
-```
+Rules:
 
-Mandatory rules for every probe script:
-
-1. Script file lives at `.verify/scripts/verify-<feature>.mjs`.
-2. Screenshot output dir is computed at runtime as:
-   `path.resolve(__dirname, '..', 'shots', new Date().toISOString().slice(0, 10))`
-   then `fs.mkdirSync(SHOTS, { recursive: true })`. Never hardcode a date.
-3. Run from project root: `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`.
-4. Before adding a new probe, `ls .verify/scripts/` first — don't duplicate
-   an existing driver, copy and adapt it.
-5. **Boot + dismiss the welcome screen via the shared helper, ALWAYS.** Every
-   probe must do exactly this after `page.goto`:
+1. Shots dir computed at runtime via `new Date().toISOString().slice(0, 10)`
+   + `fs.mkdirSync(..., { recursive: true })`. Never hardcode a date.
+2. Run from project root: `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`.
+3. `ls .verify/scripts/` first — copy an existing driver, don't duplicate.
+4. **Always boot via the shared helper:**
    ```js
-   import { bootAndDismiss } from './_boot.mjs';
-   // ...
-   await page.goto(URL, { waitUntil: 'load', timeout: 30000 });
+   import { bootAndDismiss } from "./_boot.mjs";
+   await page.goto(URL, { waitUntil: "load", timeout: 30000 });
    await bootAndDismiss(page);
-   // now safe to screenshot / read app state / press keys
    ```
-   Do **not** copy-paste a dismissal loop into a new probe. Four different
-   probes have shipped four different ways of getting this wrong (wrong ID,
-   wrong wait, no fade wait, wrong order). All bug fixes live in one file:
-   [.verify/scripts/_boot.mjs](.verify/scripts/_boot.mjs). `bootAndDismiss`
-   waits for the loading screen to hide, dismisses the welcome, waits for
-   the 0.6s CSS opacity fade, focuses the canvas, and throws loudly if the
-   overlay is somehow still visible afterwards.
+   All boot/fade/focus fixes live in [\_boot.mjs](.verify/scripts/_boot.mjs).
+   Never inline your own dismissal loop.
 
-`.verify/` is gitignored as a whole folder; neither scripts nor shots ever
-get committed. Playwright is not a project dep — install once globally
-(`cd /tmp && npm install --no-save playwright`) and reuse via `NODE_PATH`.
-The canonical driver to copy from is [.verify/scripts/verify-walk.mjs](.verify/scripts/verify-walk.mjs).
+`.verify/` is gitignored. Playwright is not a project dep — install once
+globally (`cd /tmp && npm install --no-save playwright`), reuse via `NODE_PATH`.
+Canonical driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
 
 ## Known parked work (don't surprise the user with rewrites)
 
-- **Push interaction is intentionally a comedy gag** — trees, rocks, signs,
-  billboards, and the spawn compass are push spots so
-  [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a joke pool.
-  Real pushables are the crate and bag. Lying-down props (`kind: 'log'`) are
-  excluded — the standing push animation doesn't match horizontal targets.
-  Do NOT "fix" the gag without confirmation.
-- **B (backflip) / C (cartwheel)** don't currently raycast for clearance —
-  flag if you add similar global animations.
+- **Push is a comedy gag** — trees/rocks/signs/billboards/compass are push
+  spots so [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a
+  joke pool. Real pushables: crate + bag. Lying-down props (`kind: 'log'`)
+  excluded (standing anim mismatch). Don't "fix" without confirmation.
+- **B (backflip) / C (cartwheel)** don't raycast for clearance — flag if you
+  add similar global animations.
+- **Furniture pass removed** (commit 12e494a) — don't re-add without asking.
+  Grass cleared around interactable props so colliders match visuals (cd996b7).
 - **Minimap + click-to-teleport** — see auto-memory `project_minimap_teleport.md`.
 
 ## When in doubt
 
-- Reading [App.js](src/App.js) tells you the wiring.
-- Reading [World.js](src/World/World.js) tells you what loads in what order.
-- Reading [Interaction.js](src/Portfolio/Interaction.js) + [ActionPrompts.js](src/Portfolio/ActionPrompts.js) tell you how the player triggers things.
-- If an asset/animation/object isn't in `static/`, **ask** (rule 1).
+- [App.js](src/App.js) = wiring. [World.js](src/World/World.js) = load order.
+- [Interaction.js](src/Portfolio/Interaction.js) + [ActionPrompts.js](src/Portfolio/ActionPrompts.js) = how the player triggers things.
+- If an asset/animation isn't in `static/`, **ask** (rule 1).
