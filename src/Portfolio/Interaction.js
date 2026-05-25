@@ -414,7 +414,11 @@ export class Interaction {
     const night = this.timeOfDay?.mode === "night";
     const modalOpen =
       this.activeIndex !== -1 || this.contactOpen || this.zooming;
-    const show = torchOn && night && !modalOpen;
+    // Same gate every other corner toggle / HUD uses — stay hidden while the
+    // loading + welcome overlays are up. main.js strips `booting` from <body>
+    // the moment the user starts the journey.
+    const booting = document.body.classList.contains("booting");
+    const show = torchOn && night && !modalOpen && !booting;
     if (!this.torchHintEl) return;
     if (show) {
       this.torchHintEl.classList.remove("hidden");
