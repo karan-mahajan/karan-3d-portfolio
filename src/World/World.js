@@ -5,6 +5,7 @@ import { Sky } from './Sky.js';
 import { Billboards, PROJECTS_CENTER } from '../Portfolio/Billboards.js';
 import { Signs, SECTION_POSITIONS } from '../Portfolio/Signs.js';
 import { Furniture } from '../Portfolio/Furniture.js';
+import { INTERACTABLE_PROP_EXCLUSIONS } from '../Portfolio/Interactables.js';
 import { Water } from '../Effects/Water.js';
 
 /**
@@ -77,12 +78,9 @@ export class World {
 
     // Interactable prop spots — keep trees clear so the player can see them
     // and the prompts have room to read. Coordinates mirror Interactables.js.
-    this.nature.addExclusion(18,   0, 3);    // stuck crate
-    this.nature.addExclusion( 8, -20, 3);    // punching bag
-    this.nature.addExclusion( 7,  -8, 2);    // football
-    this.nature.addExclusion(-28, -3, 3);    // dance tile
-    this.nature.addExclusion(14, -14, 2);    // chalk circle (moved from 10,-10 to avoid football overlap)
-    this.nature.addExclusion( 3,  44, 3);    // disappointed sign + trophy
+    for (const e of INTERACTABLE_PROP_EXCLUSIONS) {
+      this.nature.addExclusion(e.x, e.z, Math.max(e.r, 3));
+    }
 
     const result = await this.nature.load();
 

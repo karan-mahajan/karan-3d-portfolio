@@ -89,12 +89,14 @@ export class Grass {
    * @param {number}       [opts.pathCount]
    * @param {number}       [opts.pathRadius=1.4]
    * @param {Array<{x:number,z:number}>}          [opts.treePositions]
+   * @param {Array<{x:number,z:number,r:number}>} [opts.exclusionCircles]
    */
   async load({
     pathPositions = new Float32Array(0),
     pathCount = 0,
     pathRadius = 1.4,
     treePositions = [],
+    exclusionCircles = [],
   } = {}) {
     const layers = [
       { url: '/models/nature/quaternius/grass.glb',         count: SHORT_COUNT,  scale: [0.7, 1.1],   ring: [3, FIELD_RADIUS] },
@@ -103,7 +105,7 @@ export class Grass {
       { url: '/models/nature/quaternius/tall-grass.glb',    count: TALL_COUNT,   scale: [0.75, 1.15], ring: [TALL_RING_INNER, TALL_RING_OUTER] },
     ];
 
-    const ex = { pathPositions, pathCount, pathRadius, treePositions };
+    const ex = { pathPositions, pathCount, pathRadius, treePositions, exclusionCircles };
     const results = await Promise.allSettled(layers.map((cfg) => this.#buildLayer(cfg, ex)));
 
     let placed = 0;
@@ -254,6 +256,11 @@ export class Grass {
       const dx = x - t.x;
       const dz = z - t.z;
       if (dx * dx + dz * dz < TREE_EXCLUSION_R * TREE_EXCLUSION_R) return true;
+    }
+    for (const e of ex.exclusionCircles) {
+      const dx = x - e.x;
+      const dz = z - e.z;
+      if (dx * dx + dz * dz < e.r * e.r) return true;
     }
     return false;
   }

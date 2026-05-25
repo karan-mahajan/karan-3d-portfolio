@@ -15,7 +15,7 @@ import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
 import { Interaction } from './Portfolio/Interaction.js';
 import { ActionPrompts } from './Portfolio/ActionPrompts.js';
-import { Interactables } from './Portfolio/Interactables.js';
+import { Interactables, INTERACTABLE_PROP_EXCLUSIONS } from './Portfolio/Interactables.js';
 import { Fireflies } from './Effects/Fireflies.js';
 // Water is constructed inside World.loadAssets so its exclusions reach
 // Nature before scatter; App.js just grabs `this.world.water` in boot().
@@ -328,6 +328,7 @@ export class App extends EventTarget {
       pathCount: this.world.paths?.getTileCount() ?? 0,
       pathRadius: 1.4,
       treePositions,
+      exclusionCircles: INTERACTABLE_PROP_EXCLUSIONS,
     });
     // Grass is thousands of instances per tuft species — skip them at the
     // raycast filter. They're not in the curated target list anyway, this

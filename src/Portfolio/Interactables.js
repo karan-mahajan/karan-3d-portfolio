@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import gsap from 'gsap';
 
+export const INTERACTABLE_PROP_EXCLUSIONS = [
+  { x: 18, z:   0, r: 2.2 }, // stuck crate
+  { x:  8, z: -20, r: 1.6 }, // punching bag
+  { x:  7, z:  -8, r: 1.2 }, // football
+  { x: -28, z: -3, r: 2.2 }, // dance tile
+  { x: 14, z: -14, r: 1.4 }, // chalk circle
+  { x:  3, z:  44, r: 2.4 }, // disappointed sign + trophy
+];
+
 /**
  * World-object props that the player can interact with via ActionPrompts.
  * Each helper here loads a Kenney/Sketchfab GLB, places it, registers any
@@ -17,6 +26,8 @@ import gsap from 'gsap';
  *   Disappointed   → (3, 0, 44)    sign + trophy at end of experience trail
  */
 export class Interactables {
+  static SOLID_PROP_CLEARANCE = 0.18;
+
   constructor(scene, loader, physics, actionPrompts, terrain = null) {
     this.scene = scene;
     this.loader = loader;
@@ -68,6 +79,7 @@ export class Interactables {
       return;
     }
     const obj = gltf.scene;
+    obj.name = 'interactable:stuck-crate';
     const pos = new THREE.Vector3(18, 0, 0);
     const groundY = this.#groundY(pos.x, pos.z);
 
@@ -89,10 +101,11 @@ export class Interactables {
       obj.updateMatrixWorld(true);
       const scaledBox = new THREE.Box3().setFromObject(obj);
       const scaledSize = scaledBox.getSize(new THREE.Vector3());
+      const center = scaledBox.getCenter(new THREE.Vector3());
+      const clearance = Interactables.SOLID_PROP_CLEARANCE;
       this.physics.addStaticCuboid(
-        pos.x, (scaledBox.min.y + scaledBox.max.y) / 2, pos.z,
-        scaledSize.x / 2, scaledSize.y / 2, scaledSize.z / 2,
-        obj.rotation.y,
+        center.x, center.y, center.z,
+        scaledSize.x / 2 + clearance, scaledSize.y / 2, scaledSize.z / 2 + clearance,
       );
     }
 
