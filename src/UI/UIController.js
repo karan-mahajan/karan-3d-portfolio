@@ -529,13 +529,14 @@ export class UIController {
   }
 
   /** Tell camera-controls not to react to touches that began inside the
-   *  joystick zone or any of the mobile UI buttons. We do this by stopping
-   *  propagation on those elements; touches that begin on bare canvas
-   *  continue to reach camera-controls' native handler, which gives us
-   *  right-side touch-rotate for free. */
+   *  mobile UI buttons / interact pill. Camera-controls listens on the
+   *  canvas; these elements are siblings of the canvas, not ancestors, so
+   *  this is belt-and-braces against any future document-level listeners.
+   *  The joystick zone is intentionally NOT suppressed — its move/end
+   *  handlers live on window and need the bubble to reach them. */
   #suppressCanvasGestures() {
     const stop = (e) => e.stopPropagation();
-    for (const id of ['mobile-actions', 'mobile-interact', 'mobile-joystick-zone']) {
+    for (const id of ['mobile-actions', 'mobile-interact']) {
       const el = document.getElementById(id);
       if (!el) continue;
       el.addEventListener('touchstart', stop);
