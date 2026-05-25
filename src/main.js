@@ -1,4 +1,7 @@
+import { injectSpeedInsights } from '@vercel/speed-insights';
 import { App } from './App.js';
+
+injectSpeedInsights();
 
 const loadingScreen = document.getElementById('loading-screen');
 const loadingBar = document.getElementById('loading-bar-fill');
