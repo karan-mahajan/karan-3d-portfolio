@@ -393,7 +393,7 @@ export class Interaction {
     if (!this.player?.character?.actions?.torchAim) return;
     this.torchAiming = true;
     this.controller.actionSpeedMultiplier = 0.5;
-    this.player.character.playTorchOverlay("torchAim", 0.25);
+    this.player.character.playTorchOverlay("torchAim", 0.35);
     this.audio?.playInteract?.();
   }
 
@@ -401,7 +401,7 @@ export class Interaction {
     if (!this.torchAiming) return;
     this.torchAiming = false;
     this.controller.actionSpeedMultiplier = 1.0;
-    this.player?.character?.stopTorchOverlay?.(0.25);
+    this.player?.character?.stopTorchOverlay?.(0.35);
   }
 
   #syncTorchHint() {

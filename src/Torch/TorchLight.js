@@ -20,8 +20,8 @@ import * as THREE from 'three';
  * the focused-view camera.
  */
 
-const SPOT_AIM_INTENSITY = 4.0;
-const POOL_AIM_INTENSITY = 1.15;
+const SPOT_AIM_INTENSITY = 4.6;
+const POOL_AIM_INTENSITY = 1.9;
 const INTENSITY_LERP = 0.12;
 // The camera ray needs to reach a little past the player, but the final hit
 // is still gated by torch-to-hit distance so faraway cursor targets do not
@@ -76,14 +76,17 @@ export class TorchLight {
     this.#targetsBuf = [];
     this.#suppressed = false;
 
-    this.#spotLight = new THREE.SpotLight(0xffbb66, 0, 18, Math.PI / 5, 0.55, 1.5);
+    this.#spotLight = new THREE.SpotLight(0xffc870, 0, 18, Math.PI / 5, 0.55, 1.5);
     this.#spotLight.castShadow = false;
     this.#spotTarget = new THREE.Object3D();
     this.#spotLight.target = this.#spotTarget;
     this.#scene.add(this.#spotLight);
     this.#scene.add(this.#spotTarget);
 
-    this.#poolLight = new THREE.PointLight(0xff9944, 0, 3, 2);
+    // Pool is a tight surface pool of warm yellow at the hit point. Range
+    // 3.5m so it falls off well before MAX_TORCH_HIT_DISTANCE (6.75m) and
+    // never bleeds beyond what the cursor is actually pointing at.
+    this.#poolLight = new THREE.PointLight(0xffb060, 0, 3.5, 2);
     this.#poolLight.castShadow = false;
     this.#scene.add(this.#poolLight);
 
@@ -158,12 +161,13 @@ export class TorchLight {
     // night by default" read as a cursor-attached light following the
     // user around the world even when they weren't pointing anything.
     if (!aimActive || !this.#hasPointer || !this.#pointerInside) {
-      this.#character?.setTorchAimInput?.(null);
+      this.#character?.setTorchAimTarget?.(null);
       this.#fadeOff();
       return;
     }
 
     if (!this.#character?.torchHandBone) {
+      this.#character?.setTorchAimTarget?.(null);
       this.#fadeOff();
       return;
     }
@@ -201,9 +205,14 @@ export class TorchLight {
       .multiplyScalar(MAX_TORCH_HIT_DISTANCE)
       .add(_handPos);
     this.#spotLight.position.copy(_handPos);
-    this.#spotTarget.position.copy(closeHit?.point ?? _aimPoint);
+    const aimWorldPoint = closeHit?.point ?? _aimPoint;
+    this.#spotTarget.position.copy(aimWorldPoint);
     this.#spotTarget.updateMatrixWorld();
-    this.#character?.setTorchAimInput?.(this.#ndc, closeHit?.point ?? _aimPoint);
+    // Drive the upper-arm IK aim. Always push a target while the cursor
+    // is on-canvas in aim mode — when there is no close hit, _aimPoint
+    // is a synthetic point at MAX_TORCH_HIT_DISTANCE along the camera
+    // ray, so the arm still tracks the cursor instead of resetting.
+    this.#character?.setTorchAimTarget?.(aimWorldPoint);
 
     this.#poolLight.position.copy(this.#poolPointFor(closeHit?.point ?? _aimPoint));
     this.#poolLight.intensity = THREE.MathUtils.lerp(this.#poolLight.intensity, POOL_AIM_INTENSITY, INTENSITY_LERP);

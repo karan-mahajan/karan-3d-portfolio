@@ -21,15 +21,27 @@ const TORCH_FLAME_COLOR = 0xff8833;
 const TORCH_HAND_LIGHT_LOCAL = { x: 0, y: 0.88, z: 0 };
 const TORCH_FLAME_IDLE_EMISSIVE = 0.35;
 const TORCH_FLAME_AIM_EMISSIVE = 1.8;
-const TORCH_AIM_YAW_LIMIT = 0.85;
-const TORCH_AIM_PITCH_LIMIT = 0.55;
 
-const _torchAimEuler = new THREE.Euler(0, 0, 0, 'XYZ');
-const _torchAimQuat = new THREE.Quaternion();
-const _torchAimHandWorld = new THREE.Vector3();
-const _torchAimHandLocal = new THREE.Vector3();
-const _torchAimTargetLocal = new THREE.Vector3();
-const _torchAimDir = new THREE.Vector3();
+// One-bone IK aim on the upper-arm bone (shoulder). The previous attempt
+// stacked Euler rotations across shoulder + forearm + hand with a roll
+// component, which read as a dislocated joint. Here we compute the
+// world-space delta that rotates the animated arm direction onto the
+// cursor direction, transform it into the shoulder's parent-local space,
+// and premultiply — smoothed by lerping the *target point*, so easing
+// happens in world space (cursor jumps don't snap the arm).
+const TORCH_AIM_LAMBDA = 14;          // higher = snappier follow
+const TORCH_AIM_MAX_ANGLE = 1.05;     // ~60° from animated pose — past this, clamp
+const TORCH_AIM_TARGET_OFFSET_Y = 0;  // optional bias if torch should aim slightly up
+
+const _aimShoulderWorld = new THREE.Vector3();
+const _aimHandWorld = new THREE.Vector3();
+const _aimCurrentDir = new THREE.Vector3();
+const _aimTargetDir = new THREE.Vector3();
+const _aimWorldDelta = new THREE.Quaternion();
+const _aimParentWorldQuat = new THREE.Quaternion();
+const _aimParentInvQuat = new THREE.Quaternion();
+const _aimLocalDelta = new THREE.Quaternion();
+const _aimIdentity = new THREE.Quaternion();
 
 // Each entry: a GLB whose first animation clip is extracted and renamed to
 // `action`. The mesh inside is discarded — only the AnimationClip is kept.
@@ -69,7 +81,10 @@ function stripRootMotion(clip) {
 }
 
 const UPPER_BODY_ONLY_ACTIONS = new Set(['torchIdle', 'torchAim', 'torchEquip']);
-const TORCH_OVERLAY_WEIGHT = 2.2;
+// 2.2 was over-driving the additive clip and contributed to the
+// "dislocated shoulder" look; 1.0 keeps the canned arm-raise pose visible
+// while leaving headroom for the IK aim layer to deflect from it.
+const TORCH_OVERLAY_WEIGHT = 1.0;
 
 /**
  * Mixamo FBX exports name bones like "mixamorigHips" (or "mixamorig:Hips").
@@ -114,16 +129,17 @@ export class Character {
     this.rootBone = null;
     this.rootBoneBindPos = new THREE.Vector3();
     this.torchHandBone = null;
-    this.leftArmBone = null;
-    this.leftForeArmBone = null;
     this.leftHandBone = null;
     this.rightHandBone = null;
+    this.leftArmBone = null;          // upper-arm (shoulder) — IK aim driver
     this.torchMesh = null;
     this.torchLight = null;
     this.torchFlameMaterials = [];
-    this.torchAimNdc = new THREE.Vector2();
+
     this.torchAimTarget = new THREE.Vector3();
     this.hasTorchAimTarget = false;
+    this._smoothedAimTarget = new THREE.Vector3();
+    this._smoothedAimInit = false;
   }
 
   async load() {
@@ -186,14 +202,11 @@ export class Character {
       if (!leftHand && /lefthand/i.test(child.name) && !/lefthand(index|middle|ring|pinky|thumb)/i.test(child.name)) {
         leftHand = child;
       }
-      if (!this.leftArmBone && /leftarm/i.test(child.name) && !/leftforearm|lefthand/i.test(child.name)) {
-        this.leftArmBone = child;
-      }
-      if (!this.leftForeArmBone && /leftforearm/i.test(child.name)) {
-        this.leftForeArmBone = child;
-      }
       if (!rightHand && /righthand/i.test(child.name) && !/righthand(index|middle|ring|pinky|thumb)/i.test(child.name)) {
         rightHand = child;
+      }
+      if (!this.leftArmBone && /leftarm/i.test(child.name) && !/leftforearm|lefthand/i.test(child.name)) {
+        this.leftArmBone = child;
       }
     });
     this.leftHandBone = leftHand;
@@ -353,20 +366,19 @@ export class Character {
     }
   }
 
-  setTorchAimInput(ndc, target = null) {
-    if (!ndc) {
+  /**
+   * Push the world-space point the torch cursor is hovering. The IK layer
+   * will smoothly slew the upper arm toward it. Pass null when the cursor
+   * has no valid hit so the arm can ease back to the canned aim pose.
+   */
+  setTorchAimTarget(point) {
+    if (!point) {
       this.hasTorchAimTarget = false;
-      this.torchAimNdc.set(0, 0);
       return;
     }
-    this.torchAimNdc.set(
-      THREE.MathUtils.clamp(ndc.x, -1, 1),
-      THREE.MathUtils.clamp(ndc.y, -1, 1),
-    );
-    if (target) {
-      this.torchAimTarget.copy(target);
-      this.hasTorchAimTarget = true;
-    }
+    this.torchAimTarget.copy(point);
+    if (TORCH_AIM_TARGET_OFFSET_Y) this.torchAimTarget.y += TORCH_AIM_TARGET_OFFSET_Y;
+    this.hasTorchAimTarget = true;
   }
 
   get torchFlameAimIntensity() {
@@ -412,7 +424,6 @@ export class Character {
     this._torchOverlayAction.fadeOut(fade);
     this._torchOverlayAction = null;
     this._torchOverlayName = null;
-    this.setTorchAimInput(null);
   }
 
   /**
@@ -463,41 +474,65 @@ export class Character {
     if (this.rootBone) {
       this.rootBone.position.copy(this.rootBoneBindPos);
     }
-    this.#applyTorchAimOffset();
+    this.#applyTorchAimRotation(delta);
   }
 
-  #applyTorchAimOffset() {
-    if (this._torchOverlayName !== 'torchAim') return;
-    let yaw = this.torchAimNdc.x * TORCH_AIM_YAW_LIMIT;
-    let pitch = -this.torchAimNdc.y * TORCH_AIM_PITCH_LIMIT;
+  /**
+   * One-bone IK at the upper arm. Reads world-space shoulder + hand from
+   * the just-animated pose, computes the world delta that rotates the
+   * current arm direction onto the (smoothed) cursor target, then converts
+   * that into shoulder parent-local space and premultiplies the animated
+   * quaternion. Smoothing happens by lerping the *target point* — so a
+   * sudden cursor jump eases over ~1/lambda seconds instead of snapping.
+   *
+   * When aim is inactive (or no target) the smoothed point chases the
+   * hand world position, which naturally yields an identity delta — the
+   * arm releases back to the canned animation pose without a jerk.
+   */
+  #applyTorchAimRotation(delta) {
+    if (!this.leftArmBone || !this.leftHandBone) return;
+    const aimActive = this._torchOverlayName === 'torchAim';
 
-    if (this.hasTorchAimTarget && (this.torchLight || this.leftHandBone)) {
-      const source = this.torchLight ?? this.leftHandBone;
-      source.getWorldPosition(_torchAimHandWorld);
-      _torchAimHandLocal.copy(_torchAimHandWorld);
-      _torchAimTargetLocal.copy(this.torchAimTarget);
-      this.root.worldToLocal(_torchAimHandLocal);
-      this.root.worldToLocal(_torchAimTargetLocal);
-      _torchAimDir.subVectors(_torchAimTargetLocal, _torchAimHandLocal);
-      const flat = Math.max(0.001, Math.hypot(_torchAimDir.x, _torchAimDir.z));
-      yaw = THREE.MathUtils.clamp(Math.atan2(_torchAimDir.x, _torchAimDir.z), -TORCH_AIM_YAW_LIMIT, TORCH_AIM_YAW_LIMIT);
-      pitch = THREE.MathUtils.clamp(Math.atan2(_torchAimDir.y, flat), -TORCH_AIM_PITCH_LIMIT, TORCH_AIM_PITCH_LIMIT);
+    this.leftHandBone.getWorldPosition(_aimHandWorld);
+    this.leftArmBone.getWorldPosition(_aimShoulderWorld);
+
+    if (!this._smoothedAimInit) {
+      this._smoothedAimTarget.copy(_aimHandWorld);
+      this._smoothedAimInit = true;
     }
 
-    if (this.leftArmBone) {
-      _torchAimEuler.set(pitch * 0.75, yaw * 0.85, -yaw * 0.28, 'XYZ');
-      _torchAimQuat.setFromEuler(_torchAimEuler);
-      this.leftArmBone.quaternion.multiply(_torchAimQuat);
+    const desired = (aimActive && this.hasTorchAimTarget) ? this.torchAimTarget : _aimHandWorld;
+    const k = 1 - Math.exp(-TORCH_AIM_LAMBDA * Math.min(delta, 0.1));
+    this._smoothedAimTarget.lerp(desired, k);
+
+    _aimCurrentDir.subVectors(_aimHandWorld, _aimShoulderWorld);
+    _aimTargetDir.subVectors(this._smoothedAimTarget, _aimShoulderWorld);
+    if (_aimCurrentDir.lengthSq() < 1e-6 || _aimTargetDir.lengthSq() < 1e-6) return;
+    _aimCurrentDir.normalize();
+    _aimTargetDir.normalize();
+
+    _aimWorldDelta.setFromUnitVectors(_aimCurrentDir, _aimTargetDir);
+
+    // Clamp the world delta to TORCH_AIM_MAX_ANGLE so an off-screen cursor
+    // can't fold the arm behind the back.
+    const cos = THREE.MathUtils.clamp(_aimCurrentDir.dot(_aimTargetDir), -1, 1);
+    const angle = Math.acos(cos);
+    if (angle > TORCH_AIM_MAX_ANGLE) {
+      const t = TORCH_AIM_MAX_ANGLE / angle;
+      _aimWorldDelta.slerp(_aimIdentity, 1 - t).normalize();
     }
-    if (this.leftForeArmBone) {
-      _torchAimEuler.set(pitch * 0.45, yaw * 0.4, -yaw * 0.16, 'XYZ');
-      _torchAimQuat.setFromEuler(_torchAimEuler);
-      this.leftForeArmBone.quaternion.multiply(_torchAimQuat);
-    }
-    if (this.leftHandBone) {
-      _torchAimEuler.set(pitch * 0.25, yaw * 0.25, 0, 'XYZ');
-      _torchAimQuat.setFromEuler(_torchAimEuler);
-      this.leftHandBone.quaternion.multiply(_torchAimQuat);
-    }
+
+    // Lift world delta into shoulder parent-local space:
+    //   q_extra_local = parent_world_inv * delta_world * parent_world
+    // Premultiplying onto the bone's animated quaternion appends the
+    // rotation in world space without touching parent transforms.
+    this.leftArmBone.parent.getWorldQuaternion(_aimParentWorldQuat);
+    _aimParentInvQuat.copy(_aimParentWorldQuat).invert();
+    _aimLocalDelta
+      .copy(_aimParentInvQuat)
+      .multiply(_aimWorldDelta)
+      .multiply(_aimParentWorldQuat);
+
+    this.leftArmBone.quaternion.premultiply(_aimLocalDelta);
   }
 }
