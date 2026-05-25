@@ -4,8 +4,13 @@ import { svgToWorld, worldToSvg } from './coords.js';
 import { renderIslandMap, svgEl } from './MapMarkers.js';
 
 const SIZE = 800;
-const DAY_THUMB = new URL('../../docs/day.webp', import.meta.url).href;
-const NIGHT_THUMB = new URL('../../docs/night.webp', import.meta.url).href;
+const SECTION_THUMBS = {
+  projects: new URL('../../static/map-thumbs/projects.webp', import.meta.url).href,
+  experience: new URL('../../static/map-thumbs/experience.webp', import.meta.url).href,
+  skills: new URL('../../static/map-thumbs/skills.webp', import.meta.url).href,
+  contact: new URL('../../static/map-thumbs/contact.webp', import.meta.url).href,
+};
+const DEFAULT_THUMB = SECTION_THUMBS.projects;
 
 export class MapOverlay {
   constructor({
@@ -39,7 +44,7 @@ export class MapOverlay {
         <aside class="map-preview">
           <div class="map-preview-eyebrow">Explorer map</div>
           <h2>Choose a destination</h2>
-          <img alt="" src="${DAY_THUMB}" />
+          <img alt="" src="${DEFAULT_THUMB}" />
           <p>Hover a marker for a section preview. Click open land to drop a flag and walk there.</p>
         </aside>
         <button class="map-reset" type="button">Reset Discovery</button>
@@ -185,7 +190,7 @@ export class MapOverlay {
 
   #showPreview(section) {
     const discovered = this.discovery?.isDiscovered?.(section.id);
-    const img = discovered ? NIGHT_THUMB : DAY_THUMB;
+    const img = SECTION_THUMBS[section.id] ?? DEFAULT_THUMB;
     this.preview.innerHTML = `
       <div class="map-preview-eyebrow">${discovered ? 'Discovered' : 'Marked route'}</div>
       <h2>${section.name}</h2>
