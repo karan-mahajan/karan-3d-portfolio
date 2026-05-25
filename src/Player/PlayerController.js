@@ -5,9 +5,19 @@ import * as THREE from 'three';
  * Pure logic — no physics yet (Rapier lands in Step 7).
  */
 export class PlayerController {
-  static WALK_SPEED = 4;
-  static RUN_SPEED = 8;
-  static TURN_LERP = 0.18;
+  static WALK_SPEED = 3.6;
+  static RUN_SPEED = 7.2;
+  // Speed ramps instead of snapping. The numbers keep controls responsive
+  // while leaving enough pickup / release time for the animation blend to
+  // read as weight instead of a hard velocity step.
+  static ACCELERATION = 14;
+  static DECELERATION = 18;
+  // Extra authority while input direction changes, so W→A / W→S arcs feel
+  // controlled without snapping the velocity vector sideways in one frame.
+  static DIRECTION_CHANGE_ACCELERATION = 30;
+  // Delta-based turn rate (rad/s). Replaces a fixed per-frame lerp factor so
+  // turn smoothness is identical at 60 / 144 fps.
+  static TURN_SPEED = 12;
 
   constructor(playerCamera) {
     this.playerCamera = playerCamera;
@@ -20,6 +30,18 @@ export class PlayerController {
     // slows the character down without forking the speed constants.
     this.speedMultiplier = 1.0;
     this.actionSpeedMultiplier = 1.0;
+
+    // Smoothed speed magnitude (m/s). Ramped toward the target speed at
+    // ACCEL / DECEL each frame so velocity has inertia.
+    this._currentSpeed = 0;
+    this._currentVelocity = new THREE.Vector3();
+    this._targetVelocity = new THREE.Vector3();
+    this._velocityDelta = new THREE.Vector3();
+    // Last non-zero movement direction. Used during the deceleration tail
+    // (input released, but _currentSpeed still > 0) so the character glides
+    // forward in their last facing direction instead of dropping velocity
+    // to zero the instant keys release.
+    this._lastDirection = new THREE.Vector3(0, 0, 1);
 
     // Mobile joystick intent. UI/UIController writes this every move event;
     // sample() reads it as an alternative to WASD. `active` is true while
@@ -71,22 +93,37 @@ export class PlayerController {
     let x = 0;
     let z = 0;
     let w = false, s = false, a = false, d = false;
-    if (!this.paused) {
-      w = this.keys.has('KeyW') || this.keys.has('ArrowUp');
-      s = this.keys.has('KeyS') || this.keys.has('ArrowDown');
-      a = this.keys.has('KeyA') || this.keys.has('ArrowLeft');
-      d = this.keys.has('KeyD') || this.keys.has('ArrowRight');
-      if (w) z += 1;
-      if (s) z -= 1;
-      if (a) x -= 1;
-      if (d) x += 1;
-      // Joystick takes precedence when keyboard intent is zero. The intent
-      // vector is later normalized, so passing the raw fractional joystick
-      // values is fine — direction is preserved, magnitude is discarded.
-      if (this.mobileIntent.active && x === 0 && z === 0) {
-        x = this.mobileIntent.x;
-        z = this.mobileIntent.z;
-      }
+    if (this.paused) {
+      this._currentSpeed = 0;
+      this._currentVelocity.set(0, 0, 0);
+      return {
+        velocity: this._currentVelocity.clone(),
+        speed: 0,
+        moving: false,
+        facing: null,
+        pureBackward: false,
+        pureRight: false,
+        pureLeft: false,
+        delta,
+      };
+    }
+
+    w = this.keys.has('KeyW') || this.keys.has('ArrowUp');
+    s = this.keys.has('KeyS') || this.keys.has('ArrowDown');
+    a = this.keys.has('KeyA') || this.keys.has('ArrowLeft');
+    d = this.keys.has('KeyD') || this.keys.has('ArrowRight');
+    if (w) z += 1;
+    if (s) z -= 1;
+    if (a) x -= 1;
+    if (d) x += 1;
+    // Joystick takes precedence when keyboard intent is zero. Preserve its
+    // fractional magnitude so small thumb offsets produce a careful walk
+    // instead of instantly normalizing to full speed.
+    let inputAmount = Math.min(1, Math.hypot(x, z));
+    if (this.mobileIntent.active && x === 0 && z === 0) {
+      x = this.mobileIntent.x;
+      z = this.mobileIntent.z;
+      inputAmount = Math.min(1, Math.hypot(x, z));
     }
 
     // Single-direction tags so the animation state machine can choose a
@@ -114,13 +151,49 @@ export class PlayerController {
       : this.isRunning
       ? PlayerController.RUN_SPEED
       : PlayerController.WALK_SPEED;
-    const speed = baseSpeed * this.speedMultiplier * this.actionSpeedMultiplier;
+
+    // Ramp the whole velocity vector toward the target, not just the scalar
+    // speed. That gives direction changes a short, readable arc instead of
+    // instantly swapping the movement vector while the mesh yaw catches up.
+    const hasInput = this.intent.lengthSq() > 1e-6;
+    if (hasInput) this._lastDirection.copy(this.intent);
+
+    const targetSpeed = hasInput
+      ? baseSpeed * this.speedMultiplier * this.actionSpeedMultiplier * inputAmount
+      : 0;
+    this._targetVelocity.copy(this.intent).multiplyScalar(targetSpeed);
+
+    const currentSpeed = this._currentVelocity.length();
+    const changingDirection = hasInput
+      && currentSpeed > 0.05
+      && this._currentVelocity.dot(this._targetVelocity) < currentSpeed * targetSpeed * 0.65;
+    const rate = hasInput
+      ? changingDirection
+        ? PlayerController.DIRECTION_CHANGE_ACCELERATION
+        : PlayerController.ACCELERATION
+      : PlayerController.DECELERATION;
+    this._velocityDelta.copy(this._targetVelocity).sub(this._currentVelocity);
+    const velocityDeltaLength = this._velocityDelta.length();
+    const maxVelocityStep = rate * delta;
+    if (velocityDeltaLength <= maxVelocityStep || velocityDeltaLength < 1e-6) {
+      this._currentVelocity.copy(this._targetVelocity);
+    } else {
+      this._currentVelocity.addScaledVector(this._velocityDelta, maxVelocityStep / velocityDeltaLength);
+    }
+
+    const speed = this._currentVelocity.length();
+    this._currentSpeed = speed;
+    const direction = speed > 1e-6
+      ? this._currentVelocity.clone().normalize()
+      : this._lastDirection;
+    // Threshold so the deceleration tail eventually flips to idle.
+    const moving = speed > 0.05;
 
     return {
-      velocity: this.intent.clone().multiplyScalar(speed),
+      velocity: this._currentVelocity.clone(),
       speed,
-      moving: this.intent.lengthSq() > 1e-6,
-      facing: this.intent.lengthSq() > 1e-6 ? Math.atan2(this.intent.x, this.intent.z) : null,
+      moving,
+      facing: moving ? Math.atan2(direction.x, direction.z) : null,
       pureBackward,
       pureRight,
       pureLeft,

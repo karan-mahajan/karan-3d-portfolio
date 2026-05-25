@@ -453,7 +453,12 @@ export class Character {
     if (this.currentAction && this.currentAction !== next) {
       this.currentAction.fadeOut(fade);
     }
+    // .reset() doesn't clear timeScale (only weight + paused + loop). Player
+    // sets timeScale on walking/running each frame to match ground speed,
+    // so we must reset it here or a stale value would carry into the next
+    // play (e.g. waving played at 0.3× because the player stopped mid-walk).
     next.reset().fadeIn(fade).play();
+    next.timeScale = 1;
 
     this.currentName = name;
     this.currentAction = next;

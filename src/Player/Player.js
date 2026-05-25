@@ -18,6 +18,18 @@ export class Player {
   static WATER_ENTRY_RADIUS = 45;
   static WATER_SLOWDOWN_PER_M = 0.1;
   static WATER_SLOWDOWN_MIN = 0.15;
+
+  // Natural foot-speed of each locomotion clip in m/s (estimated from typical
+  // Mixamo / Avaturn pacing; the position track was stripped on import so we
+  // can't measure at runtime). Used as `timeScale = currentSpeed / natural`
+  // so feet plant on the ground instead of skating. Tune in-game if the foot
+  // still slides — increase the value if feet move too fast, decrease if too
+  // slow. See CLAUDE.md / fix-character-movement notes.
+  static ANIM_NATURAL_SPEED = {
+    walking: 2.3,
+    running: 5.2,
+    crouchWalk: 1.35,
+  };
   // Soft clamp just past the wading band — island ends at r=45 and the
   // ocean floor hits y=-2 by r=57, so anything further lets the player
   // walk fully submerged with no swim animation. 52 lands the wall at
@@ -148,14 +160,18 @@ export class Player {
       this._idleTimer += delta;
     }
 
-    // Smoothly rotate to face movement direction.
+    // Smoothly rotate to face movement direction. Delta-time turn-rate
+    // (rad/s) so 60fps and 144fps both reach the target in the same wall
+    // time — a fixed per-frame lerp factor doesn't.
     const wrap = (a, b) => {
       let d = b - a;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
       return d;
     };
-    this._currentYaw += wrap(this._currentYaw, this._targetYaw) * PlayerController.TURN_LERP;
+    const yawDiff = wrap(this._currentYaw, this._targetYaw);
+    const maxTurn = PlayerController.TURN_SPEED * delta;
+    this._currentYaw += Math.sign(yawDiff) * Math.min(Math.abs(yawDiff), maxTurn);
     // Use YXZ Euler order so the slope tilt below applies in the player's
     // post-yaw local frame (otherwise the lean direction would rotate with
     // the camera azimuth, which reads as wobble).
@@ -323,11 +339,31 @@ export class Player {
       // Idle → walking: brief startWalking bridge for natural pickup.
       if (this._state === 'idle' && nextState === 'walking' && this.character.actions.startWalking) {
         this._state = 'walking'; // record the target so we don't re-trigger
-        this.character.play('startWalking', { once: true, then: 'walking', interruptible: true });
+        this.character.play('startWalking', {
+          once: true,
+          then: 'walking',
+          interruptible: true,
+          fade: 0.15,
+        });
         return;
       }
+      // Locomotion → idle reads smoother with a slightly longer crossfade;
+      // the walk clip's timeScale is also approaching zero by this point,
+      // so the longer fade hides the last-frame freeze.
+      const exitingLoco = (this._state === 'walking' || this._state === 'running' || this._state === 'crouchWalk')
+        && nextState === 'idle';
       this._state = nextState;
-      this.character.play(nextState);
+      this.character.play(nextState, exitingLoco ? { fade: 0.3 } : undefined);
+    }
+
+    // Per-frame timeScale on the active locomotion clip so foot speed
+    // tracks ground speed (no skating). Wading slows the player → the walk
+    // anim slows in lockstep. During the decel tail, speed → 0 and timeScale
+    // → 0, so the walk visually freezes just before the crossfade to idle.
+    const naturalSpeed = Player.ANIM_NATURAL_SPEED[this._state];
+    if (naturalSpeed) {
+      const clip = this.character.actions[this._state];
+      if (clip) clip.timeScale = sample.speed / naturalSpeed;
     }
   }
 
