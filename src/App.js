@@ -25,6 +25,7 @@ import { Leaves } from './Effects/Leaves.js';
 import { Footprints } from './Effects/Footprints.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
+import { UIController } from './UI/UIController.js';
 
 /**
  * Core application: scene, renderer, camera, render loop, async asset boot.
@@ -290,6 +291,24 @@ export class App extends EventTarget {
     // as each one settles. No need to block the boot resolution on this.
     this.interactables.load().catch((err) => console.warn('[Interactables] load failed:', err));
 
+    // UI redesign controller — owns desktop layout (top-left + bottom-left
+    // stacks, bottom-right controls panel) and, on touch devices, the
+    // mobile joystick + interact pill + action grid. Constructed here so
+    // all module-owned buttons (audio/rain/wind/leaves/lightning) already
+    // exist in the DOM and can be re-parented into the new containers.
+    this.ui = new UIController({
+      audio: this.audio,
+      rain: this.rain,
+      windLines: this.windLines,
+      leaves: this.leaves,
+      thunderstorm: this.thunderstorm,
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      actionPrompts: this.actionPrompts,
+      interaction: this.interaction,
+    });
+
     // Now that Signs + Billboards exist, wire the player ref so the
     // character spotlight / fill light can follow.
     this.timeOfDay.signs = this.world.signs;
@@ -448,6 +467,9 @@ export class App extends EventTarget {
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, delta);
     if (this.interaction) this.interaction.tick(this.player.position);
     if (this.interactables) this.interactables.update(delta);
+    // UI sync — only does work on mobile (interact-pill label, push-button
+    // enabled state, dance toggle teardown). On desktop this is a no-op.
+    if (this.ui) this.ui.tick();
     this.fireflies.update(elapsed);
     if (this.water) this.water.update(elapsed, delta, this.player.position, sample);
     this.rain.update(delta);

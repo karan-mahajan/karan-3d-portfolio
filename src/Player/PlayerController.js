@@ -20,6 +20,12 @@ export class PlayerController {
     // slows the character down without forking the speed constants.
     this.speedMultiplier = 1.0;
 
+    // Mobile joystick intent. UI/UIController writes this every move event;
+    // sample() reads it as an alternative to WASD. `active` is true while
+    // the joystick thumb is offset from centre (any non-zero direction).
+    this.mobileIntent = { x: 0, z: 0, active: false };
+    this.mobileRunning = false;
+
     this._onDown = (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
@@ -30,8 +36,20 @@ export class PlayerController {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
+  /** Touch UI writes the joystick state here. `x` is right-positive, `z` is
+   *  forward-positive (already negated from screen-Y by the caller). The
+   *  flag is checked by sample() — when active, joystick overrides WASD. */
+  setMobileIntent({ x = 0, z = 0, running = false } = {}) {
+    this.mobileIntent.x = x;
+    this.mobileIntent.z = z;
+    this.mobileIntent.active = (x !== 0 || z !== 0);
+    this.mobileRunning = !!running && this.mobileIntent.active;
+  }
+
   get isRunning() {
-    return !this.paused && !this.isCrouching && (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+    if (this.paused || this.isCrouching) return false;
+    if (this.mobileRunning) return true;
+    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
   }
 
   get isJumping() {
@@ -61,10 +79,19 @@ export class PlayerController {
       if (s) z -= 1;
       if (a) x -= 1;
       if (d) x += 1;
+      // Joystick takes precedence when keyboard intent is zero. The intent
+      // vector is later normalized, so passing the raw fractional joystick
+      // values is fine — direction is preserved, magnitude is discarded.
+      if (this.mobileIntent.active && x === 0 && z === 0) {
+        x = this.mobileIntent.x;
+        z = this.mobileIntent.z;
+      }
     }
 
     // Single-direction tags so the animation state machine can choose a
     // matching clip (backwards walk, sidestep) and skip the yaw turn.
+    // Mobile joystick is continuous direction — these stay false unless
+    // the player is using WASD.
     const pureBackward = s && !w && !a && !d;
     const pureRight = d && !w && !s && !a;
     const pureLeft  = a && !w && !s && !d;

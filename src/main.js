@@ -63,7 +63,6 @@ async function bootstrap() {
 
   const welcomeScreen = document.getElementById('welcome-screen');
   const startBtn = document.getElementById('welcome-start');
-  const controlsHud = document.getElementById('controls-hud');
 
   // Once the user has clicked Start (or pressed any movement key) we set
   // this session flag so subsequent reloads in the same tab skip the welcome
@@ -82,7 +81,6 @@ async function bootstrap() {
     started = true;
     sessionStorage.setItem(STARTED_KEY, '1');
     welcomeScreen?.classList.add('hidden');
-    controlsHud?.classList.remove('hidden');
     document.body.classList.remove('booting');
     if (app.player?.controller) app.player.controller.paused = false;
     app.audio?.start();
@@ -93,10 +91,9 @@ async function bootstrap() {
   };
 
   if (alreadyStarted) {
-    // Fast path: no welcome overlay, just hide loading + reveal controls HUD.
+    // Fast path: no welcome overlay, just hide loading and unpause input.
     setTimeout(() => {
       loadingScreen?.classList.add('hidden');
-      controlsHud?.classList.remove('hidden');
       document.body.classList.remove('booting');
       if (app.player?.controller) app.player.controller.paused = false;
       started = true;

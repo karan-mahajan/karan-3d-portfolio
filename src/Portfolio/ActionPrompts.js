@@ -269,32 +269,8 @@ export class ActionPrompts {
         return;
       }
 
-      if (e.code === 'KeyP' && !e.repeat && !hasModifier && !this.globalPushActive && !this.activeHoldLoop && !this.oneShotActive && !this.activeZoneLoop) {
-        // Realism: P only fires when the player is actually facing a real
-        // pushable in range. currentPushSpot is set by tick() after the
-        // proximity-and-facing filter, so its presence is the gate.
-        if (!this.currentPushSpot) return;
-        // Body-clipping fix: the standing push animation extends the arms
-        // (and slightly leans the head) forward. If the player is flush
-        // against the object, those forward-reaching parts pass through the
-        // visible mesh. Snap the player outward along the spot→player ray
-        // to a comfortable push distance before the animation plays.
-        this.activePushSpot = this.currentPushSpot;
-        this._snapToPushDistance(this.activePushSpot, 0);
-        if (this.player.startLoopAction('push')) {
-          this.globalPushActive = true;
-          this.pushStartSec = this._elapsed;
-          this.pushStartMs = performance.now();
-          const type = (this.currentPushSpot && this.currentPushSpot.type) || 'generic';
-          const pool = PUSH_JOKES[type] || PUSH_JOKES.generic;
-          this._pushJokeDeck = shuffleCopy(pool);
-          this._activeJokeText = null;
-          this.controller.paused = true;
-          if (this.playerCamera) this.playerCamera.applyActionZoom();
-          if (this.audio) this.audio.startPush();
-        } else {
-          this.activePushSpot = null;
-        }
+      if (e.code === 'KeyP' && !e.repeat && !hasModifier) {
+        this.startPush();
         return;
       }
 
@@ -437,6 +413,57 @@ export class ActionPrompts {
     if (this.playerCamera) this.playerCamera.releaseActionZoom();
     if (this.audio) this.audio.endPush();
     this._hidePushJoke();
+  }
+
+  // ── Public action triggers ────────────────────────────────────────────
+  // Mobile touch buttons (src/UI/UIController.js) call these to reuse the
+  // existing clearance / camera-zoom / audio / paused-state logic without
+  // simulating keyboard events. Same gates the keyboard listener applies.
+
+  triggerBackflip() {
+    if (!this._canStartGlobalAction()) return;
+    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.zooming)) return;
+    this._triggerGlobalAction('backflip', 'Not enough space to backflip');
+  }
+
+  triggerCartwheel() {
+    if (!this._canStartGlobalAction()) return;
+    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.zooming)) return;
+    this._triggerGlobalAction('cartwheel', 'Not enough space to cartwheel');
+  }
+
+  startPush() {
+    if (this.globalPushActive || this.activeHoldLoop || this.oneShotActive || this.activeZoneLoop) return;
+    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.zooming)) return;
+    // Realism: P only fires when the player is actually facing a real
+    // pushable in range. currentPushSpot is set by tick() after the
+    // proximity-and-facing filter, so its presence is the gate.
+    if (!this.currentPushSpot) return;
+    // Body-clipping fix: the standing push animation extends the arms
+    // (and slightly leans the head) forward. If the player is flush
+    // against the object, those forward-reaching parts pass through the
+    // visible mesh. Snap the player outward along the spot→player ray
+    // to a comfortable push distance before the animation plays.
+    this.activePushSpot = this.currentPushSpot;
+    this._snapToPushDistance(this.activePushSpot, 0);
+    if (this.player.startLoopAction('push')) {
+      this.globalPushActive = true;
+      this.pushStartSec = this._elapsed;
+      this.pushStartMs = performance.now();
+      const type = (this.currentPushSpot && this.currentPushSpot.type) || 'generic';
+      const pool = PUSH_JOKES[type] || PUSH_JOKES.generic;
+      this._pushJokeDeck = shuffleCopy(pool);
+      this._activeJokeText = null;
+      this.controller.paused = true;
+      if (this.playerCamera) this.playerCamera.applyActionZoom();
+      if (this.audio) this.audio.startPush();
+    } else {
+      this.activePushSpot = null;
+    }
+  }
+
+  endPush() {
+    if (this.globalPushActive) this._endGlobalPush();
   }
 
   /**

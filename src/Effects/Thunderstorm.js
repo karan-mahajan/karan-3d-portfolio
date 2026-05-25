@@ -396,36 +396,12 @@ export class Thunderstorm {
     if (!el) {
       el = document.createElement('div');
       el.id = 'lightning-msg';
-      // Dark translucent pill behind the text so the message stays
-      // readable on every background — daytime sky (the painful case
-      // the user reported), tree canopy, sand, water, or night. White
-      // text on the pill + a soft blue text-glow keeps the storm-y
-      // aesthetic. backdrop-filter blurs the scene behind for extra
-      // separation on busy textures.
-      el.style.cssText = `
-        position: fixed;
-        top: 15%;
-        left: 50%;
-        transform: translateX(-50%);
-        padding: 10px 22px;
-        border-radius: 999px;
-        background: rgba(12, 18, 32, 0.78);
-        border: 1px solid rgba(180, 200, 255, 0.35);
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 24px rgba(120, 140, 255, 0.35);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-        font-family: 'Oswald', sans-serif;
-        font-size: 18px;
-        font-weight: 600;
-        letter-spacing: 2px;
-        color: #ffffff;
-        text-shadow: 0 0 18px rgba(140, 160, 255, 0.9), 0 1px 2px rgba(0, 0, 0, 0.6);
-        opacity: 0;
-        pointer-events: none;
-        z-index: 60;
-        white-space: nowrap;
-        transition: opacity 0.15s ease;
-      `;
+      // Static look (dark translucent pill with blue glow) lives in
+      // style.css — see `#lightning-msg`. Responsive font-size + max-width
+      // there keeps the message readable instead of nowrap-overflowing on
+      // narrow phones. Only opacity is driven inline because we restart
+      // the fade on every strike.
+      el.style.opacity = '0';
       document.body.appendChild(el);
     }
 
