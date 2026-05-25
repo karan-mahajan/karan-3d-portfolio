@@ -26,6 +26,7 @@ import { Footprints } from './Effects/Footprints.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 import { UIController } from './UI/UIController.js';
+import { Tutorial } from './UI/Tutorial.js';
 import { TorchLight } from './Torch/TorchLight.js';
 import { Achievements } from './Systems/Achievements.js';
 import { AchievementToast } from './UI/AchievementToast.js';
@@ -375,6 +376,15 @@ export class App extends EventTarget {
       controller: this.player.controller,
       actionPrompts: this.actionPrompts,
       interaction: this.interaction,
+    });
+
+    // First-visit tutorial coachmarks. Constructed eagerly so main.js can
+    // call .start() at the right moment (after the welcome overlay clears
+    // and the controller is unpaused). No-ops on repeat visits via the
+    // localStorage flag inside Tutorial.
+    this.tutorial = new Tutorial({
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
     });
 
     // Now that Signs + Billboards exist, wire the player ref so the

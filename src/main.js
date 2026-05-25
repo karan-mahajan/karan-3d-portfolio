@@ -91,6 +91,9 @@ async function bootstrap() {
     // since Achievements.trigger() is idempotent (no-op when already
     // unlocked), so subsequent reloads in the same session don't re-emit.
     app.achievements?.onJourneyBegin?.();
+    // First-visit coachmarks. Tutorial itself short-circuits on the
+    // localStorage flag, so repeat visitors don't see it.
+    app.tutorial?.start();
     window.removeEventListener('keydown', onKeyStart);
   };
   const onKeyStart = (e) => {
@@ -112,6 +115,7 @@ async function bootstrap() {
       };
       window.addEventListener('click', oneShotAudioStart, { once: true });
       window.addEventListener('keydown', oneShotAudioStart, { once: true });
+      app.tutorial?.start();
     }, 280);
   } else {
     // First-time-in-this-session path: show the welcome overlay.
