@@ -153,6 +153,7 @@ export class TimeOfDay {
    * @param {import('../Portfolio/Billboards.js').Billboards} opts.billboards
    * @param {import('../Portfolio/Signs.js').Signs}           opts.signs
    * @param {THREE.Object3D} opts.playerGroup - the visual player root (rotates with character)
+   * @param {import('../Player/Character.js').Character} [opts.character] - wired post-boot; receives setTorchVisible() on mode flip
    */
   constructor({
     scene,
@@ -169,6 +170,7 @@ export class TimeOfDay {
     billboards = null,
     signs = null,
     playerGroup,
+    character = null,
   }) {
     this.scene = scene;
     this.fog = fog;
@@ -184,6 +186,7 @@ export class TimeOfDay {
     this.billboards = billboards;
     this.signs = signs;
     this.playerGroup = playerGroup;
+    this.character = character;
 
     this.mode = detectAutoMode();
     // Real-time clock drives sun/moon position by default. Set true when
@@ -214,6 +217,7 @@ export class TimeOfDay {
     // auto-detected mode clears the override so the live arc resumes.
     this._manualOverride = mode !== detectAutoMode();
     this.mode = mode;
+    this.character?.setTorchVisible?.(mode === "night");
     this.dispatchEvent?.("change", mode);
     this.#transition(mode, duration);
   }
@@ -243,17 +247,9 @@ export class TimeOfDay {
    * stars + moon following the camera.
    */
   tick(playerPos, camera, elapsed) {
-    // Hide the rim DirectionalLight entirely while it's at night-zero so
-    // it's pulled out of the lighting uniforms and the shader skips its
-    // contribution. Threshold matches the live tween — flipping near
-    // intensity≈0 has no visible "pop" since a 0-intensity light already
-    // contributes nothing. First toggle in each direction compiles a new
-    // shader program for the new dir-light count (a one-time hitch);
-    // subsequent toggles re-use the cached programs.
-    if (this.rim) {
-      const visible = this.rim.intensity > 0.001;
-      if (this.rim.visible !== visible) this.rim.visible = visible;
-    }
+    // Keep the rim light visible even at zero intensity. Toggling
+    // Light.visible changes the shader light count and can trigger a
+    // noticeable compile hitch when switching day/night modes.
     if (this.fillLight && playerGroupExists(this.playerGroup) && camera) {
       // Position the fill BETWEEN the camera and the player so it always
       // lights whichever side of the character the camera is seeing.
@@ -705,11 +701,17 @@ export class TimeOfDay {
     // lamps) must leave the live offset alone — otherwise the sun
     // visibly jumps back to the static seed and then lerps out again.
     if (!this.sunOffset) this.sunOffset = p.sunOffset.clone();
+
+    this.character?.setTorchVisible?.(mode === "night");
   }
 
   #transition(mode, duration) {
     const p = mode === "night" ? NIGHT_PALETTE : DAY_PALETTE;
     const ease = "sine.inOut";
+
+    if (this._activeTweens) {
+      for (const t of this._activeTweens) t.kill?.();
+    }
 
     // Make sure stars/moon are added to the render queue at the start of any
     // fade-in (they're hidden when opacity is ~0).

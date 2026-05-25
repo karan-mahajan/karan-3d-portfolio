@@ -19,6 +19,7 @@ export class PlayerController {
     // Player.update writes this each frame so wading through ocean water
     // slows the character down without forking the speed constants.
     this.speedMultiplier = 1.0;
+    this.actionSpeedMultiplier = 1.0;
 
     // Mobile joystick intent. UI/UIController writes this every move event;
     // sample() reads it as an alternative to WASD. `active` is true while
@@ -113,7 +114,7 @@ export class PlayerController {
       : this.isRunning
       ? PlayerController.RUN_SPEED
       : PlayerController.WALK_SPEED;
-    const speed = baseSpeed * this.speedMultiplier;
+    const speed = baseSpeed * this.speedMultiplier * this.actionSpeedMultiplier;
 
     return {
       velocity: this.intent.clone().multiplyScalar(speed),

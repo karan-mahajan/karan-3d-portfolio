@@ -1,11 +1,11 @@
-import * as THREE from 'three';
-import gsap from 'gsap';
-import { contact } from './ContactData.js';
+import gsap from "gsap";
+import * as THREE from "three";
+import { contact } from "./ContactData.js";
 
-const PROXIMITY = 4.5;        // distance from billboard to show prompt
+const PROXIMITY = 4.5; // distance from billboard to show prompt
 const CONTACT_PROXIMITY = 3.2;
-const ZOOM_DURATION = 1.1;    // seconds
-const ZOOM_STANDOFF = 3.2;    // distance from screen during focused view
+const ZOOM_DURATION = 1.1; // seconds
+const ZOOM_STANDOFF = 3.2; // distance from screen during focused view
 const ZOOM_HEIGHT_OFFSET = 0.0; // vertical bias relative to screen center
 
 /**
@@ -17,7 +17,18 @@ const ZOOM_HEIGHT_OFFSET = 0.0; // vertical bias relative to screen center
  *   destroy() — removes listeners (not currently used; lifetime == app)
  */
 export class Interaction {
-  constructor({ scene, camera, playerCamera, player, controller, billboards, signs = null, audio = null, actionPrompts = null }) {
+  constructor({
+    scene,
+    camera,
+    playerCamera,
+    player,
+    controller,
+    billboards,
+    signs = null,
+    audio = null,
+    actionPrompts = null,
+    timeOfDay = null,
+  }) {
     this.scene = scene;
     this.camera = camera;
     this.playerCamera = playerCamera;
@@ -27,12 +38,16 @@ export class Interaction {
     this.signs = signs;
     this.audio = audio;
     this.actionPrompts = actionPrompts;
+    this.timeOfDay = timeOfDay;
+    this.torchLight = null; // wired post-construction by App.js
 
-    this.activeIndex = -1;   // -1 = not focused
-    this.candidate = null;   // billboard the player is currently near
+    this.activeIndex = -1; // -1 = not focused
+    this.candidate = null; // billboard the player is currently near
     this.contactCandidate = false;
     this.contactOpen = false;
     this.zooming = false;
+    this.torchAiming = false;
+    this._lastTodMode = this.timeOfDay?.mode ?? null;
 
     this.#installDom();
     this.#installKeyListeners();
@@ -41,16 +56,16 @@ export class Interaction {
   // ── DOM ────────────────────────────────────────────────────────────────────
 
   #installDom() {
-    this.promptEl = document.createElement('div');
-    this.promptEl.className = 'billboard-prompt hidden';
+    this.promptEl = document.createElement("div");
+    this.promptEl.className = "billboard-prompt hidden";
     this.promptEl.innerHTML = `
       <span class="key">E</span>
       <span class="label">View <strong class="project-name"></strong></span>
     `;
     document.body.appendChild(this.promptEl);
 
-    this.panelEl = document.createElement('div');
-    this.panelEl.className = 'project-panel hidden';
+    this.panelEl = document.createElement("div");
+    this.panelEl.className = "project-panel hidden";
     this.panelEl.innerHTML = `
       <button class="panel-close" aria-label="Close">×</button>
       <div class="panel-accent"></div>
@@ -69,19 +84,29 @@ export class Interaction {
     `;
     document.body.appendChild(this.panelEl);
 
-    this.panelEl.querySelector('.panel-close').addEventListener('click', () => this.exit());
-    this.panelEl.querySelector('.panel-prev').addEventListener('click', () => this.cycle(-1));
-    this.panelEl.querySelector('.panel-next').addEventListener('click', () => this.cycle(+1));
+    this.panelEl
+      .querySelector(".panel-close")
+      .addEventListener("click", () => this.exit());
+    this.panelEl
+      .querySelector(".panel-prev")
+      .addEventListener("click", () => this.cycle(-1));
+    this.panelEl
+      .querySelector(".panel-next")
+      .addEventListener("click", () => this.cycle(+1));
 
     // ── Contact overlay ────────────────────────────────────────────────────
-    this.contactEl = document.createElement('div');
-    this.contactEl.className = 'contact-panel hidden';
+    this.contactEl = document.createElement("div");
+    this.contactEl.className = "contact-panel hidden";
     const linksHtml = contact.links
-      .map((l) => `<a class="contact-link" href="${l.href}" target="_blank" rel="noopener noreferrer">
+      .map(
+        (
+          l,
+        ) => `<a class="contact-link" href="${l.href}" target="_blank" rel="noopener noreferrer">
         <span class="contact-link-label">${l.label}</span>
         <span class="contact-link-value">${l.value}</span>
-      </a>`)
-      .join('');
+      </a>`,
+      )
+      .join("");
     this.contactEl.innerHTML = `
       <button class="panel-close" aria-label="Close">×</button>
       <div class="contact-accent"></div>
@@ -92,7 +117,17 @@ export class Interaction {
       <div class="panel-hint">ESC to close</div>
     `;
     document.body.appendChild(this.contactEl);
-    this.contactEl.querySelector('.panel-close').addEventListener('click', () => this.closeContact());
+    this.contactEl
+      .querySelector(".panel-close")
+      .addEventListener("click", () => this.closeContact());
+
+    this.torchHintEl = document.createElement("div");
+    this.torchHintEl.className = "billboard-prompt torch-hint hidden";
+    this.torchHintEl.innerHTML = `
+      <span class="key">F</span>
+      <span class="label">Aim torch</span>
+    `;
+    document.body.appendChild(this.torchHintEl);
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -100,38 +135,57 @@ export class Interaction {
   #installKeyListeners() {
     this._onKey = (e) => {
       if (this.zooming) return;
-      if (e.code === 'KeyE') {
+      if (e.code === "KeyE") {
         if (this.contactOpen) return;
         if (this.activeIndex === -1) {
           if (this.contactCandidate) this.openContact();
           else if (this.candidate) this.focus(this.candidate.index);
         }
-      } else if (e.code === 'Escape') {
+      } else if (e.code === "KeyF") {
+        if (this.activeIndex !== -1 || this.contactOpen) return;
+        const torchOn = this.player?.character?.torchMesh?.visible === true;
+        const night = this.timeOfDay?.mode === "night";
+        if (!torchOn || !night) return;
+        this.toggleTorchAim();
+      } else if (e.code === "Escape") {
         if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
+        else if (this.torchAiming) this.exitTorchAim();
       } else if (this.activeIndex !== -1) {
-        if (e.code === 'ArrowLeft') this.cycle(-1);
-        else if (e.code === 'ArrowRight') this.cycle(+1);
+        if (e.code === "ArrowLeft") this.cycle(-1);
+        else if (e.code === "ArrowRight") this.cycle(+1);
       }
     };
-    window.addEventListener('keydown', this._onKey);
+    window.addEventListener("keydown", this._onKey);
   }
 
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   tick(playerPosition) {
+    this.#syncTorchHint();
+    // If the world flipped from night → day mid-aim, exit silently so the
+    // controller speed multiplier and locked anim don't linger.
+    const tod = this.timeOfDay?.mode ?? null;
+    if (tod !== this._lastTodMode) {
+      this._lastTodMode = tod;
+      if (tod !== "night" && this.torchAiming) this.exitTorchAim();
+    }
     if (this.activeIndex !== -1 || this.zooming || this.contactOpen) {
       this.#hidePrompt();
       return;
     }
-    let nearBillboard = this.billboards.closestWithin(playerPosition, PROXIMITY);
+    let nearBillboard = this.billboards.closestWithin(
+      playerPosition,
+      PROXIMITY,
+    );
     // Suppress the prompt when the player is behind the billboard — pure XZ
     // distance fires from either side, which lets the player open a project
     // while staring at the back of the screen.
     if (nearBillboard && !this.#inFrontOf(nearBillboard, playerPosition)) {
       nearBillboard = null;
     }
-    const nearContact = this.signs && this.signs.nearContact(playerPosition, CONTACT_PROXIMITY);
+    const nearContact =
+      this.signs && this.signs.nearContact(playerPosition, CONTACT_PROXIMITY);
     this.candidate = nearBillboard;
     this.contactCandidate = !!nearContact && !nearBillboard;
 
@@ -139,14 +193,15 @@ export class Interaction {
     // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
     // ours. The action prompt is more specific to the player's current state.
     const ap = this.actionPrompts;
-    const apOwnsPrompt = ap && (ap.candidate || ap.activeZoneLoop || ap.activeHoldLoop);
+    const apOwnsPrompt =
+      ap && (ap.candidate || ap.activeZoneLoop || ap.activeHoldLoop);
     if (apOwnsPrompt) {
       this.#hidePrompt();
       return;
     }
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
-    else if (this.contactCandidate) this.#showPrompt('Contact');
+    else if (this.contactCandidate) this.#showPrompt("Contact");
     else this.#hidePrompt();
   }
 
@@ -161,15 +216,15 @@ export class Interaction {
     const fz = Math.cos(yaw);
     const dx = playerPos.x - item.position.x;
     const dz = playerPos.z - item.position.z;
-    return (fx * dx + fz * dz) > 0;
+    return fx * dx + fz * dz > 0;
   }
 
   #showPrompt(name) {
-    this.promptEl.classList.remove('hidden');
-    this.promptEl.querySelector('.project-name').textContent = name;
+    this.promptEl.classList.remove("hidden");
+    this.promptEl.querySelector(".project-name").textContent = name;
   }
   #hidePrompt() {
-    this.promptEl.classList.add('hidden');
+    this.promptEl.classList.add("hidden");
   }
 
   // ── Focus / exit ───────────────────────────────────────────────────────────
@@ -177,6 +232,7 @@ export class Interaction {
   focus(index) {
     const item = this.billboards.items[index];
     if (!item) return;
+    if (this.torchAiming) this.exitTorchAim();
     this.activeIndex = index;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
@@ -211,7 +267,7 @@ export class Interaction {
   exit() {
     if (this.activeIndex === -1) return;
     this.activeIndex = -1;
-    this.panelEl.classList.add('hidden');
+    this.panelEl.classList.add("hidden");
     this.audio?.playMenuClose();
     this.zooming = true;
 
@@ -226,14 +282,14 @@ export class Interaction {
       y: this._returnLook.y,
       z: this._returnLook.z,
       duration: ZOOM_DURATION,
-      ease: 'power2.inOut',
+      ease: "power2.inOut",
     });
     gsap.to(this.camera.position, {
       x: this._returnPos.x,
       y: this._returnPos.y,
       z: this._returnPos.z,
       duration: ZOOM_DURATION,
-      ease: 'power2.inOut',
+      ease: "power2.inOut",
       onUpdate: () => this.camera.lookAt(lookProxy),
       onComplete: () => {
         this.zooming = false;
@@ -255,7 +311,9 @@ export class Interaction {
       item.group.getWorldQuaternion(new THREE.Quaternion()),
     );
 
-    const target = screenWorld.clone().addScaledVector(screenFwd, ZOOM_STANDOFF);
+    const target = screenWorld
+      .clone()
+      .addScaledVector(screenFwd, ZOOM_STANDOFF);
     target.y += ZOOM_HEIGHT_OFFSET;
     const look = screenWorld.clone();
 
@@ -264,12 +322,12 @@ export class Interaction {
       y: target.y,
       z: target.z,
       duration: incoming ? ZOOM_DURATION : ZOOM_DURATION * 0.65,
-      ease: 'power2.inOut',
+      ease: "power2.inOut",
       onUpdate: () => this.camera.lookAt(look),
       onComplete: () => {
         this.camera.lookAt(look);
         this.zooming = false;
-        this.panelEl.classList.remove('hidden');
+        this.panelEl.classList.remove("hidden");
       },
     });
   }
@@ -278,11 +336,12 @@ export class Interaction {
 
   openContact() {
     if (this.contactOpen) return;
+    if (this.torchAiming) this.exitTorchAim();
     this.contactOpen = true;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
     this.controller.paused = true;
-    this.contactEl.classList.remove('hidden');
+    this.contactEl.classList.remove("hidden");
   }
 
   closeContact() {
@@ -290,34 +349,75 @@ export class Interaction {
     this.contactOpen = false;
     this.audio?.playMenuClose();
     this.controller.paused = false;
-    this.contactEl.classList.add('hidden');
+    this.contactEl.classList.add("hidden");
   }
 
   #populatePanel(item) {
     const p = item.project;
-    this.panelEl.querySelector('.panel-title').textContent = p.name;
-    this.panelEl.querySelector('.panel-description').textContent = p.description;
-    this.panelEl.querySelector('.panel-accent').style.background = p.color;
+    this.panelEl.querySelector(".panel-title").textContent = p.name;
+    this.panelEl.querySelector(".panel-description").textContent =
+      p.description;
+    this.panelEl.querySelector(".panel-accent").style.background = p.color;
 
-    const techEl = this.panelEl.querySelector('.panel-tech');
-    techEl.innerHTML = '';
+    const techEl = this.panelEl.querySelector(".panel-tech");
+    techEl.innerHTML = "";
     for (const t of p.tech) {
-      const pill = document.createElement('span');
-      pill.className = 'tech-pill';
+      const pill = document.createElement("span");
+      pill.className = "tech-pill";
       pill.textContent = t;
       techEl.appendChild(pill);
     }
 
-    const link = this.panelEl.querySelector('.panel-link');
+    const link = this.panelEl.querySelector(".panel-link");
     if (p.url) {
       link.href = p.url;
-      link.style.display = '';
+      link.style.display = "";
     } else {
-      link.removeAttribute('href');
-      link.style.display = 'none';
+      link.removeAttribute("href");
+      link.style.display = "none";
     }
 
-    const counter = this.panelEl.querySelector('.panel-counter');
+    const counter = this.panelEl.querySelector(".panel-counter");
     counter.textContent = `${item.index + 1} / ${this.billboards.items.length}`;
+  }
+
+  // ── Torch aim ────────────────────────────────────────────────────────────
+
+  toggleTorchAim() {
+    if (this.torchAiming) this.exitTorchAim();
+    else this.enterTorchAim();
+  }
+
+  enterTorchAim() {
+    if (this.torchAiming) return;
+    if (!this.player?.character?.actions?.torchAim) return;
+    this.torchAiming = true;
+    this.controller.actionSpeedMultiplier = 0.5;
+    this.player.character.playTorchOverlay("torchAim", 0.25);
+    this.audio?.playInteract?.();
+  }
+
+  exitTorchAim() {
+    if (!this.torchAiming) return;
+    this.torchAiming = false;
+    this.controller.actionSpeedMultiplier = 1.0;
+    this.player?.character?.stopTorchOverlay?.(0.25);
+  }
+
+  #syncTorchHint() {
+    const torchOn = this.player?.character?.torchMesh?.visible === true;
+    const night = this.timeOfDay?.mode === "night";
+    const modalOpen =
+      this.activeIndex !== -1 || this.contactOpen || this.zooming;
+    const show = torchOn && night && !modalOpen;
+    if (!this.torchHintEl) return;
+    if (show) {
+      this.torchHintEl.classList.remove("hidden");
+      this.torchHintEl.querySelector(".label").textContent = this.torchAiming
+        ? "Lower torch"
+        : "Aim torch";
+    } else {
+      this.torchHintEl.classList.add("hidden");
+    }
   }
 }

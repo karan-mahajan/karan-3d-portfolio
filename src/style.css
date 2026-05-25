@@ -177,6 +177,16 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* ─────────────── Torch aim hint (night mode only) ─────────────── */
+.billboard-prompt.torch-hint {
+  bottom: 4%;
+  border-color: rgba(255, 187, 102, 0.45);
+}
+.billboard-prompt.torch-hint .key {
+  background: #ffbb66;
+  box-shadow: 0 0 14px rgba(255, 187, 102, 0.6);
+}
+
 /* ─────────────── Action prompt (do / perform) ─────────────── */
 .action-prompt {
   position: fixed;

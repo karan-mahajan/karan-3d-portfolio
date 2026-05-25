@@ -26,6 +26,7 @@ import { Footprints } from './Effects/Footprints.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 import { UIController } from './UI/UIController.js';
+import { TorchLight } from './Torch/TorchLight.js';
 
 /**
  * Core application: scene, renderer, camera, render loop, async asset boot.
@@ -63,13 +64,21 @@ export class App extends EventTarget {
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
     this.fireflies = new Fireflies(this.scene);
+    if (this.fireflies.points) this.fireflies.points.userData.noTorchRaycast = true;
+    // Sky dome is created in World ctor — flag it so the torch beam can
+    // never land on the inside of the sky sphere when the mouse points
+    // above the horizon line.
+    if (this.world.sky?.mesh) this.world.sky.mesh.userData.noTorchRaycast = true;
     // Water (pools + river) is created during world.loadAssets so it can
     // register Nature exclusions before nature.load() scatters props. The
     // reference is grabbed in boot() once the world has loaded.
     this.water = null;
     this.rain = new Rain(this.scene, this.camera);
+    if (this.rain.group) this.rain.group.userData.noTorchRaycast = true;
     this.windLines = new WindLines(this.scene, this.wind);
+    if (this.windLines.mesh) this.windLines.mesh.userData.noTorchRaycast = true;
     this.leaves = new Leaves(this.scene, this.wind, this.world.terrain);
+    if (this.leaves.mesh) this.leaves.mesh.userData.noTorchRaycast = true;
     // Footprints — persistent flat decals dropped on each footstep. Cadence
     // is driven by AudioManager.onStep (set up after boot) so visual prints
     // and audio steps stay aligned. Path tile positions are plumbed in
@@ -115,6 +124,7 @@ export class App extends EventTarget {
       // water is wired in boot() once world.loadAssets has created it.
       water: null,
       playerGroup: null, // wired after player loads in boot()
+      character: null,   // wired after player loads in boot()
     });
 
     this.#bindResize();
@@ -230,6 +240,7 @@ export class App extends EventTarget {
       // Give Water a handle on AudioManager so wading triggers WAV splashes
       // (entry one-shot + per-step variant). See Water.update.
       this.water.audio = this.audio;
+      if (this.water.mesh) this.water.mesh.userData.noTorchRaycast = true;
     }
 
     // Wire footprints: path positions for surface-guard, and the audio step
@@ -261,6 +272,28 @@ export class App extends EventTarget {
       pathRadius: 1.4,
       treePositions,
     });
+    // Grass is thousands of instances per tuft species — skip them at the
+    // raycast filter. They're not in the curated target list anyway, this
+    // belt-and-braces flag covers any future change that adds them in.
+    for (const inst of this.grass.instancedMeshes ?? []) {
+      inst.userData.noTorchRaycast = true;
+    }
+    // Skip ourselves when the mouse points down at our own feet — otherwise
+    // the spot beam lands on the avatar's torso and the decal sticks to the
+    // shirt. Flag both the character.root group AND the inner mesh so the
+    // raycast filter cuts the whole subtree regardless of which level the
+    // ray traverses from.
+    if (this.player?.character?.root) {
+      this.player.character.root.userData.noTorchRaycast = true;
+    }
+    if (this.player?.character?.mesh) {
+      this.player.character.mesh.userData.noTorchRaycast = true;
+    }
+    // The player.group also holds the placeholder + character — flag it so
+    // the raycast never recurses into the avatar via the scene-root walk.
+    if (this.player?.group) {
+      this.player.group.userData.noTorchRaycast = true;
+    }
 
     this.interaction = new Interaction({
       scene: this.scene,
@@ -271,6 +304,7 @@ export class App extends EventTarget {
       billboards: this.world.billboards,
       signs: this.world.signs,
       audio: this.audio,
+      timeOfDay: this.timeOfDay,
     });
 
     this.actionPrompts = new ActionPrompts({
@@ -314,8 +348,10 @@ export class App extends EventTarget {
     this.timeOfDay.signs = this.world.signs;
     this.timeOfDay.billboards = this.world.billboards;
     this.timeOfDay.playerGroup = this.player.group;
+    this.timeOfDay.character = this.player.character;
     // Re-apply current mode so freshly-loaded billboard boost picks up
-    // the right intensity (TimeOfDay was built before they existed).
+    // the right intensity (TimeOfDay was built before they existed). This
+    // also fires setTorchVisible() if we booted into night.
     this.timeOfDay.reapply();
 
     // Street lights — placed around the island so night mode reads. Each
@@ -348,6 +384,19 @@ export class App extends EventTarget {
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
+
+    // Torch beam — constructed after the character exists. Per-frame
+    // intersect uses scene.children filtered by noTorchRaycast (set above
+    // on grass, leaves, fireflies, wind lines, rain, water, sky, character),
+    // which keeps cost off the heavy InstancedMeshes and point clouds.
+    this.torchLight = new TorchLight({
+      scene: this.scene,
+      camera: this.camera,
+      character: this.player.character,
+      timeOfDay: this.timeOfDay,
+      terrain: this.world.terrain,
+    });
+    this.interaction.torchLight = this.torchLight;
 
     this.#tick();
     return { character: characterResult, world: worldResult };
@@ -517,6 +566,13 @@ export class App extends EventTarget {
     this.sun.update(this.camera);
     this.timeOfDay.tick(p, this.camera, elapsed);
     this.streetLights?.update(p);
+    if (this.torchLight) {
+      const modalOpen = !!(this.interaction?.activeIndex !== -1
+        || this.interaction?.contactOpen
+        || this.interaction?.zooming);
+      this.torchLight.setSuppressed(modalOpen);
+      this.torchLight.tick(p, this.camera);
+    }
 
     // Refresh the shared water reflection + refraction RTs once per frame
     // BEFORE the composer renders. With one master Reflector / Refractor
