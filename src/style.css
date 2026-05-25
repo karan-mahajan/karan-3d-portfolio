@@ -1499,10 +1499,134 @@ body[data-tod="night"] .trophy-btn .trophy-count {
   padding: 0 14px;
 }
 
-/* ─── Achievements: toast notifications (top-right stack) ───────────── */
-#achievement-toast-container {
+/* ─── Camera-linked compass HUD (top-right, desktop only) ───────────── */
+/* The ring rotates each frame to match the camera azimuth so the cardinal
+   facing the camera sits under the fixed pointer. Cardinal labels read a
+   --counter-rotate CSS variable (set on the ring in JS) so the letters
+   stay upright at every angle without per-label JS writes. */
+.compass {
   position: fixed;
   top: 20px;
+  right: 20px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 40;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.compass-ring {
+  position: absolute;
+  inset: 0;
+  --counter-rotate: 0deg;
+}
+
+.compass-cardinal {
+  position: absolute;
+  font-family: 'Oswald', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+}
+
+.compass-n {
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%) rotate(var(--counter-rotate));
+  color: #ff6644;
+  font-weight: 700;
+}
+
+.compass-s {
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%) rotate(var(--counter-rotate));
+}
+
+.compass-e {
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%) rotate(var(--counter-rotate));
+}
+
+.compass-w {
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%) rotate(var(--counter-rotate));
+}
+
+.compass-tick {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.compass-ne { top: 12px; right: 12px; }
+.compass-se { bottom: 12px; right: 12px; }
+.compass-sw { bottom: 12px; left: 12px; }
+.compass-nw { top: 12px; left: 12px; }
+
+.compass-pointer {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 8px solid #aaee44;
+  z-index: 2;
+}
+
+body[data-tod="night"] .compass {
+  border-color: rgba(120, 160, 220, 0.22);
+  background: rgba(5, 8, 18, 0.5);
+}
+
+body[data-tod="night"] .compass-n {
+  color: #88bbff;
+}
+
+body[data-tod="night"] .compass-pointer {
+  border-top-color: #88bbff;
+}
+
+body[data-tod="night"] .compass-cardinal {
+  color: rgba(160, 190, 225, 0.55);
+}
+
+body[data-tod="night"] .compass-tick {
+  background: rgba(120, 160, 220, 0.28);
+}
+
+/* Hide on mobile — the achievement chip + audio toggle already crowd the
+   top-right, and the compass adds noise without enough screen room. */
+.is-mobile .compass {
+  display: none;
+}
+
+
+#achievement-toast-container {
+  position: fixed;
+  /* Compass occupies top-right at 20/20 with a 64px diameter on desktop;
+     drop the toast stack below it so they never overlap. Mobile overrides
+     this below (the compass is hidden there). */
+  top: 96px;
   right: 20px;
   z-index: 100;
   display: flex;

@@ -26,6 +26,7 @@ import { Footprints } from './Effects/Footprints.js';
 import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 import { UIController } from './UI/UIController.js';
+import { Compass } from './UI/Compass.js';
 import { Tutorial } from './UI/Tutorial.js';
 import { TorchLight } from './Torch/TorchLight.js';
 import { Achievements } from './Systems/Achievements.js';
@@ -56,6 +57,7 @@ export class App extends EventTarget {
     this.physics = new Physics();
     this.world = new World(this.scene, this.loader);
     this.playerCamera = new PlayerCamera(this.camera, this.canvas);
+    this.compass = new Compass({ playerCamera: this.playerCamera });
     this.player = null;
 
     // Shared wind source — drives the grass field today; future leaves /
@@ -548,6 +550,7 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
     });
     this.playerCamera.update(delta);
+    if (this.compass) this.compass.update();
     this.world.update(elapsed, this.camera, delta);
     this.wind.update(delta);
     // Grass's wind sway is driven by uWindTime; the per-frame work is one

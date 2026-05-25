@@ -122,6 +122,21 @@
       </div>
     </div>
 
+    <!-- Top-right (desktop): camera-linked compass HUD. Hidden on mobile via CSS. -->
+    <div id="compass" class="compass" aria-hidden="true">
+      <div class="compass-ring" id="compass-ring">
+        <span class="compass-cardinal compass-n">N</span>
+        <span class="compass-cardinal compass-e">E</span>
+        <span class="compass-cardinal compass-s">S</span>
+        <span class="compass-cardinal compass-w">W</span>
+        <span class="compass-tick compass-ne"></span>
+        <span class="compass-tick compass-se"></span>
+        <span class="compass-tick compass-sw"></span>
+        <span class="compass-tick compass-nw"></span>
+      </div>
+      <div class="compass-pointer"></div>
+    </div>
+
     <div id="debug-hud"></div>
     <script type="module" src="./src/main.js"></script>
   </body>
