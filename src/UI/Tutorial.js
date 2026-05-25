@@ -26,13 +26,12 @@
 
 const STORAGE_KEY = 'karan-portfolio:tutorial-completed';
 
-// Thresholds: small enough that any deliberate gesture trips them, large
-// enough that a stray finger or scroll bump doesn't.
-const AZIMUTH_DELTA = 0.35;   // ~20°
-const DISTANCE_DELTA = 0.6;   // ~25% of the 2.5m minimum
+// Total accumulated drag distance (canvas pixels) before we consider the
+// player to have intentionally turned the camera. ~30px is a small but
+// deliberate swipe — well above any accidental click jitter.
+const DRAG_PIXELS_NEEDED = 30;
 
 export class Tutorial {
-  #playerCamera;
   #controller;
   #root;
   #listEl;
@@ -40,16 +39,30 @@ export class Tutorial {
   #pending;
   #rowEls;
   #raf;
-  #initialAzimuth;
-  #initialDistance;
   #disposed;
   #isMobile;
   #finishing;
+  #dragAccum;
+  #dragLast;
+  #dragging;
+  #lookFired;
+  #zoomFired;
+  #onPointerDown;
+  #onPointerMove;
+  #onPointerUp;
+  #onWheel;
+  #onTouchStart;
+  #onTouchMove;
+  #onTouchEnd;
 
-  constructor({ playerCamera, controller }) {
-    this.#playerCamera = playerCamera;
+  constructor({ controller }) {
     this.#controller = controller;
     this.#disposed = false;
+    this.#dragAccum = 0;
+    this.#dragLast = null;
+    this.#dragging = false;
+    this.#lookFired = false;
+    this.#zoomFired = false;
 
     if (typeof window !== 'undefined') {
       window.__resetTutorial = () => {
@@ -68,7 +81,7 @@ export class Tutorial {
     this.#pending = new Set(this.#steps.map((s) => s.key));
     this.#rowEls = new Map();
     this.#buildDom();
-    this.#captureInitial();
+    this.#attachInputListeners();
 
     this.#raf = requestAnimationFrame(this.#tick);
   }
@@ -77,6 +90,7 @@ export class Tutorial {
     this.#disposed = true;
     if (this.#raf) cancelAnimationFrame(this.#raf);
     this.#raf = null;
+    this.#detachInputListeners();
     this.#root?.remove();
     this.#root = null;
   }
@@ -187,12 +201,11 @@ export class Tutorial {
   }
 
   // ── Detection ────────────────────────────────────────────────────────────
-
-  #captureInitial() {
-    const c = this.#playerCamera?.controls;
-    this.#initialAzimuth = c ? c.azimuthAngle : 0;
-    this.#initialDistance = c ? c.distance : 0;
-  }
+  // Each gesture is detected from the raw input event that performs it, NOT
+  // from the camera state. This is more reliable: walking into a billboard
+  // can move `controls.distance` enough to false-trigger a distance-based
+  // zoom check, and a focused panel that adjusts the camera can falsely
+  // trigger a look check. Input events are unambiguous.
 
   #detectDesktopMove() {
     const keys = this.#controller?.keys;
@@ -206,19 +219,97 @@ export class Tutorial {
     return !!this.#controller?.mobileIntent?.active;
   }
 
-  #detectLook() {
-    const c = this.#playerCamera?.controls;
-    if (!c) return false;
-    // Azimuth wraps; compare on the shortest arc.
-    let d = c.azimuthAngle - this.#initialAzimuth;
-    d = Math.atan2(Math.sin(d), Math.cos(d));
-    return Math.abs(d) > AZIMUTH_DELTA;
+  #detectLook() { return this.#lookFired; }
+  #detectZoom() { return this.#zoomFired; }
+
+  #attachInputListeners() {
+    const canvas = document.getElementById('canvas');
+
+    // ── Desktop: drag (look) + wheel (zoom) ─────────────────────────────
+    this.#onPointerDown = (e) => {
+      if (e.button !== 0) return;
+      // Only count drags that start on the canvas — the tutorial card's
+      // own pointer events shouldn't qualify, and neither should drags
+      // that start inside any UI panel.
+      const target = e.target;
+      if (target && target.id !== 'canvas') return;
+      this.#dragging = true;
+      this.#dragLast = { x: e.clientX, y: e.clientY };
+      this.#dragAccum = 0;
+    };
+    this.#onPointerMove = (e) => {
+      if (!this.#dragging || !this.#dragLast) return;
+      this.#dragAccum += Math.hypot(
+        e.clientX - this.#dragLast.x,
+        e.clientY - this.#dragLast.y,
+      );
+      this.#dragLast = { x: e.clientX, y: e.clientY };
+      if (this.#dragAccum > DRAG_PIXELS_NEEDED) this.#lookFired = true;
+    };
+    this.#onPointerUp = () => {
+      this.#dragging = false;
+      this.#dragLast = null;
+    };
+    this.#onWheel = (e) => {
+      if (Math.abs(e.deltaY) > 0) this.#zoomFired = true;
+    };
+
+    // ── Mobile: single-touch swipe (look) + two-finger pinch (zoom) ─────
+    this.#onTouchStart = (e) => {
+      if (e.touches.length >= 2) this.#zoomFired = true;
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        // Joystick zone covers roughly the left 45%. Look gesture is the
+        // OPPOSITE side; ignore touches that begin in the joystick band.
+        if (t.clientX < window.innerWidth * 0.5) return;
+        this.#dragging = true;
+        this.#dragLast = { x: t.clientX, y: t.clientY };
+        this.#dragAccum = 0;
+      }
+    };
+    this.#onTouchMove = (e) => {
+      if (e.touches.length >= 2) {
+        this.#zoomFired = true;
+        return;
+      }
+      if (!this.#dragging || !this.#dragLast || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      this.#dragAccum += Math.hypot(
+        t.clientX - this.#dragLast.x,
+        t.clientY - this.#dragLast.y,
+      );
+      this.#dragLast = { x: t.clientX, y: t.clientY };
+      if (this.#dragAccum > DRAG_PIXELS_NEEDED) this.#lookFired = true;
+    };
+    this.#onTouchEnd = () => {
+      this.#dragging = false;
+      this.#dragLast = null;
+    };
+
+    const canvasTarget = canvas || window;
+    canvasTarget.addEventListener('pointerdown', this.#onPointerDown);
+    window.addEventListener('pointermove', this.#onPointerMove);
+    window.addEventListener('pointerup', this.#onPointerUp);
+    canvasTarget.addEventListener('wheel', this.#onWheel, { passive: true });
+    canvasTarget.addEventListener('touchstart', this.#onTouchStart, { passive: true });
+    window.addEventListener('touchmove', this.#onTouchMove, { passive: true });
+    window.addEventListener('touchend', this.#onTouchEnd);
+    window.addEventListener('touchcancel', this.#onTouchEnd);
   }
 
-  #detectZoom() {
-    const c = this.#playerCamera?.controls;
-    if (!c) return false;
-    return Math.abs(c.distance - this.#initialDistance) > DISTANCE_DELTA;
+  #detachInputListeners() {
+    const canvas = document.getElementById('canvas');
+    const canvasTarget = canvas || window;
+    if (this.#onPointerDown) canvasTarget.removeEventListener('pointerdown', this.#onPointerDown);
+    if (this.#onPointerMove) window.removeEventListener('pointermove', this.#onPointerMove);
+    if (this.#onPointerUp) window.removeEventListener('pointerup', this.#onPointerUp);
+    if (this.#onWheel) canvasTarget.removeEventListener('wheel', this.#onWheel);
+    if (this.#onTouchStart) canvasTarget.removeEventListener('touchstart', this.#onTouchStart);
+    if (this.#onTouchMove) window.removeEventListener('touchmove', this.#onTouchMove);
+    if (this.#onTouchEnd) {
+      window.removeEventListener('touchend', this.#onTouchEnd);
+      window.removeEventListener('touchcancel', this.#onTouchEnd);
+    }
   }
 
   // ── Loop ─────────────────────────────────────────────────────────────────

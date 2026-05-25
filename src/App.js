@@ -383,7 +383,6 @@ export class App extends EventTarget {
     // and the controller is unpaused). No-ops on repeat visits via the
     // localStorage flag inside Tutorial.
     this.tutorial = new Tutorial({
-      playerCamera: this.playerCamera,
       controller: this.player.controller,
     });
 
