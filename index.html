@@ -137,6 +137,39 @@
       <div class="compass-pointer"></div>
     </div>
 
+    <!-- Distance-guess mini-game (shown when standing at the shore, looking at an island) -->
+    <div id="distance-game" class="distance-game hidden" aria-live="polite">
+      <div class="dg-panel" id="dg-panel">
+        <div class="dg-header">
+          <span class="dg-icon">🏝️</span>
+          <span class="dg-title">How far is that island?</span>
+        </div>
+        <div class="dg-slider-row">
+          <span class="dg-min">10m</span>
+          <div class="dg-slider-track">
+            <input type="range" id="dg-slider" min="10" max="200" value="80" step="5" aria-label="Distance guess (metres, snaps to 5)" />
+          </div>
+          <span class="dg-max">200m</span>
+        </div>
+        <div class="dg-guess-display">
+          <span class="dg-guess-value" id="dg-guess-value">80m</span>
+        </div>
+        <div class="dg-actions">
+          <button class="dg-submit" id="dg-submit" type="button">Lock In</button>
+          <button class="dg-skip" id="dg-skip" type="button">Skip</button>
+        </div>
+        <button class="dg-mute" id="dg-mute" type="button">Don't show again</button>
+      </div>
+      <div class="dg-result hidden" id="dg-result"></div>
+    </div>
+    <div id="dg-distance-label" class="dg-distance-label hidden"></div>
+    <!-- Bouncing arrow above the currently-targeted island. Position is
+         re-projected from the island's world coordinates each frame, so
+         it tracks the camera live as the player looks around. -->
+    <div id="dg-target-arrow" class="dg-target-arrow hidden" aria-hidden="true">
+      <span class="dg-target-arrow-inner">▼</span>
+    </div>
+
     <div id="debug-hud"></div>
     <script type="module" src="./src/main.js"></script>
   </body>

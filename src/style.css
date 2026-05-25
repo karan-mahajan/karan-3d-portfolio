@@ -2595,3 +2595,285 @@ body[data-tod="night"] .tutorial-gesture {
   0%, 100% { transform: translateX(0); }
   50%      { transform: translateX(-12px); }
 }
+
+/* ── Distance-guess mini-game ─────────────────────────────────────────── */
+.distance-game {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 340px;
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 12, 20, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: white;
+  font-family: 'Rajdhani', sans-serif;
+  z-index: 80;
+  transition: opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+.distance-game.hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(30px);
+  pointer-events: none;
+}
+
+.dg-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.dg-icon { font-size: 22px; }
+.dg-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.dg-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.dg-min, .dg-max {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  min-width: 32px;
+}
+.dg-slider-track { flex: 1; }
+
+#dg-slider {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  cursor: pointer;
+}
+#dg-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #aaee44;
+  border: 2px solid white;
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(170, 238, 68, 0.45);
+}
+#dg-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #aaee44;
+  border: 2px solid white;
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(170, 238, 68, 0.45);
+}
+
+.dg-guess-display {
+  text-align: center;
+  margin-bottom: 16px;
+}
+.dg-guess-value {
+  font-family: 'Oswald', sans-serif;
+  font-size: 36px;
+  font-weight: 700;
+  color: #aaee44;
+  letter-spacing: 2px;
+}
+
+.dg-actions {
+  display: flex;
+  gap: 10px;
+}
+.dg-submit {
+  flex: 1;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(170, 238, 68, 0.3);
+  background: rgba(170, 238, 68, 0.15);
+  color: #aaee44;
+  font-family: 'Oswald', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+.dg-submit:hover { background: rgba(170, 238, 68, 0.25); }
+.dg-submit:active { transform: scale(0.97); }
+.dg-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dg-skip {
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.6);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.dg-skip:hover { background: rgba(255, 255, 255, 0.1); }
+
+.dg-mute {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.35);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.dg-mute:hover { color: rgba(255, 255, 255, 0.7); }
+
+.dg-result.hidden { display: none; }
+.dg-result {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dg-result-emoji { font-size: 40px; text-align: center; margin-bottom: 8px; }
+.dg-result-message {
+  font-family: 'Oswald', sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.dg-result-actual {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: center;
+  margin-top: 4px;
+}
+.dg-result-message + .dg-result-hint {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+  margin-top: 6px;
+  letter-spacing: 0.4px;
+}
+.dg-try-another {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  font-family: 'Oswald', sans-serif;
+  font-size: 14px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: background 0.2s;
+}
+.dg-try-another:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* Bouncing arrow pinned over the currently-targeted island. */
+.dg-target-arrow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  z-index: 81;
+  transition: opacity 0.18s ease;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+.dg-target-arrow.hidden { opacity: 0; }
+.dg-target-arrow-inner {
+  display: block;
+  color: #aaee44;
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 0 12px rgba(170, 238, 68, 0.85);
+  animation: dgArrowBounce 1.2s ease-in-out infinite;
+}
+@keyframes dgArrowBounce {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+[data-tod="night"] .dg-target-arrow-inner {
+  color: #88bbff;
+  text-shadow: 0 0 12px rgba(136, 187, 255, 0.85);
+}
+
+/* Floating 3D-pinned distance label that appears above the animated line. */
+.dg-distance-label {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -100%);
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(170, 238, 68, 0.6);
+  background: rgba(10, 12, 20, 0.85);
+  color: #aaee44;
+  font-family: 'Oswald', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  pointer-events: none;
+  z-index: 79;
+  text-shadow: 0 0 8px rgba(170, 238, 68, 0.6);
+  transition: opacity 0.3s ease;
+  white-space: nowrap;
+}
+.dg-distance-label.hidden { opacity: 0; }
+
+/* Night theming — blue accent colours. Driven by body[data-tod="night"]. */
+[data-tod="night"] #dg-slider::-webkit-slider-thumb {
+  background: #88bbff;
+  box-shadow: 0 0 8px rgba(136, 187, 255, 0.5);
+}
+[data-tod="night"] #dg-slider::-moz-range-thumb {
+  background: #88bbff;
+  box-shadow: 0 0 8px rgba(136, 187, 255, 0.5);
+}
+[data-tod="night"] .dg-guess-value { color: #88bbff; }
+[data-tod="night"] .dg-submit {
+  border-color: rgba(136, 187, 255, 0.35);
+  background: rgba(136, 187, 255, 0.15);
+  color: #88bbff;
+}
+[data-tod="night"] .dg-submit:hover { background: rgba(136, 187, 255, 0.25); }
+[data-tod="night"] .dg-distance-label {
+  border-color: rgba(136, 187, 255, 0.6);
+  color: #88bbff;
+  text-shadow: 0 0 8px rgba(136, 187, 255, 0.6);
+}
+
+/* Mobile: keep clear of the joystick + interact pill. */
+@media (pointer: coarse) {
+  .distance-game {
+    bottom: 150px;
+    width: min(340px, calc(100vw - 32px));
+  }
+}

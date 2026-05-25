@@ -1,7 +1,8 @@
 /**
- * Achievements — 28 trackable unlocks across exploration, portfolio
- * engagement, actions, world toggles, and three hidden ones. Persists
- * progress + unlocked IDs to localStorage so refreshes keep state.
+ * Achievements — 36 trackable unlocks across exploration, portfolio
+ * engagement, actions, world toggles, time milestones, and five hidden
+ * ones. Persists progress + unlocked IDs to localStorage so refreshes
+ * keep state.
  *
  * Lifecycle:
  *   1. Build once in App ctor.
@@ -64,10 +65,12 @@ const ACHIEVEMENTS = [
   { id: 'thor_mode',       name: 'Thor Mode',       description: 'Trigger lightning manually',     icon: '⚡', category: 'world', target: 1, secret: false },
   { id: 'storm_survivor',  name: 'Storm Survivor',  description: 'Stand in rain for 60 seconds',   icon: '☔', category: 'world', target: 1, secret: false },
 
-  // === SECRET (3) — names hidden until unlocked ===
-  { id: 'pushy',        name: 'The Bulldozer',  description: 'Push 5 different objects',                  icon: '🚜', category: 'secret', target: 5, secret: true },
-  { id: 'water_flip',   name: 'Splashdown',     description: 'Do a backflip in the water',                icon: '🐬', category: 'secret', target: 1, secret: true },
-  { id: 'storm_chaser', name: 'Storm Chaser',   description: 'Trigger lightning 5 times in one session', icon: '🌩️', category: 'secret', target: 5, secret: true },
+  // === SECRET (5) — names hidden until unlocked ===
+  { id: 'pushy',             name: 'The Bulldozer', description: 'Push 5 different objects',                  icon: '🚜',  category: 'secret', target: 5, secret: true },
+  { id: 'water_flip',        name: 'Splashdown',    description: 'Do a backflip in the water',                icon: '🐬',  category: 'secret', target: 1, secret: true },
+  { id: 'storm_chaser',      name: 'Storm Chaser',  description: 'Trigger lightning 5 times in one session', icon: '🌩️',  category: 'secret', target: 5, secret: true },
+  { id: 'distance_guesser',  name: 'Eagle Eye',     description: 'Guess an island distance within 10m',       icon: '🏝️',  category: 'secret', target: 1, secret: true },
+  { id: 'distance_master',   name: 'Cartographer',  description: 'Guess an island distance exactly right',    icon: '🎯',  category: 'secret', target: 1, secret: true },
 
   // === TIME (5) — cumulative time spent in the world, in seconds ===
   // Counter targets are seconds so the progress bar fills smoothly. The

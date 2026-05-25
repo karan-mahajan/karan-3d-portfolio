@@ -9,28 +9,34 @@ import gsap from 'gsap';
  * hazy silhouettes, further ones dissolve into the horizon band.
  */
 
-// Deliberate size mix so the horizon doesn't read as a ring of identical
-// blobs: two big mountain peaks, a handful of mediums, a couple small, and
-// a couple tiny rock outcrops. Spread unevenly around the compass. Scales
-// bumped a step compared to the first pass so the silhouettes actually
-// punch through the night fog instead of dissolving into the sky band.
-const ISLANDS = [
-  // Two mountainous "look at me" silhouettes — heightScale 2+ gives them
-  // a tall pointed peak instead of a dome; reads clearly as a mountain.
-  { x: 95,   z: -65,  scale: 2.8, heightScale: 2.1, rotation: 1.2 },
-  { x: -108, z: 55,   scale: 3.0, heightScale: 2.0, rotation: 2.5 },
-  // Medium islands — vegetation caps visible, distinct shapes.
-  { x: 115,  z: 35,   scale: 1.7, heightScale: 1.3, rotation: 0   },
-  { x: -75,  z: -115, scale: 1.9, heightScale: 1.1, rotation: 0.8 },
-  { x: -125, z: -45,  scale: 1.5, heightScale: 1.2, rotation: 1.7 },
-  // Small islands — green cap but lower, more grounded reading.
-  { x: 45,   z: 125,  scale: 0.9, heightScale: 1.2, rotation: 3.1 },
-  { x: -60,  z: 130,  scale: 0.85, heightScale: 1.3, rotation: 2.0 },
-  // Tiny rock outcrops — no vegetation cap, just poking out of the water.
-  { x: 135,  z: -20,  scale: 0.45, heightScale: 1.6, rotation: 0.5 },
-  { x: 70,   z: -135, scale: 0.42, heightScale: 1.5, rotation: 2.8 },
-  { x: -45,  z: 100,  scale: 0.48, heightScale: 1.4, rotation: 1.0 },
+// Size profiles only — distance + angle are randomised per session in
+// #pickLayout() so every visit produces a different horizon (required for
+// the distance-guess mini-game to feel fresh). Order is mountain → tiny
+// rock; the layout picker preserves it so the first two always anchor the
+// view as mountainous silhouettes.
+const SIZE_PROFILES = [
+  // Two mountainous "look at me" peaks.
+  { scale: 2.8, heightScale: 2.1 },
+  { scale: 3.0, heightScale: 2.0 },
+  // Three mediums with vegetation caps.
+  { scale: 1.9, heightScale: 1.3 },
+  { scale: 1.7, heightScale: 1.1 },
+  { scale: 1.5, heightScale: 1.2 },
+  // Two small islands.
+  { scale: 0.9, heightScale: 1.2 },
+  { scale: 0.85, heightScale: 1.3 },
+  // Three tiny rock outcrops — no vegetation cap.
+  { scale: 0.48, heightScale: 1.4 },
+  { scale: 0.45, heightScale: 1.6 },
+  { scale: 0.42, heightScale: 1.5 },
 ];
+
+// Distance range: must be past the island shore (~r=45) and inside the
+// outer ocean radius (~r=150). Quantised to multiples of 5 so the
+// distance-guess game has guess-friendly target numbers.
+const DIST_MIN = 55;
+const DIST_MAX = 145;
+const DIST_STEP = 5;
 
 const DAY_COLORS = Object.freeze({
   rock: new THREE.Color(0x4a4a3a),
@@ -58,8 +64,19 @@ export class DistantIslands {
     this.group.name = 'distant-islands';
     this.group.userData.noTorchRaycast = true;
 
+    // Each entry: { id, position: Vector3, distance, scale, heightScale, mesh }
+    // Distance is the exact horizontal distance from origin, quantised to a
+    // multiple of DIST_STEP — the mini-game compares the player's slider
+    // guess against this value directly.
+    this.islands = [];
+
     this.#build();
     scene.add(this.group);
+  }
+
+  /** Public lookup — returns all island descriptors for the mini-game. */
+  getIslands() {
+    return this.islands;
   }
 
   #build() {
@@ -72,9 +89,78 @@ export class DistantIslands {
       fog: true,
     });
 
-    for (const island of ISLANDS) {
-      this.group.add(this.#createIsland(island));
+    const layout = this.#pickLayout();
+    for (let i = 0; i < layout.length; i++) {
+      const entry = layout[i];
+      const islandGroup = this.#createIsland(entry);
+      this.group.add(islandGroup);
+      this.islands.push({
+        id: `island-${i}`,
+        position: islandGroup.position.clone(),
+        distance: entry.distance,
+        scale: entry.scale,
+        heightScale: entry.heightScale,
+        mesh: islandGroup,
+      });
     }
+  }
+
+  /**
+   * Per-session randomisation. Each profile draws from a size-appropriate
+   * distance range so taller islands can't spawn right on top of the
+   * shoreline (their peaks would project above the viewport and the
+   * mini-game's arrow indicator would clip off-screen).
+   *
+   * Ranges are calibrated against the 45° vertical FOV at the default
+   * camera tilt — a mountain (scale ≈ 3, heightScale ≈ 2, peak ≈ 23m
+   * above water) needs to be ≥ ~70m from the player to keep its summit
+   * inside the upper half of the frame, so origin distance ≥ 110m once
+   * the player is standing at the r=40 shore.
+   */
+  #pickLayout() {
+    const used = new Set();
+    const layout = [];
+    const n = SIZE_PROFILES.length;
+    const sector = (Math.PI * 2) / n;
+    const angleOffset = Math.random() * Math.PI * 2;
+
+    for (let i = 0; i < n; i++) {
+      const profile = SIZE_PROFILES[i];
+      const [minD, maxD] = this.#rangeFor(profile);
+      const choices = [];
+      for (let d = minD; d <= maxD; d += DIST_STEP) {
+        if (!used.has(d)) choices.push(d);
+      }
+      // Fallback: nothing left in the preferred band → take any unused
+      // distance. Keeps the count guaranteed at 10 even on a worst-case
+      // collision chain.
+      if (!choices.length) {
+        for (let d = DIST_MIN; d <= DIST_MAX; d += DIST_STEP) {
+          if (!used.has(d)) choices.push(d);
+        }
+      }
+      const distance = choices[Math.floor(Math.random() * choices.length)];
+      used.add(distance);
+
+      const angle = angleOffset + sector * i + (Math.random() - 0.5) * sector * 0.6;
+      layout.push({
+        ...profile,
+        x: Math.cos(angle) * distance,
+        z: Math.sin(angle) * distance,
+        distance,
+        rotation: Math.random() * Math.PI * 2,
+      });
+    }
+    return layout;
+  }
+
+  #rangeFor(profile) {
+    // Tier by silhouette height (scale * heightScale ≈ visible peak).
+    const peak = profile.scale * profile.heightScale;
+    if (peak >= 4)   return [110, DIST_MAX];   // mountains: stay far
+    if (peak >= 2)   return [80,  DIST_MAX];   // mediums
+    if (peak >= 1)   return [65,  130];        // small islands
+    return [DIST_MIN, 110];                    // tiny rock outcrops
   }
 
   #createIsland({ x, z, scale, heightScale, rotation }) {
@@ -180,5 +266,12 @@ export class DistantIslands {
         duration, ease,
       }),
     ];
+  }
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }

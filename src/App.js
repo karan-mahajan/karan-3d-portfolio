@@ -31,6 +31,7 @@ import { Compass } from './UI/Compass.js';
 import { Tutorial } from './UI/Tutorial.js';
 import { TorchLight } from './Torch/TorchLight.js';
 import { Achievements } from './Systems/Achievements.js';
+import { DistanceGame } from './Systems/DistanceGame.js';
 import { AchievementToast } from './UI/AchievementToast.js';
 import { AchievementPanel } from './UI/AchievementPanel.js';
 
@@ -286,6 +287,18 @@ export class App extends EventTarget {
     this.distantIslands = new DistantIslands(this.scene);
     this.timeOfDay.distantIslands = this.distantIslands;
     this.distantIslands.setMode(this.timeOfDay.mode, 0);
+
+    // Distance-guess mini-game wired against the islands above. Constructed
+    // before the player is loaded — its update() is a no-op until the
+    // player position starts flowing into the tick loop.
+    this.distanceGame = new DistanceGame({
+      scene: this.scene,
+      camera: this.camera,
+      playerCamera: this.playerCamera,
+      islands: this.distantIslands,
+      achievements: this.achievements,
+      audio: this.audio,
+    });
 
     // Wire footprints: path positions for surface-guard, and the audio step
     // callback so prints drop at the exact moment a step would sound. Read
@@ -637,6 +650,15 @@ export class App extends EventTarget {
         mode: this.timeOfDay?.mode,
       });
       this.#tickAchievementProximity(ppos, inWater);
+    }
+
+    // Distance-guess mini-game — early-exits when the player isn't in the
+    // shore zone, so the cost off-trigger is one hypot + branch per frame.
+    if (this.distanceGame) {
+      this.distanceGame.update(delta, this.player.position, {
+        moving: !!sample?.moving,
+        isNight: this.timeOfDay?.mode === 'night',
+      });
     }
 
     // Sun + shadow camera follow the player so shadows stay sharp wherever
