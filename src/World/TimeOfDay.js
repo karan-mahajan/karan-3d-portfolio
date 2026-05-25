@@ -220,6 +220,8 @@ export class TimeOfDay {
     this.character?.setTorchVisible?.(mode === "night");
     this.dispatchEvent?.("change", mode);
     this.#transition(mode, duration);
+    if (mode === 'night') this.achievements?.onToggleNight?.();
+    else this.achievements?.onToggleDay?.();
   }
 
   toggle(duration = TRANSITION_SECONDS) {

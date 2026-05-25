@@ -204,6 +204,11 @@ export class Footprints {
     this._mesh.instanceMatrix.needsUpdate = true;
     this._ageAttr.needsUpdate = true;
     this._mirrorAttr.needsUpdate = true;
+
+    // Achievement count only fires for prints that actually landed (after
+    // the surface guard above), so the counter matches what the player can
+    // see on the ground.
+    this.achievements?.onFootprint?.();
   }
 
   /** Age every live instance once per frame. */

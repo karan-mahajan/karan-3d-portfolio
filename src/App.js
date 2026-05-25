@@ -27,6 +27,9 @@ import { PostFX } from './Effects/PostFX.js';
 import { AudioManager } from './Audio/AudioManager.js';
 import { UIController } from './UI/UIController.js';
 import { TorchLight } from './Torch/TorchLight.js';
+import { Achievements } from './Systems/Achievements.js';
+import { AchievementToast } from './UI/AchievementToast.js';
+import { AchievementPanel } from './UI/AchievementPanel.js';
 
 /**
  * Core application: scene, renderer, camera, render loop, async asset boot.
@@ -126,6 +129,35 @@ export class App extends EventTarget {
       playerGroup: null, // wired after player loads in boot()
       character: null,   // wired after player loads in boot()
     });
+
+    // Achievements — persistent counter system + toast + side panel. Built
+    // here so all modules already exist (Rain, Thunderstorm, TimeOfDay,
+    // Footprints) and can pick up a back-reference for their triggers.
+    this.achievements = new Achievements();
+    this.achievementToast = new AchievementToast();
+    this.achievementPanel = new AchievementPanel({
+      achievements: this.achievements,
+      audio: this.audio,
+    });
+    this.achievements.onUnlock((a) => {
+      this.achievementToast.show(a);
+      this.audio?.playAchievement?.();
+    });
+    // Wrap Rain.setEnabled one more time so the on-edge fires onToggleRain.
+    // The thunderstorm wrap above already chained an outer wrapper; this
+    // adds a third layer that still ends up calling the original setEnabled
+    // followed by thunderstorm.setActive followed by the achievement hook.
+    if (this.rain) {
+      const _prevSetEnabled = this.rain.setEnabled.bind(this.rain);
+      this.rain.setEnabled = (value) => {
+        const wasOff = !this.rain.enabled;
+        _prevSetEnabled(value);
+        if (value && wasOff) this.achievements?.onToggleRain?.();
+      };
+    }
+    if (this.timeOfDay) this.timeOfDay.achievements = this.achievements;
+    if (this.thunderstorm) this.thunderstorm.achievements = this.achievements;
+    if (this.footprints) this.footprints.achievements = this.achievements;
 
     this.#bindResize();
     this.#bindTimeOfDayToggle();
@@ -305,6 +337,7 @@ export class App extends EventTarget {
       signs: this.world.signs,
       audio: this.audio,
       timeOfDay: this.timeOfDay,
+      achievements: this.achievements,
     });
 
     this.actionPrompts = new ActionPrompts({
@@ -313,6 +346,7 @@ export class App extends EventTarget {
       audio: this.audio,
       playerCamera: this.playerCamera,
       billboardInteraction: this.interaction,
+      achievements: this.achievements,
     });
     // Back-reference so Interaction can defer to ActionPrompts when both
     // would show a prompt at the same spot (e.g. Dance tile vs Contact).
@@ -541,6 +575,12 @@ export class App extends EventTarget {
     if (this.audio && this._wasGroundedApp === false && _grounded === true) {
       this.audio.playLand(surface);
     }
+    // Jump achievement — count every air-out transition (same edge used
+    // for the audio cue). Fires for both Space-jumps and any future
+    // launch-into-air mechanic.
+    if (this._wasGroundedApp === true && _grounded === false) {
+      this.achievements?.onJump?.();
+    }
     this._wasGroundedApp = _grounded;
     // Keep ambient bed in sync with day/night flips. Only push on change so
     // ad-hoc `audio.setMode(...)` calls (probes, debug) aren't stomped each
@@ -553,6 +593,29 @@ export class App extends EventTarget {
     // the island it falls off with distance; in the water it's at full level.
     if (this.audio && this.water) {
       this.audio.setOceanProximity(Math.hypot(px, pz), this.water.islandRadius);
+    }
+
+    // Achievements — drive per-frame timers (sprint, AFK, rain) + edges +
+    // distance + water-state unlocks. Section + experience-sign proximity
+    // and off-path detection are computed here too because we already have
+    // the relevant world state cached on App.
+    if (this.achievements) {
+      const ppos = this.player.position;
+      const r = Math.hypot(ppos.x, ppos.z);
+      const inWater = r > Player.WATER_ENTRY_RADIUS;
+      const waterDepth = inWater ? (r - Player.WATER_ENTRY_RADIUS) * 0.1 : 0;
+      this.achievements.tick(delta, {
+        playerPos: ppos,
+        moving: !!sample?.moving,
+        running: this.player.controller.isRunning,
+        grounded: _grounded,
+        inWater,
+        waterDepth,
+        isNight: this.timeOfDay?.mode === 'night',
+        isRaining: !!this.rain?.enabled,
+        mode: this.timeOfDay?.mode,
+      });
+      this.#tickAchievementProximity(ppos, inWater);
     }
 
     // Sun + shadow camera follow the player so shadows stay sharp wherever
@@ -584,6 +647,78 @@ export class App extends EventTarget {
     this.postfx.render(delta);
     requestAnimationFrame(this.#tick);
   };
+
+  /**
+   * Cardinal section + experience-sign proximity, plus off-path detection.
+   * Cheap enough to run every frame (handful of squared-distance checks);
+   * the heavy off-path scan early-exits on water + on the first path tile
+   * within range.
+   */
+  #tickAchievementProximity(playerPos, inWater) {
+    const ach = this.achievements;
+    if (!ach) return;
+    const px = playerPos.x;
+    const pz = playerPos.z;
+
+    // Section detection — uses the same cardinal slots Signs.js + Billboards
+    // exposes. Radii are tuned generously so a normal stroll into the area
+    // counts as "visited" without forcing the player to brush every sign.
+    if (this.world.billboards) {
+      // Projects centre is exposed from Billboards.PROJECTS_CENTER; the
+      // billboards are scattered around it within a ~6m ring, so 14m clears
+      // the whole cluster.
+      const projects = this.world.billboards.items?.[0]?.position;
+      if (projects) {
+        const cx = projects.x; // any item is close enough to read "near projects"
+        // Detect cluster centre by averaging is overkill — just compare to
+        // whatever sign is closest within 10m.
+        const d = Math.hypot(px - cx, pz - projects.z);
+        if (d < 14) ach.onSectionVisited('projects');
+      }
+    }
+    if (this.world.signs) {
+      const skills = this.world.signs.skillsPosition;
+      const contact = this.world.signs.contactPosition;
+      if (skills && Math.hypot(px - skills.x, pz - skills.z) < 10) {
+        ach.onSectionVisited('skills');
+      }
+      if (contact && Math.hypot(px - contact.x, pz - contact.z) < 10) {
+        ach.onSectionVisited('contact');
+      }
+      const expItems = this.world.signs.experienceItems;
+      if (expItems && expItems.length) {
+        // Visiting any experience sign also counts as visiting the section.
+        let nearAny = false;
+        for (let i = 0; i < expItems.length; i++) {
+          const p = expItems[i].position;
+          const dx = px - p.x;
+          const dz = pz - p.z;
+          if (dx * dx + dz * dz < 16) { // within 4m
+            ach.onExperienceSignViewed(i);
+            nearAny = true;
+          }
+        }
+        if (nearAny) ach.onSectionVisited('experience');
+      }
+    }
+
+    // Off-path: 15m+ from every path tile, on land. Skip when wading so
+    // the open ocean doesn't trivially unlock this.
+    if (!inWater && !ach.unlocked.has('off_script')) {
+      const pos = this._pathPositions;
+      const n = this._pathCount;
+      if (pos && n > 0) {
+        const minDist2 = 15 * 15;
+        let anyWithin = false;
+        for (let i = 0; i < n; i++) {
+          const dx = px - pos[i * 2];
+          const dz = pz - pos[i * 2 + 1];
+          if (dx * dx + dz * dz < minDist2) { anyWithin = true; break; }
+        }
+        if (!anyWithin) ach.onOffPath();
+      }
+    }
+  }
 
   /** Pick the surface category at (x, z) for footstep + landing audio.
    *  Mirrors the same rules Footprints uses for its surface guard:

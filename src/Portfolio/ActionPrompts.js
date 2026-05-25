@@ -103,12 +103,13 @@ function shuffleCopy(arr) {
  * Modes: oneShot, holdLoop, zoneLoop, combat. Plus a global P key for push.
  */
 export class ActionPrompts {
-  constructor({ player, controller, audio, billboardInteraction = null, playerCamera = null }) {
+  constructor({ player, controller, audio, billboardInteraction = null, playerCamera = null, achievements = null }) {
     this.player = player;
     this.controller = controller;
     this.audio = audio;
     this.billboardInteraction = billboardInteraction;
     this.playerCamera = playerCamera;
+    this.achievements = achievements;
 
     this.triggers = [];
     this.candidate = null;
@@ -346,6 +347,14 @@ export class ActionPrompts {
     this.oneShotActive = { trigger: { id: 'global-' + actionName }, untilSec: this._elapsed + duration + 0.1 };
     if (this.playerCamera) this.playerCamera.applyActionZoom();
     if (this.audio) this.audio.playInteract();
+    if (this.achievements) {
+      const r = this.player?.position
+        ? Math.hypot(this.player.position.x, this.player.position.z)
+        : 0;
+      const inWater = r > 45; // Player.WATER_ENTRY_RADIUS
+      if (actionName === 'backflip') this.achievements.onBackflip(inWater);
+      else if (actionName === 'cartwheel') this.achievements.onCartwheel();
+    }
   }
 
   /**
@@ -457,6 +466,15 @@ export class ActionPrompts {
       this.controller.paused = true;
       if (this.playerCamera) this.playerCamera.applyActionZoom();
       if (this.audio) this.audio.startPush();
+      if (this.achievements) {
+        // Identify pushed object by its world position so the set-count for
+        // The Bulldozer counts unique props, not unique attempts.
+        const p = this.currentPushSpot.position;
+        const id = (this.currentPushSpot.name)
+          ? `${this.currentPushSpot.type}:${this.currentPushSpot.name}`
+          : `${this.currentPushSpot.type}:${p.x.toFixed(2)},${p.z.toFixed(2)}`;
+        this.achievements.onPush(id);
+      }
     } else {
       this.activePushSpot = null;
     }

@@ -140,6 +140,7 @@ export class Thunderstorm {
     }
 
     this.#strike(this._lastPlayerPos);
+    this.achievements?.onLightning?.();
 
     if (this._triggerBtn) {
       this._triggerBtn.style.boxShadow = '0 0 30px rgba(200, 200, 255, 0.8)';

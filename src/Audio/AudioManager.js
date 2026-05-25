@@ -47,7 +47,7 @@ const VOL = {
   ambientDay: 0.151,
   ambientNight: 0.197,
   birdsDay: 0.114,
-  windTrees: 0.100,
+  windTrees: 0.1,
   waterWavesMax: 0.369,
   waterWavesFalloffM: 18,
   oceanAtShore: 0.262,
@@ -82,8 +82,8 @@ const VOL = {
   // UI clicks — kept gentle so they don't punch through the ambient bed.
   click: 0.45,
   toggle: 0.45,
-  menuOpen: 0.55,
-  menuClose: 0.55,
+  menuOpen: 0.15,
+  menuClose: 0.15,
 };
 
 const AMBIENT_CROSSFADE_S = 3.0;
@@ -356,11 +356,17 @@ export class AudioManager {
     const amb = this.howls.rainAmbient;
     const water = this.howls.rainWater;
     if (amb && amb.state() === "loaded") {
-      if (!amb.playing()) { amb.volume(0); amb.play(); }
+      if (!amb.playing()) {
+        amb.volume(0);
+        amb.play();
+      }
       amb.fade(amb.volume(), VOL.rainAmbient, 1000);
     }
     if (water && water.state() === "loaded") {
-      if (!water.playing()) { water.volume(0); water.play(); }
+      if (!water.playing()) {
+        water.volume(0);
+        water.play();
+      }
       // Volume is then driven by setOceanProximity each frame.
     }
   }
@@ -370,11 +376,15 @@ export class AudioManager {
     const water = this.howls.rainWater;
     if (amb && amb.playing()) {
       amb.fade(amb.volume(), 0, 2000);
-      setTimeout(() => { if (amb.volume() < 0.005 && amb.playing()) amb.pause(); }, 2200);
+      setTimeout(() => {
+        if (amb.volume() < 0.005 && amb.playing()) amb.pause();
+      }, 2200);
     }
     if (water && water.playing()) {
       water.fade(water.volume(), 0, 2000);
-      setTimeout(() => { if (water.volume() < 0.005 && water.playing()) water.pause(); }, 2200);
+      setTimeout(() => {
+        if (water.volume() < 0.005 && water.playing()) water.pause();
+      }, 2200);
     }
   }
 
@@ -719,6 +729,33 @@ export class AudioManager {
    *  that used to live here. */
   playInteract() {
     this.playClick();
+  }
+
+  /** Rising 3-note triangle chime fired when an Achievement unlocks. Uses
+   *  Howler.ctx so it inherits mute + focus loss like the other procedural
+   *  fallbacks. */
+  playAchievement() {
+    const ctx = this.#ctx();
+    const dest = this.#dest();
+    if (!ctx || !dest || this.muted || this._focusLost) return;
+    const now = ctx.currentTime;
+    [
+      { f: 880, t: 0.0 }, // A5
+      { f: 1109, t: 0.12 }, // C#6
+      { f: 1319, t: 0.24 }, // E6
+    ].forEach(({ f, t }) => {
+      const osc = ctx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.value = f;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, now + t);
+      gain.gain.linearRampToValueAtTime(0.25, now + t + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.5);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now + t);
+      osc.stop(now + t + 0.55);
+    });
   }
 
   playWelcome() {

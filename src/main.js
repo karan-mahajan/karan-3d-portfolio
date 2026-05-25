@@ -87,6 +87,10 @@ async function bootstrap() {
     document.body.classList.remove('booting');
     if (app.player?.controller) app.player.controller.paused = false;
     app.audio?.start();
+    // First-click-of-Start achievement. Safe to call on every onStart fire
+    // since Achievements.trigger() is idempotent (no-op when already
+    // unlocked), so subsequent reloads in the same session don't re-emit.
+    app.achievements?.onJourneyBegin?.();
     window.removeEventListener('keydown', onKeyStart);
   };
   const onKeyStart = (e) => {

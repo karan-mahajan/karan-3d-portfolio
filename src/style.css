@@ -147,16 +147,19 @@ body {
   opacity: 1;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
+
 .billboard-prompt .label {
   flex: 1 1 auto;
   min-width: 0;
   word-break: break-word;
 }
+
 .billboard-prompt.hidden {
   opacity: 0;
   transform: translate(-50%, 8px);
   pointer-events: none;
 }
+
 .billboard-prompt .key {
   display: inline-flex;
   align-items: center;
@@ -171,6 +174,7 @@ body {
   font-size: 0.9rem;
   box-shadow: 0 0 12px rgba(255, 153, 68, 0.55);
 }
+
 .billboard-prompt .label strong {
   color: var(--warm-amber);
   font-weight: 700;
@@ -182,6 +186,7 @@ body {
   bottom: 4%;
   border-color: rgba(255, 187, 102, 0.45);
 }
+
 .billboard-prompt.torch-hint .key {
   background: #ffbb66;
   box-shadow: 0 0 14px rgba(255, 187, 102, 0.6);
@@ -213,16 +218,19 @@ body {
   opacity: 1;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
+
 .action-prompt .label {
   flex: 1 1 auto;
   min-width: 0;
   word-break: break-word;
 }
+
 .action-prompt.hidden {
   opacity: 0;
   transform: translate(-50%, 5rem);
   pointer-events: none;
 }
+
 .action-prompt .key {
   display: inline-flex;
   align-items: center;
@@ -270,16 +278,19 @@ body {
   opacity: 1;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
+
 .push-hint .label {
   flex: 1 1 auto;
   min-width: 0;
   word-break: break-word;
 }
+
 .push-hint.hidden {
   opacity: 0;
   transform: translate(-50%, -8px);
   pointer-events: none;
 }
+
 .push-hint .key {
   display: inline-flex;
   align-items: center;
@@ -294,6 +305,7 @@ body {
   font-size: 1rem;
   box-shadow: 0 0 11px rgba(251, 191, 36, 0.65);
 }
+
 .push-joke {
   position: fixed;
   top: 27%;
@@ -319,6 +331,7 @@ body {
   box-shadow: 0 3px 18px rgba(0, 0, 0, 0.6);
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
+
 .push-joke.hidden {
   opacity: 0;
   transform: translate(-50%, -6px);
@@ -350,6 +363,7 @@ body {
   pointer-events: none;
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
+
 .action-blocked.hidden {
   opacity: 0;
   transform: translate(-50%, -8px);
@@ -374,11 +388,13 @@ body {
   opacity: 1;
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
+
 .project-panel.hidden {
   opacity: 0;
   transform: translate(20px, -50%);
   pointer-events: none;
 }
+
 .panel-close {
   position: absolute;
   top: 0.5rem;
@@ -393,13 +409,18 @@ body {
   cursor: pointer;
   opacity: 0.6;
 }
-.panel-close:hover { opacity: 1; }
+
+.panel-close:hover {
+  opacity: 1;
+}
+
 .panel-accent {
   width: 56px;
   height: 4px;
   border-radius: 2px;
   margin-bottom: 0.6rem;
 }
+
 .panel-title {
   font-family: 'Oswald', sans-serif;
   font-weight: 700;
@@ -407,18 +428,21 @@ body {
   letter-spacing: 0.04em;
   margin-bottom: 0.45rem;
 }
+
 .panel-description {
   font-size: 0.95rem;
   line-height: 1.5;
   opacity: 0.85;
   margin-bottom: 1rem;
 }
+
 .panel-tech {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-bottom: 1.1rem;
 }
+
 .tech-pill {
   padding: 0.2rem 0.65rem;
   border-radius: 999px;
@@ -429,9 +453,11 @@ body {
   text-transform: uppercase;
   color: var(--warm-amber);
 }
+
 .panel-actions {
   margin-bottom: 1.2rem;
 }
+
 .panel-link {
   display: inline-block;
   padding: 0.5rem 1rem;
@@ -446,7 +472,11 @@ body {
   text-decoration: none;
   transition: transform 0.15s ease;
 }
-.panel-link:hover { transform: translateY(-1px); }
+
+.panel-link:hover {
+  transform: translateY(-1px);
+}
+
 .panel-nav {
   display: flex;
   align-items: center;
@@ -455,6 +485,7 @@ body {
   padding-top: 0.8rem;
   margin-bottom: 0.6rem;
 }
+
 .panel-nav button {
   background: transparent;
   border: 1px solid rgba(245, 230, 211, 0.2);
@@ -467,13 +498,18 @@ body {
   cursor: pointer;
   transition: background 0.15s ease;
 }
-.panel-nav button:hover { background: rgba(245, 230, 211, 0.08); }
+
+.panel-nav button:hover {
+  background: rgba(245, 230, 211, 0.08);
+}
+
 .panel-counter {
   font-family: 'Oswald', sans-serif;
   font-size: 0.85rem;
   letter-spacing: 0.12em;
   opacity: 0.7;
 }
+
 .panel-hint {
   text-align: center;
   font-size: 0.72rem;
@@ -501,11 +537,13 @@ body {
   opacity: 1;
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
+
 .contact-panel.hidden {
   opacity: 0;
   transform: translate(-50%, -45%);
   pointer-events: none;
 }
+
 .contact-accent {
   width: 64px;
   height: 4px;
@@ -513,12 +551,14 @@ body {
   background: var(--warm-orange);
   margin-bottom: 0.8rem;
 }
+
 .contact-title {
   font-family: 'Oswald', sans-serif;
   font-weight: 700;
   font-size: 2rem;
   letter-spacing: 0.05em;
 }
+
 .contact-subtitle {
   color: var(--warm-amber);
   font-size: 0.95rem;
@@ -526,18 +566,21 @@ body {
   text-transform: uppercase;
   margin-bottom: 0.8rem;
 }
+
 .contact-blurb {
   font-size: 0.95rem;
   line-height: 1.5;
   opacity: 0.8;
   margin-bottom: 1.2rem;
 }
+
 .contact-links {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
   margin-bottom: 1.2rem;
 }
+
 .contact-link {
   display: flex;
   align-items: center;
@@ -550,10 +593,12 @@ body {
   text-decoration: none;
   transition: background 0.15s ease, transform 0.15s ease;
 }
+
 .contact-link:hover {
   background: rgba(245, 230, 211, 0.1);
   transform: translateY(-1px);
 }
+
 .contact-link-label {
   font-family: 'Oswald', sans-serif;
   font-size: 0.75rem;
@@ -561,6 +606,7 @@ body {
   text-transform: uppercase;
   color: var(--warm-amber);
 }
+
 .contact-link-value {
   font-size: 0.92rem;
   opacity: 0.9;
@@ -571,6 +617,7 @@ body {
   background: radial-gradient(ellipse at center, rgba(20, 12, 8, 0.78) 0%, rgba(8, 4, 2, 0.92) 100%);
   backdrop-filter: blur(2px);
 }
+
 .welcome-inner {
   display: flex;
   flex-direction: column;
@@ -580,6 +627,7 @@ body {
   padding: 2rem;
   max-width: 520px;
 }
+
 .welcome-eyebrow {
   font-family: 'Rajdhani', sans-serif;
   font-weight: 600;
@@ -589,6 +637,7 @@ body {
   color: var(--warm-amber);
   opacity: 0.8;
 }
+
 .welcome-title {
   font-family: 'Oswald', sans-serif;
   font-weight: 700;
@@ -598,6 +647,7 @@ body {
   text-shadow: 0 0 40px rgba(255, 153, 68, 0.45);
   margin-bottom: 0.5rem;
 }
+
 .welcome-sub {
   font-family: 'Rajdhani', sans-serif;
   font-size: 1rem;
@@ -606,6 +656,7 @@ body {
   max-width: 360px;
   margin-bottom: 1.2rem;
 }
+
 .welcome-compass {
   display: flex;
   flex-direction: column;
@@ -613,10 +664,12 @@ body {
   gap: 0.6rem;
   margin: 0.4rem 0 1.5rem;
 }
+
 .compass-row {
   display: flex;
   gap: 0.6rem;
 }
+
 .compass-card {
   display: flex;
   align-items: center;
@@ -634,6 +687,7 @@ body {
   justify-content: center;
   white-space: nowrap;
 }
+
 .compass-card.compass-center {
   min-width: 60px;
   border-radius: 50%;
@@ -642,15 +696,18 @@ body {
   font-weight: 700;
   font-size: 1.2rem;
 }
+
 .compass-arrow {
   color: var(--warm-amber);
   font-family: 'Oswald', sans-serif;
   font-weight: 700;
   font-size: 1.1rem;
 }
+
 .compass-label {
   font-weight: 600;
 }
+
 .welcome-start {
   padding: 0.85rem 1.8rem;
   border: none;
@@ -666,10 +723,12 @@ body {
   box-shadow: 0 8px 24px rgba(255, 153, 68, 0.35);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+
 .welcome-start:hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 30px rgba(255, 153, 68, 0.5);
 }
+
 .welcome-hint {
   margin-top: 0.4rem;
   font-family: 'Rajdhani', sans-serif;
@@ -729,24 +788,30 @@ body.booting #lightning-trigger {
   opacity: 0.9;
   padding: 0;
 }
+
 #tod-toggle:hover {
   opacity: 1;
   transform: translateY(-1px);
 }
+
 #tod-toggle[data-mode="day"] {
   color: #ffe4a0;
 }
+
 #tod-toggle[data-mode="day"]:hover {
   border-color: rgba(255, 200, 100, 0.55);
   box-shadow: 0 0 22px rgba(255, 180, 80, 0.45);
 }
+
 #tod-toggle[data-mode="night"] {
   color: #cfe2ff;
 }
+
 #tod-toggle[data-mode="night"]:hover {
   border-color: rgba(140, 180, 255, 0.55);
   box-shadow: 0 0 22px rgba(120, 170, 255, 0.45);
 }
+
 #tod-toggle svg {
   display: block;
 }
@@ -773,10 +838,23 @@ body.booting #lightning-trigger {
   opacity: 0.75;
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
-.audio-toggle  { left: 14px; }
-.rain-toggle   { left: 64px; }
-.wind-toggle   { left: 114px; }
-.leaves-toggle { left: 164px; }
+
+.audio-toggle {
+  left: 14px;
+}
+
+.rain-toggle {
+  left: 64px;
+}
+
+.wind-toggle {
+  left: 114px;
+}
+
+.leaves-toggle {
+  left: 164px;
+}
+
 .audio-toggle:hover,
 .rain-toggle:hover,
 .wind-toggle:hover,
@@ -791,9 +869,19 @@ body.booting #lightning-trigger {
  * Translation has to nest inside the existing translateX(-50%) center
  * anchor so the button doesn't jump off-center when the animation runs. */
 @keyframes lightning-shake {
-  0%, 100% { transform: translateX(-50%); }
-  25%      { transform: translateX(calc(-50% + 3px)); }
-  75%      { transform: translateX(calc(-50% - 3px)); }
+
+  0%,
+  100% {
+    transform: translateX(-50%);
+  }
+
+  25% {
+    transform: translateX(calc(-50% + 3px));
+  }
+
+  75% {
+    transform: translateX(calc(-50% - 3px));
+  }
 }
 
 /* ─────────────── Lightning message (Thunderstorm "Zeus liked your…") ───
@@ -810,7 +898,7 @@ body.booting #lightning-trigger {
   background: rgba(12, 18, 32, 0.82);
   border: 1px solid rgba(180, 200, 255, 0.4);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45),
-              0 0 24px rgba(120, 140, 255, 0.35);
+    0 0 24px rgba(120, 140, 255, 0.35);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   font-family: 'Oswald', sans-serif;
@@ -821,7 +909,7 @@ body.booting #lightning-trigger {
   color: #ffffff;
   text-align: center;
   text-shadow: 0 0 18px rgba(140, 160, 255, 0.9),
-               0 1px 2px rgba(0, 0, 0, 0.6);
+    0 1px 2px rgba(0, 0, 0, 0.6);
   opacity: 0;
   pointer-events: none;
   z-index: 60;
@@ -831,6 +919,7 @@ body.booting #lightning-trigger {
   word-break: break-word;
   transition: opacity 0.15s ease;
 }
+
 @media (max-width: 480px) {
   #lightning-msg {
     top: 12%;
@@ -878,22 +967,31 @@ body.booting #mobile-interact {
   padding: 0;
   opacity: 1;
   transition: transform 0.18s ease, background 0.18s ease,
-              box-shadow 0.18s ease, border-color 0.18s ease,
-              opacity 0.2s ease;
+    box-shadow 0.18s ease, border-color 0.18s ease,
+    opacity 0.2s ease;
   pointer-events: auto;
 }
+
 .ui-btn:hover {
   background: rgba(0, 0, 0, 0.55);
   transform: translateY(-1px);
   box-shadow: 0 0 14px rgba(255, 255, 255, 0.08);
 }
-.ui-btn:active { transform: scale(0.94); }
-.ui-btn svg { display: block; }
+
+.ui-btn:active {
+  transform: scale(0.94);
+}
+
+.ui-btn svg {
+  display: block;
+}
+
 body[data-tod="night"] .ui-btn {
   background: rgba(10, 18, 32, 0.55);
   border-color: rgba(190, 215, 255, 0.22);
   color: #cfe0ff;
 }
+
 body[data-tod="night"] .ui-btn:hover {
   border-color: rgba(140, 180, 255, 0.55);
   box-shadow: 0 0 18px rgba(120, 170, 255, 0.35);
@@ -928,7 +1026,11 @@ body[data-tod="night"] .ui-btn:hover {
   align-items: flex-start;
   pointer-events: none;
 }
-#top-left-stack > .ui-btn { pointer-events: auto; }
+
+#top-left-stack>.ui-btn {
+  pointer-events: auto;
+}
+
 /* Cancel the legacy fixed positioning on #tod-toggle and any re-parented
  * .audio-toggle so the flex container drives layout. */
 #top-left-stack #tod-toggle {
@@ -944,32 +1046,55 @@ body[data-tod="night"] .ui-btn:hover {
   left: 16px;
   z-index: 30;
   display: flex;
-  flex-direction: column-reverse; /* first child sits at the bottom */
+  flex-direction: column-reverse;
+  /* first child sits at the bottom */
   gap: 10px;
   align-items: flex-start;
   pointer-events: none;
 }
-#bottom-left-stack > .ui-btn { pointer-events: auto; }
-#bottom-left-stack > .ui-btn:not(.ui-btn-trigger) {
+
+#bottom-left-stack>.ui-btn {
+  pointer-events: auto;
+}
+
+#bottom-left-stack>.ui-btn:not(.ui-btn-trigger) {
   transition: transform 0.22s ease, opacity 0.2s ease;
 }
+
 /* Collapsed: every non-trigger button collapses into the trigger footprint. */
-#bottom-left-stack.collapsed > .ui-btn:not(.ui-btn-trigger) {
+#bottom-left-stack.collapsed>.ui-btn:not(.ui-btn-trigger) {
   opacity: 0;
   transform: translateY(54px) scale(0.85);
   pointer-events: none;
 }
+
 /* When expanding, cascade out from bottom to top. */
-#bottom-left-stack:not(.collapsed) > .ui-btn:nth-of-type(1) { transition-delay: 0ms; }
-#bottom-left-stack:not(.collapsed) > .ui-btn:nth-of-type(2) { transition-delay: 40ms; }
-#bottom-left-stack:not(.collapsed) > .ui-btn:nth-of-type(3) { transition-delay: 80ms; }
-#bottom-left-stack:not(.collapsed) > .ui-btn:nth-of-type(4) { transition-delay: 120ms; }
+#bottom-left-stack:not(.collapsed)>.ui-btn:nth-of-type(1) {
+  transition-delay: 0ms;
+}
+
+#bottom-left-stack:not(.collapsed)>.ui-btn:nth-of-type(2) {
+  transition-delay: 40ms;
+}
+
+#bottom-left-stack:not(.collapsed)>.ui-btn:nth-of-type(3) {
+  transition-delay: 80ms;
+}
+
+#bottom-left-stack:not(.collapsed)>.ui-btn:nth-of-type(4) {
+  transition-delay: 120ms;
+}
+
 /* Rotate the hamburger when open as a small affordance. */
-#quick-toggle { transition: transform 0.22s ease, background 0.18s ease,
-                            border-color 0.18s ease; }
+#quick-toggle {
+  transition: transform 0.22s ease, background 0.18s ease,
+    border-color 0.18s ease;
+}
+
 #bottom-left-stack:not(.collapsed) #quick-toggle {
   transform: rotate(90deg);
 }
+
 #bottom-left-stack:not(.collapsed) #quick-toggle:hover {
   transform: rotate(90deg) translateY(-1px);
 }
@@ -981,6 +1106,7 @@ body[data-tod="night"] .ui-btn:hover {
   right: 16px;
   z-index: 30;
 }
+
 .controls-panel {
   position: fixed;
   bottom: 72px;
@@ -998,11 +1124,13 @@ body[data-tod="night"] .ui-btn:hover {
   color: var(--paper);
   transition: opacity 0.22s ease, transform 0.22s ease;
 }
+
 .controls-panel.hidden {
   opacity: 0;
   transform: translateY(12px);
   pointer-events: none;
 }
+
 .controls-panel-header {
   display: flex;
   align-items: center;
@@ -1015,6 +1143,7 @@ body[data-tod="night"] .ui-btn:hover {
   text-transform: uppercase;
   color: var(--warm-amber);
 }
+
 .controls-close {
   width: 1.8rem;
   height: 1.8rem;
@@ -1028,18 +1157,25 @@ body[data-tod="night"] .ui-btn:hover {
   border-radius: 6px;
   transition: opacity 0.15s ease, background 0.15s ease;
 }
-.controls-close:hover { opacity: 1; background: rgba(245, 230, 211, 0.08); }
+
+.controls-close:hover {
+  opacity: 1;
+  background: rgba(245, 230, 211, 0.08);
+}
+
 .controls-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem 0.85rem;
 }
+
 .control-item {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
 }
+
 .control-item kbd {
   display: inline-flex;
   align-items: center;
@@ -1056,16 +1192,22 @@ body[data-tod="night"] .ui-btn:hover {
   color: var(--warm-amber);
   white-space: nowrap;
 }
+
 .control-item span {
   opacity: 0.78;
   font-size: 0.85rem;
   letter-spacing: 0.04em;
 }
+
 body[data-tod="night"] .controls-panel {
   background: rgba(8, 14, 24, 0.86);
   border-color: rgba(190, 215, 255, 0.22);
 }
-body[data-tod="night"] .controls-panel-header { color: #cfe0ff; }
+
+body[data-tod="night"] .controls-panel-header {
+  color: #cfe0ff;
+}
+
 body[data-tod="night"] .control-item kbd {
   color: #cfe0ff;
   border-color: rgba(180, 210, 255, 0.36);
@@ -1079,10 +1221,12 @@ body[data-tod="night"] .control-item kbd {
 .is-desktop .joystick-base {
   display: none !important;
 }
+
 .is-mobile #controls-trigger,
 .is-mobile #controls-panel {
   display: none !important;
 }
+
 .is-mobile .ui-btn {
   width: 48px;
   height: 48px;
@@ -1100,6 +1244,7 @@ body[data-tod="night"] .control-item kbd {
   touch-action: none;
   pointer-events: auto;
 }
+
 .joystick-base {
   position: fixed;
   width: 110px;
@@ -1113,7 +1258,11 @@ body[data-tod="night"] .control-item kbd {
   transition: opacity 0.15s ease;
   box-shadow: 0 0 18px rgba(0, 0, 0, 0.3);
 }
-.joystick-base.visible { opacity: 0.9; }
+
+.joystick-base.visible {
+  opacity: 0.9;
+}
+
 .joystick-thumb {
   position: absolute;
   left: 50%;
@@ -1126,10 +1275,12 @@ body[data-tod="night"] .control-item kbd {
   box-shadow: 0 0 14px rgba(255, 255, 255, 0.3);
   transition: transform 0.05s linear;
 }
+
 body[data-tod="night"] .joystick-base {
   border-color: rgba(190, 215, 255, 0.4);
   background: rgba(8, 14, 24, 0.3);
 }
+
 body[data-tod="night"] .joystick-thumb {
   background: rgba(190, 215, 255, 0.65);
   box-shadow: 0 0 14px rgba(140, 180, 255, 0.4);
@@ -1165,30 +1316,37 @@ body[data-tod="night"] .joystick-thumb {
   cursor: pointer;
   pointer-events: auto;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45),
-              0 0 18px rgba(255, 153, 68, 0.22);
+    0 0 18px rgba(255, 153, 68, 0.22);
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
+
 #mobile-interact .interact-label {
   flex: 1 1 auto;
   min-width: 0;
   word-break: break-word;
 }
+
 #mobile-interact.hidden {
   opacity: 0;
   transform: translate(-50%, 14px);
   pointer-events: none;
 }
+
 #mobile-interact .interact-icon {
   font-size: 1.05rem;
   color: var(--warm-amber);
 }
+
 body[data-tod="night"] #mobile-interact {
   background: rgba(10, 18, 32, 0.78);
   border-color: rgba(140, 180, 255, 0.55);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5),
-              0 0 18px rgba(140, 180, 255, 0.25);
+    0 0 18px rgba(140, 180, 255, 0.25);
 }
-body[data-tod="night"] #mobile-interact .interact-icon { color: #cfe0ff; }
+
+body[data-tod="night"] #mobile-interact .interact-icon {
+  color: #cfe0ff;
+}
 
 /* ─── Mobile: action grid (bottom-right) ────────────────────────────── */
 #mobile-actions {
@@ -1202,6 +1360,7 @@ body[data-tod="night"] #mobile-interact .interact-icon { color: #cfe0ff; }
   gap: 8px;
   pointer-events: none;
 }
+
 #mobile-actions .action-btn {
   width: 52px;
   height: 52px;
@@ -1222,20 +1381,27 @@ body[data-tod="night"] #mobile-interact .interact-icon { color: #cfe0ff; }
   touch-action: manipulation;
   transition: transform 0.12s ease, opacity 0.18s ease, background 0.18s ease;
 }
-#mobile-actions .action-btn:active { transform: scale(0.92); }
+
+#mobile-actions .action-btn:active {
+  transform: scale(0.92);
+}
+
 #mobile-actions .action-btn[data-disabled="true"] {
   opacity: 0.3;
   pointer-events: none;
 }
+
 #mobile-actions .action-btn.is-active {
   background: rgba(255, 153, 68, 0.55);
   border-color: rgba(255, 200, 100, 0.7);
 }
+
 body[data-tod="night"] #mobile-actions .action-btn {
   background: rgba(10, 18, 32, 0.6);
   border-color: rgba(190, 215, 255, 0.22);
   color: #cfe0ff;
 }
+
 body[data-tod="night"] #mobile-actions .action-btn.is-active {
   background: rgba(140, 180, 255, 0.45);
   border-color: rgba(190, 215, 255, 0.7);
@@ -1251,13 +1417,16 @@ body[data-tod="night"] #mobile-actions .action-btn.is-active {
 .is-mobile .billboard-prompt {
   bottom: clamp(220px, 32%, 38%);
 }
+
 .is-mobile .action-prompt {
   bottom: clamp(220px, 32%, 38%);
   transform: translateX(-50%);
 }
+
 .is-mobile .action-prompt.hidden {
   transform: translate(-50%, 0.6rem);
 }
+
 /* Push hint + blocked toast live at top: 18%; on phones with a tall
    browser chrome they can collide with the top-left stack on landscape.
    Drop them slightly and tighten padding. */
@@ -1265,8 +1434,654 @@ body[data-tod="night"] #mobile-actions .action-btn.is-active {
 .is-mobile .action-blocked {
   top: 14%;
 }
-.is-mobile .push-joke { top: 22%; }
+
+.is-mobile .push-joke {
+  top: 22%;
+}
+
 /* Lightning message: it's the one the user reported as cut off. The
    global media query already shrinks padding < 480px; on landscape phones
    where width may exceed 480 but height is tight, pull it closer to top. */
-.is-mobile #lightning-msg { top: 10%; }
+.is-mobile #lightning-msg {
+  top: 10%;
+}
+
+/* Torch aim is keyboard-only (F). Hide the hint on touch devices. */
+.is-mobile .torch-hint {
+  display: none !important;
+}
+
+/* ─── Achievements: trophy button (right corner, above 🎮 controls) ─── */
+.trophy-btn {
+  position: fixed;
+  bottom: 72px;
+  /* sits just above the bottom-right .ui-btn-controls */
+  right: 16px;
+  z-index: 35;
+  width: auto;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 22px;
+  gap: 8px;
+}
+
+.trophy-btn .trophy-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.trophy-btn .trophy-count {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  letter-spacing: 0.02em;
+}
+
+body[data-tod="night"] .trophy-btn .trophy-count {
+  color: rgba(207, 224, 255, 0.8);
+}
+
+/* On mobile the bottom-right is already crowded with the action grid (~190px
+   tall). Move the chip to the top-right next to the audio toggle row. */
+.is-mobile .trophy-btn {
+  bottom: auto;
+  top: 18px;
+  right: 18px;
+}
+
+/* ─── Achievements: toast notifications (top-right stack) ───────────── */
+#achievement-toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  max-width: calc(100vw - 40px);
+}
+
+/* On mobile the trophy chip lives top-right; the toast container drops
+   below it AND spans the viewport width so a 360-px-min toast doesn't get
+   pushed off-screen on a 375-px phone. Each toast also relaxes its own
+   width clamps under .is-mobile (see further down). */
+.is-mobile #achievement-toast-container {
+  top: 72px;
+  left: 12px;
+  right: 12px;
+  max-width: none;
+  align-items: stretch;
+}
+
+.is-mobile .achievement-toast {
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+  padding: 12px 14px;
+  gap: 10px;
+}
+
+.is-mobile .toast-icon {
+  width: 40px;
+  height: 40px;
+  font-size: 24px;
+}
+
+.is-mobile .toast-name {
+  font-size: 16px;
+}
+
+.is-mobile .toast-desc {
+  font-size: 11.5px;
+}
+
+/* Panel sizing on mobile — slightly taller cap and tighter padding so the
+   pinned header + wrapped tab pills + at least 4 list rows all fit at once
+   on a portrait phone (375 × 667 baseline). The panel is also rendered at
+   75% scale per user request ("zoom out by 25%") so the chrome feels less
+   over-sized on a phone screen; layout still flows at 100% so click
+   targets stay where they appear visually. */
+.is-mobile .achievement-panel-content {
+  width: calc(100vw - 16px);
+  max-height: 86vh;
+  border-radius: 14px;
+  transform: scale(0.75);
+  transform-origin: center;
+}
+
+.is-mobile .achievement-panel-header {
+  padding: 14px 16px;
+}
+
+.is-mobile .panel-title {
+  font-size: 17px;
+  gap: 8px;
+}
+
+.is-mobile .panel-counter {
+  font-size: 13px;
+  margin-right: 10px;
+}
+
+.is-mobile .panel-close {
+  width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+
+/* Wrap pills to multiple rows on mobile (parent already sets flex-wrap)
+   and shrink them so all 7 fit in two rows even on a 360-px viewport. */
+.is-mobile .achievement-categories {
+  padding: 10px 14px;
+  gap: 6px;
+}
+
+.is-mobile .category-tab {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+}
+
+.is-mobile .achievement-list {
+  padding: 10px 14px 14px;
+}
+
+.is-mobile .achievement-item {
+  padding: 10px;
+  gap: 10px;
+}
+
+.is-mobile .achievement-icon {
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
+}
+
+.is-mobile .achievement-name {
+  font-size: 13.5px;
+}
+
+.is-mobile .achievement-desc {
+  font-size: 11px;
+}
+
+.achievement-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  min-width: 280px;
+  max-width: 360px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 12, 20, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: white;
+  font-family: 'Rajdhani', sans-serif;
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.achievement-toast.toast-visible {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.achievement-toast.toast-exit {
+  transform: translateX(120%);
+  opacity: 0;
+}
+
+.toast-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #aaee44;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.toast-name {
+  font-family: 'Oswald', sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  line-height: 1.2;
+}
+
+.toast-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  margin-top: 2px;
+}
+
+.toast-progress {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.toast-progress-bar {
+  height: 100%;
+  width: 100%;
+  background: #aaee44;
+  border-radius: 2px;
+}
+
+.toast-check {
+  font-size: 16px;
+  color: #aaee44;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+body[data-tod="night"] .achievement-toast {
+  background: rgba(5, 8, 18, 0.9);
+  border-color: rgba(120, 170, 255, 0.22);
+}
+
+body[data-tod="night"] .toast-label,
+body[data-tod="night"] .toast-check {
+  color: #88bbff;
+}
+
+body[data-tod="night"] .toast-progress-bar {
+  background: #88bbff;
+}
+
+/* ─── Achievements: full-screen panel ───────────────────────────────── */
+.achievement-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.3s ease;
+}
+
+/* Hidden state — fully invisible + click-through. This is what was missing
+   when the layout first shipped, which is why the panel's ✕ was floating
+   in the top-right of a freshly-loaded page. */
+.achievement-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.achievement-panel-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.achievement-panel-content {
+  position: relative;
+  width: min(520px, calc(100vw - 32px));
+  /* The panel itself is the scroll container; max-height caps it on short
+     viewports and the inner header sticks to its top while the categories
+     + list scroll past below. */
+  max-height: min(88vh, 720px);
+  background: rgba(15, 17, 25, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  color: var(--paper);
+  scrollbar-gutter: stable;
+  /* Firefox custom scrollbar — Chrome/Safari use the ::-webkit-scrollbar
+     rules below. Both end up with a thin warm-amber thumb on dark track. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 200, 100, 0.45) transparent;
+}
+
+/* Chrome / Safari / Edge — narrow rounded track, no buttons, themed thumb
+   that brightens on hover. Tracks sit on the same background as the panel
+   so the scrollbar reads as part of the chrome instead of a system widget. */
+.achievement-panel-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.achievement-panel-content::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  margin: 6px 0;
+}
+
+.achievement-panel-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 200, 100, 0.45);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-height: 40px;
+}
+
+.achievement-panel-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 200, 100, 0.7);
+  background-clip: padding-box;
+}
+
+.achievement-panel-content::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Night mode — cool-blue thumb to match the rest of the night palette. */
+body[data-tod="night"] .achievement-panel-content {
+  scrollbar-color: rgba(140, 180, 255, 0.45) transparent;
+}
+
+body[data-tod="night"] .achievement-panel-content::-webkit-scrollbar-thumb {
+  background: rgba(140, 180, 255, 0.45);
+  background-clip: padding-box;
+}
+
+body[data-tod="night"] .achievement-panel-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 180, 255, 0.7);
+  background-clip: padding-box;
+}
+
+/* The achievements title row stays pinned at the top of the scroll area —
+   the categories + list scroll underneath. Background is intentionally
+   opaque so scrolled content can't bleed through behind the title. */
+.achievement-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 17, 25, 0.98);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.panel-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+/* Scope to .achievement-panel — there's a sibling project panel earlier in
+   this file with its own .panel-counter that uses 'Oswald' / opacity 0.7. */
+.achievement-panel .panel-counter {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: #aaee44;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  opacity: 1;
+}
+
+/* Scoped to .achievement-panel — the project info panel earlier in this
+   file owns the bare .panel-close selector and uses position:absolute,
+   which was making our × button float to the panel's right edge and
+   ignore the flex layout (hence the counter→× overlap). */
+.achievement-panel .panel-close {
+  position: static;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 1;
+  margin-left: 8px;
+}
+.achievement-panel .panel-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+  opacity: 1;
+}
+
+.achievement-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  /* The categories row scrolls WITH the list — pinning it to the top of
+     the scroll area would steal vertical real estate exactly when the
+     user is least likely to have any to spare. */
+}
+
+.category-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin: 0;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.18s, color 0.18s, border-color 0.18s, transform 0.12s;
+}
+
+.category-tab:hover {
+  color: white;
+  background-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.category-tab:focus-visible {
+  border-color: rgba(170, 238, 68, 0.6);
+  box-shadow: 0 0 0 2px rgba(170, 238, 68, 0.25);
+}
+
+.category-tab:active {
+  transform: scale(0.97);
+}
+
+.category-tab.active {
+  background-color: rgba(170, 238, 68, 0.22);
+  color: #d4ff7a;
+  border-color: rgba(170, 238, 68, 0.55);
+}
+
+.achievement-list {
+  padding: 12px 20px 20px;
+  /* No scroll/overflow here — the parent .achievement-panel-content is the
+     scroll container. Letting the list be a normal block lets the parent's
+     sticky header pin correctly while items flow naturally. */
+}
+
+.achievement-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 8px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.achievement-item.unlocked {
+  border-color: rgba(170, 238, 68, 0.25);
+  background: rgba(170, 238, 68, 0.06);
+}
+
+.achievement-item.locked {
+  opacity: 0.55;
+}
+
+.achievement-icon {
+  font-size: 22px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.achievement-item.unlocked .achievement-icon {
+  background: rgba(170, 238, 68, 0.14);
+}
+
+.achievement-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.achievement-name {
+  font-family: 'Oswald', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: white;
+}
+
+.achievement-item.locked .achievement-name {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.achievement-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 2px;
+}
+
+.achievement-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.achievement-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.achievement-bar-fill {
+  height: 100%;
+  background: #aaee44;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.achievement-item.locked .achievement-bar-fill {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.achievement-counter {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
+}
+
+.achievement-item.unlocked .achievement-counter {
+  color: #aaee44;
+}
+
+.achievement-check {
+  color: #aaee44;
+  font-size: 16px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Night-mode tinting — blue accent instead of green. */
+body[data-tod="night"] .achievement-panel-content {
+  background: rgba(8, 10, 22, 0.95);
+  border-color: rgba(120, 170, 255, 0.18);
+}
+
+body[data-tod="night"] .panel-counter,
+body[data-tod="night"] .achievement-check,
+body[data-tod="night"] .achievement-item.unlocked .achievement-counter {
+  color: #88bbff;
+}
+
+body[data-tod="night"] .category-tab.active {
+  background: rgba(120, 170, 255, 0.15);
+  color: #88bbff;
+  border-color: rgba(120, 170, 255, 0.3);
+}
+
+body[data-tod="night"] .achievement-item.unlocked {
+  border-color: rgba(120, 170, 255, 0.25);
+  background: rgba(120, 170, 255, 0.06);
+}
+
+body[data-tod="night"] .achievement-item.unlocked .achievement-icon {
+  background: rgba(120, 170, 255, 0.14);
+}
+
+body[data-tod="night"] .achievement-bar-fill {
+  background: #88bbff;
+}

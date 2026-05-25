@@ -74,6 +74,15 @@ export class PlayerCamera {
     // Same 1-second damping as the zoom.
     this._polarTilt = 0;
     this._polarTiltTarget = 0;
+
+    // Mobile devices have a narrower FOV-to-screen ratio and the character
+    // fills too much frame at the default distance. Pull the resting view
+    // back 25% so the world reads at a glance. matchMedia is evaluated once
+    // — orientation flips don't retro-apply, which matches our existing
+    // is-mobile body-class lifecycle.
+    const coarse = typeof matchMedia === 'function'
+      && matchMedia('(pointer: coarse)').matches;
+    this._mobileZoom = coarse ? 1.25 : 1.0;
   }
 
   /** Tell the camera what the player is doing this frame so we can
@@ -142,7 +151,7 @@ export class PlayerCamera {
     );
     this._polarTilt = THREE.MathUtils.damp(this._polarTilt, this._polarTiltTarget, 3, delta);
 
-    const distance = this.controls.distance * this._movementZoomFactor;
+    const distance = this.controls.distance * this._movementZoomFactor * this._mobileZoom;
     const azimuth = this.controls.azimuthAngle;
     // Clamp the tilted polar to the orbit's own min/max so the sprint
     // pitch can't push the camera through the ground or up past zenith.

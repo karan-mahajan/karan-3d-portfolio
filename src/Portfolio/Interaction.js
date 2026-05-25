@@ -28,6 +28,7 @@ export class Interaction {
     audio = null,
     actionPrompts = null,
     timeOfDay = null,
+    achievements = null,
   }) {
     this.scene = scene;
     this.camera = camera;
@@ -39,6 +40,7 @@ export class Interaction {
     this.audio = audio;
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
+    this.achievements = achievements;
     this.torchLight = null; // wired post-construction by App.js
 
     this.activeIndex = -1; // -1 = not focused
@@ -143,6 +145,7 @@ export class Interaction {
         }
       } else if (e.code === "KeyF") {
         if (this.activeIndex !== -1 || this.contactOpen) return;
+        if (document.body.classList.contains("is-mobile")) return;
         const torchOn = this.player?.character?.torchMesh?.visible === true;
         const night = this.timeOfDay?.mode === "night";
         if (!torchOn || !night) return;
@@ -236,6 +239,7 @@ export class Interaction {
     this.activeIndex = index;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
+    this.achievements?.onProjectViewed?.(item.project?.name);
 
     this.controller.paused = true;
     this.playerCamera.locked = true;
@@ -342,6 +346,7 @@ export class Interaction {
     this.audio?.playMenuOpen();
     this.controller.paused = true;
     this.contactEl.classList.remove("hidden");
+    this.achievements?.onSectionVisited?.('contact');
   }
 
   closeContact() {
