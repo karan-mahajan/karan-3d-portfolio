@@ -9,6 +9,7 @@ import { Grass } from './World/Grass.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
 import { StreetLights } from './World/StreetLights.js';
+import { DistantIslands } from './World/DistantIslands.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -277,6 +278,14 @@ export class App extends EventTarget {
       this.water.audio = this.audio;
       if (this.water.mesh) this.water.mesh.userData.noTorchRaycast = true;
     }
+
+    // Procedural islands on the horizon. Pure decoration — no colliders, no
+    // collision, fog handles the distance fade. Wired into TimeOfDay so the
+    // rock + vegetation tints track day/night together with the rest of the
+    // palette.
+    this.distantIslands = new DistantIslands(this.scene);
+    this.timeOfDay.distantIslands = this.distantIslands;
+    this.distantIslands.setMode(this.timeOfDay.mode, 0);
 
     // Wire footprints: path positions for surface-guard, and the audio step
     // callback so prints drop at the exact moment a step would sound. Read
