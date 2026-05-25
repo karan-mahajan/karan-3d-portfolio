@@ -314,7 +314,12 @@ export class App extends EventTarget {
     // geometry JIT-compiles its alternate program variant. The cost is
     // front-loaded into the loading screen where waiting is expected.
     try {
-      await this.streetLights.load();
+      // billboards + signs are loaded above; pass them so each lamp can
+      // rotate its arm to face the nearest readable element within range.
+      await this.streetLights.load({
+        billboards: this.world.billboards,
+        signs: this.world.signs,
+      });
       this.timeOfDay.streetLights = this.streetLights;
       this.streetLights.setMode(this.timeOfDay.mode, 0);
       await this.#prewarmDayNightShaders();

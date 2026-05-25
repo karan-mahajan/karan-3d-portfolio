@@ -31,6 +31,10 @@ const POLE_COLLIDER_RADIUS = 0.15;
 const LIGHT_COLOR = 0xffe8c0;
 const LIGHT_DISTANCE = 12;
 const LIGHT_DECAY = 1.5;
+// A lamp rotates to face the nearest billboard/sign within this radius
+// (XZ plane). Reasonably tight so a perimeter lamp doesn't snap to a
+// distant board across the island just because nothing is closer.
+const TARGET_AIM_RADIUS = 10;
 // Base bulb tint. Day = colour × 0 (black, unlit). Night = colour × brightness
 // (bloom picks up anything past 1.0 in linear space when toneMapped=false).
 const BULB_BASE_HEX = 0xfff0c8;
@@ -88,7 +92,8 @@ export class StreetLights {
     this._activeTweens = [];
   }
 
-  async load() {
+  async load({ billboards = null, signs = null } = {}) {
+    const aimTargets = this.#collectAimTargets({ billboards, signs });
     // Filename with a space needs URL-encoding for fetch().
     const modernUrl  = '/models/props/Streetlight.glb';
     const classicUrl = '/models/props/Street%20Light.glb';
@@ -130,13 +135,59 @@ export class StreetLights {
     for (const spot of LAMP_POSITIONS) {
       const proto = protos[spot.type] ?? protos.modern ?? protos.classic;
       if (!proto) continue;
-      this.#placeLamp(proto, spot, this.bulbMaterials[spot.type]);
+      const aim = this.#nearestAim(spot, aimTargets, TARGET_AIM_RADIUS);
+      this.#placeLamp(proto, spot, this.bulbMaterials[spot.type], aim);
     }
 
     return this.lamps.length;
   }
 
-  #placeLamp(proto, spot, bulbMat) {
+  /** Pull XZ positions of every illuminate-worthy element (billboards,
+   *  the welcome compass, skills/contact sign clusters, every experience
+   *  sign along the north path). Lamps within TARGET_AIM_RADIUS get
+   *  rotated to face their nearest entry. */
+  #collectAimTargets({ billboards, signs }) {
+    const targets = [];
+    if (billboards?.items) {
+      for (const item of billboards.items) {
+        targets.push({ x: item.position.x, z: item.position.z, kind: 'billboard' });
+      }
+    }
+    if (signs) {
+      if (signs.compassPosition) {
+        targets.push({ x: signs.compassPosition.x, z: signs.compassPosition.z, kind: 'compass' });
+      }
+      if (signs.skillsPosition) {
+        targets.push({ x: signs.skillsPosition.x, z: signs.skillsPosition.z, kind: 'skills' });
+      }
+      if (signs.contactPosition) {
+        targets.push({ x: signs.contactPosition.x, z: signs.contactPosition.z, kind: 'contact' });
+      }
+      if (signs.experienceItems) {
+        for (const item of signs.experienceItems) {
+          targets.push({ x: item.position.x, z: item.position.z, kind: 'experience' });
+        }
+      }
+    }
+    return targets;
+  }
+
+  #nearestAim(spot, targets, maxDist) {
+    let best = null;
+    let bestD2 = maxDist * maxDist;
+    for (const t of targets) {
+      const dx = t.x - spot.x;
+      const dz = t.z - spot.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  #placeLamp(proto, spot, bulbMat, aim = null) {
     const groundY = this.terrain ? this.terrain.heightAt(spot.x, spot.z) : 0;
 
     const clone = proto.clone(true);
@@ -158,11 +209,21 @@ export class StreetLights {
     group.position.set(spot.x, liftY, spot.z);
     group.name = `streetlight:${spot.type}:${spot.x},${spot.z}`;
     group.add(clone);
+    // CRITICAL: propagate group.position into every descendant's
+    // matrixWorld before measuring world-space bbox below. Box3.setFromObject
+    // calls updateWorldMatrix(false, false) which does NOT update ancestors,
+    // so without this call every bulb's "world" centre would be the GLB-local
+    // position offset by identity → all lamps reported the same world XZ for
+    // their bulb (origin-side), the PointLight pool tracked the origin instead
+    // of the actual lamp, and the rotate-to-aim math was computed off a stale
+    // arm direction.
+    group.updateMatrixWorld(true);
 
     // Swap only the sub-mesh whose source material is named "Light" — the
     // bulb/LED on both Quaternius models. Pole + head keep their original
     // materials so modern and classic stay visually distinct.
     let bulbCenter = new THREE.Vector3(spot.x, liftY + TARGET_LAMP_HEIGHT - 0.2, spot.z);
+    let bulbMesh = null;
     clone.traverse((child) => {
       if (!child.isMesh) return;
       // Shadow-pass cost on tall thin geometry tanked FPS (144 → 30 with
@@ -176,12 +237,40 @@ export class StreetLights {
         // material brightens past the night threshold.
         child.visible = false;
         this.bulbMeshes[spot.type].push(child);
+        bulbMesh = child;
         // Recompute world bbox after material swap — needed so the
         // PointLight pool can be placed at the actual bulb position.
         const b = new THREE.Box3().setFromObject(child);
         if (b.isEmpty() === false) bulbCenter = b.getCenter(new THREE.Vector3());
       }
     });
+
+    // Aim the lamp head at the nearest billboard/sign. The GLB's natural
+    // arm direction is whatever (bulb − pole) gives us in world space at
+    // identity rotation; we rotate the group around Y by the difference
+    // between that and the target direction. The pole's XZ position
+    // doesn't move under a Y rotation, so the collider sized below + the
+    // ground-anchored spot.{x,z} stay correct without recomputation.
+    if (aim && bulbMesh) {
+      const armDx = bulbCenter.x - spot.x;
+      const armDz = bulbCenter.z - spot.z;
+      const armLen = Math.hypot(armDx, armDz);
+      if (armLen > 0.05) {
+        const currentYaw = Math.atan2(armDz, armDx);
+        const targetYaw = Math.atan2(aim.z - spot.z, aim.x - spot.x);
+        // THREE's Y rotation by θ takes a point at angle α (atan2(z,x))
+        // to angle (α − θ), so to make the arm land at target angle β
+        // we apply θ = currentYaw − targetYaw, NOT the reverse.
+        group.rotation.y = currentYaw - targetYaw;
+        group.updateMatrixWorld(true);
+        // Bulb world position changed with the rotation — re-measure so
+        // the pool PointLight that follows this lamp lands on the actual
+        // bulb (otherwise it'd sit at the original arm position and the
+        // visible glow would be offset from the light source).
+        const b = new THREE.Box3().setFromObject(bulbMesh);
+        if (b.isEmpty() === false) bulbCenter = b.getCenter(new THREE.Vector3());
+      }
+    }
 
     // Recompute final scaled bounds for collider sizing.
     const finalBox = new THREE.Box3().setFromObject(group);
