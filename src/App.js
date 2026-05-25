@@ -574,7 +574,7 @@ export class App extends EventTarget {
     });
     this.playerCamera.update(delta);
     if (this.compass) this.compass.update();
-    this.world.update(elapsed, this.camera, delta);
+    this.world.update(elapsed, this.camera, delta, this.player.position);
     this.wind.update(delta);
     // Grass's wind sway is driven by uWindTime; the per-frame work is one
     // uniform write for the player-bend (F5) — blades within

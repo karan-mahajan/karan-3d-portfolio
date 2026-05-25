@@ -103,8 +103,8 @@ export class World {
     };
   }
 
-  update(elapsed, camera = null, delta = 0) {
+  update(elapsed, camera = null, delta = 0, playerPos = null) {
     if (camera) this.sky.update(camera.position);
-    if (this.billboards) this.billboards.update(elapsed);
+    if (this.billboards) this.billboards.update(elapsed, playerPos, delta);
   }
 }

@@ -5,7 +5,7 @@ import { contact } from "./ContactData.js";
 const PROXIMITY = 4.5; // distance from billboard to show prompt
 const CONTACT_PROXIMITY = 3.2;
 const ZOOM_DURATION = 1.1; // seconds
-const ZOOM_STANDOFF = 3.2; // distance from screen during focused view
+const ZOOM_STANDOFF = 4.0; // distance from screen during focused view — sized so the full 3m-tall screen fits the 45° vertical FOV with margin
 const ZOOM_HEIGHT_OFFSET = 0.0; // vertical bias relative to screen center
 
 /**
@@ -233,9 +233,20 @@ export class Interaction {
   // ── Focus / exit ───────────────────────────────────────────────────────────
 
   focus(index) {
-    const item = this.billboards.items[index];
-    if (!item) return;
+    // The single showcase always returns items[0]; the project at that
+    // slot is whatever the showcase is currently displaying. `index` is
+    // the project index (0..projects.length-1) because the showcase
+    // mutates items[0].index to track its current project.
     if (this.torchAiming) this.exitTorchAim();
+    this.billboards.setFocused?.(true);
+    // Make sure the showcase is showing the project we're activating —
+    // important if the auto-rotate had advanced past it between the
+    // proximity prompt and the keypress.
+    if (this.billboards.setIndex && this.billboards.items[0]?.index !== index) {
+      this.billboards.setIndex(index);
+    }
+    const item = this.billboards.items[0];
+    if (!item) return;
     this.activeIndex = index;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
@@ -259,13 +270,21 @@ export class Interaction {
   }
 
   cycle(direction) {
-    const n = this.billboards.items.length;
+    // With one screen in the world the camera doesn't move on cycle — we
+    // just swap the texture on the showcase and re-populate the panel.
+    if (this.zooming) return;
+    if (this.billboards.transitioning) return;
+    const n = this.billboards.projects?.length ?? this.billboards.items.length;
+    if (n <= 1) return;
     const next = (this.activeIndex + direction + n) % n;
-    const item = this.billboards.items[next];
     this.activeIndex = next;
     this.audio?.playInteract();
-    this.#animateTo(item, /*incoming*/ false);
-    this.#populatePanel(item);
+    if (this.billboards.setIndex) this.billboards.setIndex(next);
+    const item = this.billboards.items[0];
+    if (item) {
+      this.#populatePanel(item);
+      this.achievements?.onProjectViewed?.(item.project?.name);
+    }
   }
 
   exit() {
@@ -273,6 +292,7 @@ export class Interaction {
     this.activeIndex = -1;
     this.panelEl.classList.add("hidden");
     this.audio?.playMenuClose();
+    this.billboards.setFocused?.(false);
     this.zooming = true;
 
     // Tween position back to the stashed return state and ease the look-target
@@ -304,6 +324,12 @@ export class Interaction {
     });
   }
 
+  /**
+   * Smooth incoming zoom. Camera position AND look target tween at the
+   * same pace so the screen never snaps into the centre of the frame on
+   * frame 1. The panel is held back until the position tween is ~80%
+   * complete so the UI doesn't pop in before the camera has settled.
+   */
   #animateTo(item, incoming) {
     this.zooming = true;
 
@@ -321,17 +347,42 @@ export class Interaction {
     target.y += ZOOM_HEIGHT_OFFSET;
     const look = screenWorld.clone();
 
+    // Start the look-proxy where the camera is actually pointing right now
+    // so the first frame of the tween reads as a continuation, not a snap.
+    const tmpDir = new THREE.Vector3();
+    this.camera.getWorldDirection(tmpDir);
+    const lookProxy = this.camera.position.clone().add(tmpDir);
+
+    const duration = incoming ? ZOOM_DURATION : ZOOM_DURATION * 0.65;
+    const panelEl = this.panelEl;
+    let panelShown = false;
+
+    // Lookproxy tween — same duration + ease as the position tween below.
+    const lookTween = gsap.to(lookProxy, {
+      x: look.x,
+      y: look.y,
+      z: look.z,
+      duration,
+      ease: "power2.inOut",
+    });
+
     gsap.to(this.camera.position, {
       x: target.x,
       y: target.y,
       z: target.z,
-      duration: incoming ? ZOOM_DURATION : ZOOM_DURATION * 0.65,
+      duration,
       ease: "power2.inOut",
-      onUpdate: () => this.camera.lookAt(look),
+      onUpdate: () => {
+        this.camera.lookAt(lookProxy);
+        if (!panelShown && lookTween.progress() > 0.8) {
+          panelShown = true;
+          panelEl.classList.remove("hidden");
+        }
+      },
       onComplete: () => {
         this.camera.lookAt(look);
         this.zooming = false;
-        this.panelEl.classList.remove("hidden");
+        if (!panelShown) panelEl.classList.remove("hidden");
       },
     });
   }
@@ -383,7 +434,8 @@ export class Interaction {
     }
 
     const counter = this.panelEl.querySelector(".panel-counter");
-    counter.textContent = `${item.index + 1} / ${this.billboards.items.length}`;
+    const total = this.billboards.projects?.length ?? this.billboards.items.length;
+    counter.textContent = `${item.index + 1} / ${total}`;
   }
 
   // ── Torch aim ────────────────────────────────────────────────────────────
