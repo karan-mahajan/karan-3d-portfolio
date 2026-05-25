@@ -45,7 +45,12 @@ body {
   align-items: center;
   justify-content: center;
   background: radial-gradient(ellipse at center, #2a1810 0%, #0e0805 100%);
-  z-index: 10;
+  /* Sits above every in-world HUD layer (highest is .achievement-panel @ 200)
+   * so things like the thunderstorm message, achievement toasts, distance-
+   * guess panel, etc. can't peek through while the loading or welcome screen
+   * is still up. When dismissed, .overlay.hidden zeroes opacity + pointer-
+   * events, so the high stacking order has no side effects afterwards. */
+  z-index: 1000;
   transition: opacity 0.6s ease;
 }
 
