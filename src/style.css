@@ -54,6 +54,47 @@ body {
   pointer-events: none;
 }
 
+/* Underwater tint — appears when the player wades chest-deep. Pure CSS so
+ * no GPU cost on the 3D side. Layered: a deep-blue gradient base plus
+ * animated light-ray streaks via a ::before pseudo-element. App.js
+ * toggles the .visible class. */
+.underwater-overlay {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(20, 60, 100, 0.5) 0%,
+    rgba(10, 40, 80, 0.7) 100%
+  );
+  pointer-events: none;
+  z-index: 15;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  overflow: hidden;
+}
+.underwater-overlay.visible { opacity: 1; }
+.underwater-overlay::before {
+  content: '';
+  position: absolute;
+  inset: -10% -10%;
+  background: repeating-linear-gradient(
+    -30deg,
+    transparent 0,
+    transparent 40px,
+    rgba(140, 200, 255, 0.06) 40px,
+    rgba(140, 200, 255, 0.06) 42px
+  );
+  animation: underwaterRays 8s linear infinite;
+  pointer-events: none;
+}
+@keyframes underwaterRays {
+  from { transform: translateX(0); }
+  to   { transform: translateX(80px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .underwater-overlay::before { animation: none; }
+}
+
 .loading-inner {
   text-align: center;
   display: flex;

@@ -76,13 +76,17 @@ const DAY_PALETTE = Object.freeze({
   shallow: '#4a9aba',
   deep:    '#1a4a6a',
   foam:    '#ddeef5',
+  sky:     '#88aabb', // matches DUSK.skyHorizon / Palette.js so reflections blend
   sun:     new THREE.Vector3(60, 55, 40),
+  whitecap: 1.0,
 });
 const NIGHT_PALETTE = Object.freeze({
   shallow: '#1a3a5a',
   deep:    '#0a1a2a',
   foam:    '#3a4a5a',
+  sky:     '#0a1520', // matches NIGHT_PALETTE.skyHorizon / fog
   sun:     new THREE.Vector3(-40, 45, -40),
+  whitecap: 0.3,
 });
 
 // The plane geometry is rotated -π/2 around X at construction (below), so
@@ -104,12 +108,18 @@ const VERTEX_SHADER = /* glsl */ `
   void main() {
     vec3 pos = position;
 
-    float wave1 = sin(pos.x * 0.30 + uTime * 0.8) * 0.15;
-    float wave2 = sin(pos.z * 0.40 + uTime * 0.6) * 0.10;
-    float wave3 = sin((pos.x + pos.z) * 0.20 + uTime * 1.0) * 0.08;
-    float wave4 = sin(pos.x * 0.80 - uTime * 1.2) * 0.04;
-    float wave5 = cos(pos.z * 0.60 + uTime * 0.9) * 0.05;
-    pos.y += wave1 + wave2 + wave3 + wave4 + wave5;
+    // Seven-octave wave stack — totals roughly ±0.8m so wave peaks and
+    // troughs are visible from the side of the island. Frequencies stay
+    // low-ish so the geometry can keep up with PLANE_SEGMENTS=48; the
+    // fragment-shader normal map adds the small-scale detail.
+    float wave1 = sin(pos.x * 0.20 + uTime * 0.6) * 0.30;
+    float wave2 = sin(pos.z * 0.25 + uTime * 0.5) * 0.20;
+    float wave3 = sin((pos.x + pos.z) * 0.15 + uTime * 0.8) * 0.15;
+    float wave4 = sin(pos.x * 0.50 - uTime * 1.0) * 0.08;
+    float wave5 = cos(pos.z * 0.40 + uTime * 0.7) * 0.07;
+    float wave6 = sin(pos.x * 0.70 + pos.z * 0.30 + uTime * 1.3) * 0.05;
+    float wave7 = cos(pos.x * 0.40 - pos.z * 0.60 + uTime * 0.9) * 0.04;
+    pos.y += wave1 + wave2 + wave3 + wave4 + wave5 + wave6 + wave7;
 
     // Player wake — concentric rings expanding from feet, only when in water.
     if (uPlayerInWater > 0.5) {
@@ -132,15 +142,18 @@ const FRAGMENT_SHADER = /* glsl */ `
   #include <common>
   #include <fog_pars_fragment>
 
-  uniform float uTime;
-  uniform vec3  uShallowColor;
-  uniform vec3  uDeepColor;
-  uniform vec3  uFoamColor;
-  uniform vec2  uIslandCenter;
-  uniform float uIslandRadius;
-  uniform vec3  uSunPosition;
-  uniform float uPlayerInWater;
-  uniform vec2  uPlayerPos;
+  uniform float     uTime;
+  uniform vec3      uShallowColor;
+  uniform vec3      uDeepColor;
+  uniform vec3      uFoamColor;
+  uniform vec3      uSkyReflectionColor;
+  uniform vec2      uIslandCenter;
+  uniform float     uIslandRadius;
+  uniform vec3      uSunPosition;
+  uniform float     uPlayerInWater;
+  uniform vec2      uPlayerPos;
+  uniform sampler2D uNormalMap;
+  uniform float     uWhitecapScale; // 1 day, 0.3 night — keeps whitecaps from over-reading at night
 
   varying vec3  vWorldPos;
   varying float vElevation;
@@ -148,8 +161,8 @@ const FRAGMENT_SHADER = /* glsl */ `
   void main() {
     float dist = distance(vWorldPos.xz, uIslandCenter);
     // Inside the island the terrain sits above the water plane (~y=0.02),
-    // but our vertex waves displace the surface by up to ±0.42 m — without
-    // this discard the wave peaks bleed up through the grass and read as
+    // but our vertex waves now displace by up to ±0.8 m — without this
+    // discard the wave peaks bleed up through the grass and read as
     // blue patches on the lawn. Discarding here also saves fragment work
     // over the entire island disc.
     if (dist < uIslandRadius) discard;
@@ -158,6 +171,18 @@ const FRAGMENT_SHADER = /* glsl */ `
 
     float distFromShore = dist - uIslandRadius;
     float opacity = mix(0.45, 0.9, smoothstep(0.0, 20.0, distFromShore));
+
+    // Surface-detail normal map — two layers scrolling in opposite directions
+    // so the micro-ripples never repeat or sit still. The blended normal
+    // feeds the Fresnel term below.
+    vec2 nUv1 = vWorldPos.xz * 0.08 + uTime * vec2( 0.02,  0.01);
+    vec2 nUv2 = vWorldPos.xz * 0.04 + uTime * vec2(-0.015, 0.02);
+    vec3 nMap1 = texture2D(uNormalMap, nUv1).rgb * 2.0 - 1.0;
+    vec3 nMap2 = texture2D(uNormalMap, nUv2).rgb * 2.0 - 1.0;
+    vec3 waterNormal = normalize(nMap1 + nMap2 + vec3(0.0, 0.0, 1.0));
+    // Convert tangent-space (Z-up) to world-space (Y-up) approximate normal
+    // for the lighting / Fresnel math below.
+    vec3 N = normalize(vec3(waterNormal.x, 1.0, waterNormal.y) * vec3(0.4, 1.0, 0.4));
 
     // Shoreline foam band — animates in/out like tides, with a trailing line.
     float shoreWave = sin(uTime * 0.8) * 2.0;
@@ -175,9 +200,27 @@ const FRAGMENT_SHADER = /* glsl */ `
       color = mix(color, uFoamColor, playerFoam);
     }
 
+    // Whitecap foam on wave crests — only the tallest peaks read white,
+    // and the day/night uWhitecapScale keeps the night ocean from looking
+    // snow-capped under moonlight.
+    float whitecap = smoothstep(0.30, 0.55, vElevation) * 0.35 * uWhitecapScale;
+    color = mix(color, vec3(0.92, 0.96, 1.0), whitecap);
+
+    // Fresnel — reflective at shallow viewing angles, transparent looking
+    // straight down. Cheap edge-shimmer that fakes a proper reflection pass.
+    vec3 viewDir = normalize(cameraPosition - vWorldPos);
+    float ndv = max(dot(viewDir, N), 0.0);
+    float fresnel = pow(1.0 - ndv, 3.0);
+    fresnel = clamp(fresnel, 0.10, 0.85);
+    // Mix the depth tint with the sky/horizon tint via fresnel — sells the
+    // "water reflects sky" effect without a render target.
+    color = mix(color, uSkyReflectionColor, fresnel * 0.45);
+
     // Fake sun/moon glint — pixels under the sun direction read brightest.
+    // Using N here (normal-mapped surface) instead of straight-up so the
+    // glint shimmers along the ripples instead of sitting on a flat band.
     vec3 toSun = normalize(uSunPosition - vWorldPos);
-    float sunGlint = pow(max(dot(toSun, vec3(0.0, 1.0, 0.0)), 0.0), 128.0);
+    float sunGlint = pow(max(dot(toSun, N), 0.0), 128.0);
     color += vec3(1.0, 0.95, 0.85) * sunGlint * 0.4;
 
     float sparkle = sin(vWorldPos.x * 25.0 + uTime * 3.0)
@@ -202,17 +245,25 @@ export class Water {
     this.islandRadius = ISLAND_RADIUS;
     this.waterEntryRadius = WATER_ENTRY_RADIUS;
 
+    // Procedural normal map — generated once on construction so we don't
+    // need a downloaded texture asset. Two octaves of trig noise are
+    // packed into the RG channels (Z stays full for a stable tangent).
+    this._normalMap = Water.#generateNormalMap(512);
+
     this.uniforms = {
-      uTime:          { value: 0 },
-      uShallowColor:  { value: new THREE.Color(DAY_PALETTE.shallow) },
-      uDeepColor:     { value: new THREE.Color(DAY_PALETTE.deep) },
-      uFoamColor:     { value: new THREE.Color(DAY_PALETTE.foam) },
-      uIslandCenter:  { value: this.islandCenter.clone() },
-      uIslandRadius:  { value: this.islandRadius },
-      uPlayerPos:     { value: new THREE.Vector2(0, 0) },
-      uPlayerInWater: { value: 0 },
-      uPlayerSpeed:   { value: 0 },
-      uSunPosition:   { value: DAY_PALETTE.sun.clone() },
+      uTime:               { value: 0 },
+      uShallowColor:       { value: new THREE.Color(DAY_PALETTE.shallow) },
+      uDeepColor:          { value: new THREE.Color(DAY_PALETTE.deep) },
+      uFoamColor:          { value: new THREE.Color(DAY_PALETTE.foam) },
+      uSkyReflectionColor: { value: new THREE.Color(DAY_PALETTE.sky) },
+      uIslandCenter:       { value: this.islandCenter.clone() },
+      uIslandRadius:       { value: this.islandRadius },
+      uPlayerPos:          { value: new THREE.Vector2(0, 0) },
+      uPlayerInWater:      { value: 0 },
+      uPlayerSpeed:        { value: 0 },
+      uSunPosition:        { value: DAY_PALETTE.sun.clone() },
+      uNormalMap:          { value: this._normalMap },
+      uWhitecapScale:      { value: DAY_PALETTE.whitecap },
     };
     this.material = new THREE.ShaderMaterial({
       // Merge fog uniforms in so the <fog_*> includes find what they expect.
@@ -257,6 +308,7 @@ export class Water {
     this.scene.add(this.shoreGroup);
     /** @type {Array<{mesh:THREE.Object3D, baseY:number, phase:number, amp:number}>} */
     this.lilyPads = [];
+    this.underwaterPlants = [];
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -284,17 +336,36 @@ export class Water {
     const shallow = new THREE.Color(p.shallow);
     const deep    = new THREE.Color(p.deep);
     const foam    = new THREE.Color(p.foam);
+    const sky     = new THREE.Color(p.sky);
     if (tween) {
-      gsap.to(this.uniforms.uShallowColor.value, { r: shallow.r, g: shallow.g, b: shallow.b, duration, ease });
-      gsap.to(this.uniforms.uDeepColor.value,    { r: deep.r,    g: deep.g,    b: deep.b,    duration, ease });
-      gsap.to(this.uniforms.uFoamColor.value,    { r: foam.r,    g: foam.g,    b: foam.b,    duration, ease });
-      gsap.to(this.uniforms.uSunPosition.value,  { x: p.sun.x,   y: p.sun.y,   z: p.sun.z,   duration, ease });
+      gsap.to(this.uniforms.uShallowColor.value,       { r: shallow.r, g: shallow.g, b: shallow.b, duration, ease });
+      gsap.to(this.uniforms.uDeepColor.value,          { r: deep.r,    g: deep.g,    b: deep.b,    duration, ease });
+      gsap.to(this.uniforms.uFoamColor.value,          { r: foam.r,    g: foam.g,    b: foam.b,    duration, ease });
+      gsap.to(this.uniforms.uSkyReflectionColor.value, { r: sky.r,     g: sky.g,     b: sky.b,     duration, ease });
+      gsap.to(this.uniforms.uSunPosition.value,        { x: p.sun.x,   y: p.sun.y,   z: p.sun.z,   duration, ease });
+      gsap.to(this.uniforms.uWhitecapScale,            { value: p.whitecap, duration, ease });
     } else {
       this.uniforms.uShallowColor.value.copy(shallow);
       this.uniforms.uDeepColor.value.copy(deep);
       this.uniforms.uFoamColor.value.copy(foam);
+      this.uniforms.uSkyReflectionColor.value.copy(sky);
       this.uniforms.uSunPosition.value.copy(p.sun);
+      this.uniforms.uWhitecapScale.value = p.whitecap;
     }
+  }
+
+  /**
+   * Public splash trigger — fires the same particle burst as the player's
+   * own wading entry, optionally with a custom count. Used by MarineLife
+   * when a jumping fish/dolphin re-enters the water so the visual splash
+   * matches what the player would see if they stepped in at that spot.
+   * Passing `audio=true` (default) also plays the wading audio at the
+   * provided volume so distant splashes can fade off naturally.
+   */
+  spawnSplash(pos, { count = 10, audio = true, volume = 0.5, entry = false } = {}) {
+    if (!pos) return;
+    this.#spawnSplashBurst(pos, count);
+    if (audio && this.audio) this.audio.playSplash({ entry, volume });
   }
 
   // ── Per-frame ─────────────────────────────────────────────────────────────
@@ -352,6 +423,12 @@ export class Water {
       for (const l of this.lilyPads) {
         l.mesh.position.y = l.baseY + Math.sin(elapsed * 1.5 + l.phase) * l.amp;
         l.mesh.rotation.z = Math.sin(elapsed * 0.9 + l.phase) * 0.04;
+      }
+    }
+    if (this.underwaterPlants.length) {
+      for (const p of this.underwaterPlants) {
+        p.mesh.rotation.x = p.baseRotX + Math.sin(elapsed * 0.9 + p.phase) * p.amp;
+        p.mesh.rotation.z = p.baseRotZ + Math.cos(elapsed * 0.7 + p.phase) * p.amp * 0.7;
       }
     }
   }
@@ -489,6 +566,42 @@ export class Water {
         });
       }
     }
+
+    // ── Underwater plants (visible once the camera dips below the surface) ─
+    // Reuse the existing flat plant asset as sea grass; no collider so it
+    // stays decorative and swim-through.
+    if (reed) {
+      const plantCount = 64;
+      for (let i = 0; i < plantCount; i++) {
+        const angle = (i / plantCount) * Math.PI * 2 + seed() * 0.16;
+        const radius = 46.5 + seed() * 11;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        const floorY = this.terrain ? this.terrain.heightAt(x, z) : -1;
+        const obj = place(reed, x, floorY, z, 1.1 + seed() * 0.8, seed() * Math.PI * 2, {
+          castShadow: false,
+        });
+        if (obj) {
+          obj.name = 'underwater-plant';
+          obj.traverse((c) => {
+            if (c.isMesh && c.material) {
+              c.material = c.material.clone();
+              c.material.color?.multiplyScalar(0.75);
+              c.material.transparent = true;
+              c.material.opacity = 0.72;
+              c.material.depthWrite = true;
+            }
+          });
+          this.underwaterPlants.push({
+            mesh: obj,
+            baseRotX: obj.rotation.x,
+            baseRotZ: obj.rotation.z,
+            phase: seed() * Math.PI * 2,
+            amp: 0.035 + seed() * 0.025,
+          });
+        }
+      }
+    }
   }
 
   // ── Splash particles ──────────────────────────────────────────────────────
@@ -567,6 +680,47 @@ export class Water {
     }
     this._splashPoints.geometry.attributes.position.needsUpdate = true;
     this._splashPoints.geometry.attributes.aAge.needsUpdate = true;
+  }
+
+  // ── Procedural normal map ─────────────────────────────────────────────────
+  /**
+   * Build a tileable normal map from three layers of sinusoidal noise.
+   * Cheap enough to run synchronously on construction (one 512² canvas
+   * pass) and avoids shipping a normal-map texture file. R/G encode the
+   * XY normal slope; B stays at 255 (Z = +1) so the sample reads as a
+   * stable tangent-space normal when sampled by the fragment shader.
+   */
+  static #generateNormalMap(size = 512) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(size, size);
+    const s1 = 0.02, s2 = 0.05, s3 = 0.10;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const nx =
+          Math.sin(x * s1) * Math.cos(y * s1 * 1.3) * 0.5 +
+          Math.sin(x * s2 + 1.7) * Math.cos(y * s2 * 0.9) * 0.3 +
+          Math.sin(x * s3 + 3.1) * Math.cos(y * s3 * 1.1) * 0.2;
+        const ny =
+          Math.cos(x * s1 * 0.8) * Math.sin(y * s1) * 0.5 +
+          Math.cos(x * s2 * 1.1 + 0.5) * Math.sin(y * s2) * 0.3 +
+          Math.cos(x * s3 * 0.9 + 2.3) * Math.sin(y * s3) * 0.2;
+        const i = (y * size + x) * 4;
+        img.data[i]     = Math.floor((nx * 0.5 + 0.5) * 255);
+        img.data[i + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
+        img.data[i + 2] = 255;
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.needsUpdate = true;
+    return tex;
   }
 
   #updateSplashes(delta) {

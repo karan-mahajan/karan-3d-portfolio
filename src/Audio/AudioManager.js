@@ -226,6 +226,13 @@ export class AudioManager {
     this._wasRainOn = false;
     this._rainOn = false;
 
+    // Underwater low-pass filter — installed lazily on the first transition
+    // so we don't keep an AudioNode hot when the player never goes in.
+    // Inserted between Howler.masterGain and the destination so it affects
+    // EVERY sample (ambient, splash, music). See setUnderwater().
+    this._underwater = false;
+    this._underwaterFilter = null;
+
     /** Visual footprint cadence hook — see header comment in old version. */
     this.onStep = null;
 
@@ -281,6 +288,39 @@ export class AudioManager {
     if (mode === this.mode && this._started) return;
     this.mode = mode;
     if (this._started) this.#applyMode(mode, duration);
+  }
+
+  /**
+   * Muffle everything when the player is fully underwater. A single
+   * lowpass biquad sits between Howler.masterGain and ctx.destination,
+   * dropping frequencies above 500 Hz so dialog/birds/UI clicks turn into
+   * the classic "underwater" thud while the ocean loop still reads as
+   * water. Idempotent: only re-wires when the state actually flips.
+   */
+  setUnderwater(value) {
+    value = !!value;
+    if (value === this._underwater) return;
+    this._underwater = value;
+    const ctx = Howler.ctx;
+    const master = Howler.masterGain;
+    if (!ctx || !master) return;
+    // Disconnect master from wherever it was going (destination by default
+    // or the previous filter wrapper) so we can re-route cleanly.
+    try { master.disconnect(); } catch {}
+    if (value) {
+      if (!this._underwaterFilter) {
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = 500;
+        lp.Q.value = 0.7;
+        this._underwaterFilter = lp;
+      }
+      try { this._underwaterFilter.disconnect(); } catch {}
+      master.connect(this._underwaterFilter);
+      this._underwaterFilter.connect(ctx.destination);
+    } else {
+      master.connect(ctx.destination);
+    }
   }
 
   #applyMode(mode, duration) {

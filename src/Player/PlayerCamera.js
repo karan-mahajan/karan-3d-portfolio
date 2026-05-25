@@ -59,6 +59,11 @@ export class PlayerCamera {
     this._target = new THREE.Vector3(0, HEAD_HEIGHT, 0);
     this._tmpOffset = new THREE.Vector3();
     this.locked = false; // when true, update() doesn't move the camera (used by zoom)
+    // Underwater state — App.js toggles this when the player goes chest-
+    // deep. Lifts the target.y clamp so the camera can dip below the
+    // water surface, which makes the underwater overlay feel like an
+    // actual perspective change rather than a flat colour wash.
+    this._underwater = false;
 
     // Dynamic movement-zoom multiplier — applied on top of the user's
     // own controls.distance (preserved). 1.0 = idle, 1.10 = walking,
@@ -102,15 +107,16 @@ export class PlayerCamera {
 
   /** Set the orbit pivot to the player's head. Camera position derives from this in update(). */
   follow(position) {
-    // Clamp the orbit target above the water surface (WATER_LEVEL_Y=0).
-    // Without this, wading drops target.y below sea level and certain
-    // azimuths push the camera through the back of the double-sided
-    // transparent ocean plane (Effects/Water.js).
-    this._target.set(
-      position.x,
-      Math.max(position.y + HEAD_HEIGHT, 0.4),
-      position.z,
-    );
+    if (this._underwater) {
+      this._target.set(position.x, Math.min(position.y + 0.45, -0.35), position.z);
+      return;
+    }
+    this._target.set(position.x, Math.max(position.y + HEAD_HEIGHT, 0.4), position.z);
+  }
+
+  /** Toggle underwater pivot mode — called by App.#syncUnderwaterState. */
+  setUnderwater(value) {
+    this._underwater = !!value;
   }
 
   /** Forward vector on the ground plane, from camera azimuth. */
@@ -151,13 +157,15 @@ export class PlayerCamera {
     );
     this._polarTilt = THREE.MathUtils.damp(this._polarTilt, this._polarTiltTarget, 3, delta);
 
-    const distance = this.controls.distance * this._movementZoomFactor * this._mobileZoom;
+    const rawDistance = this.controls.distance * this._movementZoomFactor * this._mobileZoom;
+    const distance = this._underwater ? Math.min(rawDistance, 4.5) : rawDistance;
     const azimuth = this.controls.azimuthAngle;
     // Clamp the tilted polar to the orbit's own min/max so the sprint
     // pitch can't push the camera through the ground or up past zenith.
+    const minPolar = this._underwater ? Math.PI * 0.46 : this.controls.minPolarAngle;
     const polar = THREE.MathUtils.clamp(
       this.controls.polarAngle + this._polarTilt,
-      this.controls.minPolarAngle,
+      minPolar,
       this.controls.maxPolarAngle,
     );
 
@@ -169,6 +177,7 @@ export class PlayerCamera {
     );
 
     this.camera.position.copy(this._target).add(this._tmpOffset);
+    if (this._underwater) this.camera.position.y = Math.min(this.camera.position.y, -0.08);
     this.camera.lookAt(this._target);
   }
 

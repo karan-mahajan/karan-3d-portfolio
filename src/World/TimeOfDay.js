@@ -694,6 +694,9 @@ export class TimeOfDay {
     // Ocean tints (shallow / deep / foam / sun position) ride day-night
     // together — see Water.applyTimeOfDay for the colour palettes.
     if (this.water) this.water.applyTimeOfDay(mode);
+    // Marine life bioluminescence flips on a small subset of fish at night;
+    // no tween, just an emissive swap, so #applyInstant calls it directly.
+    if (this.marineLife) this.marineLife.setMode(mode);
     if (this.streetLights) this.streetLights.setMode(mode, 0);
     if (this.distantIslands) this.distantIslands.setMode(mode, 0);
 
@@ -854,6 +857,13 @@ export class TimeOfDay {
     // Ocean tint — tweens shallow + deep + foam + sun position together.
     if (this.water)
       this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
+
+    // Marine life bioluminescence — toggles emissive on a few fish. The
+    // change isn't smoothly tweenable (emissive flips at the end of the
+    // shader pass anyway), so snap mid-transition. Visually fine because
+    // the fish are far from the player and the sky/water palette is
+    // already lerping around them.
+    if (this.marineLife) this.marineLife.setMode(mode);
 
     // Street lamps — owns its own gsap tweens for PointLight intensity +
     // bulb emissive across all instances, lerped over the same duration.

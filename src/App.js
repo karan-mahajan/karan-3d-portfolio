@@ -19,6 +19,7 @@ import { Interactables } from './Portfolio/Interactables.js';
 import { Fireflies } from './Effects/Fireflies.js';
 // Water is constructed inside World.loadAssets so its exclusions reach
 // Nature before scatter; App.js just grabs `this.world.water` in boot().
+import { MarineLife } from './Effects/MarineLife.js';
 import { Rain } from './Effects/Rain.js';
 import { Thunderstorm } from './Effects/Thunderstorm.js';
 import { WindLines } from './Effects/WindLines.js';
@@ -279,6 +280,18 @@ export class App extends EventTarget {
       this.water.audio = this.audio;
       if (this.water.mesh) this.water.mesh.userData.noTorchRaycast = true;
     }
+
+    // Marine life — fish + seahorses + sharks + dolphins. Loads its own
+    // models from /static/models/wildlife/ and self-registers per-creature.
+    // Await this during boot so creatures are covered by the loading screen
+    // instead of popping into view after the welcome overlay is gone.
+    this.marineLife = new MarineLife(this.scene, this.loader);
+    this.marineLife.setWater(this.water);
+    this.marineLife.setAudio(this.audio);
+    this.marineLife.setCamera(this.camera);
+    await this.marineLife.load().catch((err) => console.warn('[MarineLife] load failed:', err));
+    this.timeOfDay.marineLife = this.marineLife;
+    this.marineLife.setMode(this.timeOfDay.mode);
 
     // Procedural islands on the horizon. Pure decoration — no colliders, no
     // collision, fog handles the distance fade. Wired into TimeOfDay so the
@@ -589,6 +602,7 @@ export class App extends EventTarget {
     if (this.ui) this.ui.tick();
     this.fireflies.update(elapsed);
     if (this.water) this.water.update(elapsed, delta, this.player.position, sample);
+    if (this.marineLife) this.marineLife.update(delta, elapsed, this.player.position);
     this.rain.update(delta);
     this.thunderstorm.update(delta, this.player.position);
     this.windLines.update(delta, this.player.position);
@@ -633,11 +647,12 @@ export class App extends EventTarget {
     // distance + water-state unlocks. Section + experience-sign proximity
     // and off-path detection are computed here too because we already have
     // the relevant world state cached on App.
+    const ppos = this.player.position;
+    const r = Math.hypot(ppos.x, ppos.z);
+    const inWater = r > Player.WATER_ENTRY_RADIUS;
+    const waterDepth = inWater ? (r - Player.WATER_ENTRY_RADIUS) * 0.1 : 0;
+    const underwaterNow = waterDepth > 0.42;
     if (this.achievements) {
-      const ppos = this.player.position;
-      const r = Math.hypot(ppos.x, ppos.z);
-      const inWater = r > Player.WATER_ENTRY_RADIUS;
-      const waterDepth = inWater ? (r - Player.WATER_ENTRY_RADIUS) * 0.1 : 0;
       this.achievements.tick(delta, {
         playerPos: ppos,
         moving: !!sample?.moving,
@@ -651,6 +666,7 @@ export class App extends EventTarget {
       });
       this.#tickAchievementProximity(ppos, inWater);
     }
+    this.#syncUnderwaterState(underwaterNow);
 
     // Distance-guess mini-game — early-exits when the player isn't in the
     // shore zone, so the cost off-trigger is one hypot + branch per frame.
@@ -658,6 +674,7 @@ export class App extends EventTarget {
       this.distanceGame.update(delta, this.player.position, {
         moving: !!sample?.moving,
         isNight: this.timeOfDay?.mode === 'night',
+        inWater,
       });
     }
 
@@ -761,6 +778,22 @@ export class App extends EventTarget {
         if (!anyWithin) ach.onOffPath();
       }
     }
+  }
+
+  /**
+   * Toggle the underwater visual + audio state in one place. Idempotent —
+   * only fires DOM / camera / audio changes when the state actually flips,
+   * so the tick stays cheap most frames. The blue CSS overlay, the
+   * camera-target dip, and the AudioManager low-pass filter all live in
+   * their own modules; this just gates them on the same boolean.
+   */
+  #syncUnderwaterState(underwater) {
+    if (this._wasUnderwater === underwater) return;
+    this._wasUnderwater = underwater;
+    const overlay = document.getElementById('underwater-overlay');
+    if (overlay) overlay.classList.toggle('visible', underwater);
+    if (this.playerCamera?.setUnderwater) this.playerCamera.setUnderwater(underwater);
+    if (this.audio?.setUnderwater) this.audio.setUnderwater(underwater);
   }
 
   /** Pick the surface category at (x, z) for footstep + landing audio.

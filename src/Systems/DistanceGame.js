@@ -162,7 +162,7 @@ export class DistanceGame {
     return this.#disabled;
   }
 
-  update(delta, playerPos, { moving = false, isNight = false } = {}) {
+  update(delta, playerPos, { moving = false, isNight = false, inWater = false } = {}) {
     if (!this.#root) return;
     if (this.#disabled) return;
     this.#isNight = isNight;
@@ -170,6 +170,13 @@ export class DistanceGame {
     if (this.#cooldown > 0) this.#cooldown = Math.max(0, this.#cooldown - delta);
 
     if (this.#lineActive) this.#tickLine(delta);
+
+    if (inWater) {
+      this.#stillTimer = 0;
+      this.#hideArrow();
+      if (this.#active) this.#close({ cooldown: TRIGGER_COOLDOWN, silent: true });
+      return;
+    }
 
     const distFromCenter = Math.hypot(playerPos.x, playerPos.z);
     const inShore = distFromCenter > SHORE_RADIUS;

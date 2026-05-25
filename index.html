@@ -78,6 +78,11 @@
     </div>
     <div id="ui-overlay"></div>
 
+    <!-- Underwater tint — shown when the player is chest-deep in the ocean.
+         CSS-only (no GPU cost on the 3D side); App.js toggles the .visible
+         class when the player's water depth crosses the underwater threshold. -->
+    <div id="underwater-overlay" class="underwater-overlay" aria-hidden="true"></div>
+
     <!-- Top-left stack: day/night + audio (audio reparented here by UIController) -->
     <div id="top-left-stack" class="ui-stack ui-stack-tl">
       <button id="tod-toggle" type="button" data-mode="day" class="ui-btn" aria-label="Toggle day/night" title="Toggle day/night"></button>
