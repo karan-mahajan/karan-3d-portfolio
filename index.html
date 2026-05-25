@@ -155,6 +155,12 @@
       <div class="compass-pointer"></div>
     </div>
 
+    <!-- First-time trackpad-gesture hint (desktop only, dismisses on first
+         rotate/pinch or after 6s; sessionStorage-gated). -->
+    <div id="camera-hint" class="camera-hint hidden" aria-hidden="true">
+      Two-finger drag to look around · pinch to zoom
+    </div>
+
     <!-- Distance-guess mini-game (shown when standing at the shore, looking at an island) -->
     <div id="distance-game" class="distance-game hidden" aria-live="polite">
       <div class="dg-panel" id="dg-panel">

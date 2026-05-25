@@ -1640,6 +1640,40 @@ body[data-tod="night"] .compass-tick {
   display: none;
 }
 
+/* ─── Trackpad-gesture hint (first-visit, desktop only) ─────────────── */
+.camera-hint {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 50;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--paper);
+  font-family: 'Rajdhani', system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity 0.32s ease, transform 0.32s ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.camera-hint.is-shown {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.camera-hint.hidden {
+  display: none;
+}
+.is-mobile .camera-hint {
+  display: none;
+}
+
 
 #achievement-toast-container {
   position: fixed;
