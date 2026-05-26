@@ -91,164 +91,20 @@ import _lib       # noqa: E402
 import _palette   # noqa: E402
 
 
-PALETTE_MATERIAL_NAME = "world_palette_material"
-PALETTE_UV_LAYER = "palette"
+# Generic bmesh helpers live in _lib so Phases 4-7 can reuse them. Bind
+# locally so the spawn-specific builders read identically to before the lift.
+PALETTE_MATERIAL_NAME = _lib.PALETTE_MATERIAL_NAME
+PALETTE_UV_LAYER = _lib.PALETTE_UV_LAYER
+_get_palette_material = _lib.get_palette_material
+_replace_object = _lib.replace_object
+_attach_palette_material = _lib.attach_palette_material
+_paint_face = _lib.paint_face
+_bm_finalize_to_object = _lib.bm_finalize_to_object
+_bm_add_cuboid = _lib.bm_add_cuboid
+_bm_add_cylinder = _lib.bm_add_cylinder
 
 # Lectern sits 1.5m SW of spawn. 1.5 / sqrt(2) ~= 1.06066 per axis.
 LECTERN_OFFSET = 1.5 / math.sqrt(2.0)
-
-
-# ============================================================================
-# Generic bmesh / mesh helpers
-#
-# These will be re-used by Phases 4-7. Keep them tight and side-effect free
-# so they can be lifted into _lib.py later if patterns repeat. Each builder
-# returns the created bpy object so the caller can mutate transform if needed.
-# ============================================================================
-
-
-def _get_palette_material():
-    """Reuse the Phase 2 palette material or warn-and-rebuild a minimal one.
-
-    Phase 2 builds the canonical version with the texture wired. If Phase 3
-    runs in isolation (no terrain yet) we still want a slot-fillable material
-    so the meshes are valid - the warn nudges the user to run Phase 2 first.
-    """
-    mat = bpy.data.materials.get(PALETTE_MATERIAL_NAME)
-    if mat is not None:
-        return mat
-
-    print(
-        f"{_lib.LOG_PREFIX}[phase-03] WARN: {PALETTE_MATERIAL_NAME!r} missing "
-        "- run Phase 2 first for the textured version. Building stub."
-    )
-    mat = bpy.data.materials.new(PALETTE_MATERIAL_NAME)
-    mat.use_nodes = True
-    return mat
-
-
-def _replace_object(name, mesh_data):
-    """If a bpy object with `name` exists, remove it; create a fresh one
-    holding `mesh_data`. Returns the new object."""
-    existing = bpy.data.objects.get(name)
-    if existing is not None:
-        bpy.data.objects.remove(existing, do_unlink=True)
-    return bpy.data.objects.new(name, mesh_data)
-
-
-def _attach_palette_material(obj, material):
-    obj.data.materials.clear()
-    obj.data.materials.append(material)
-
-
-def _paint_face(face, uv_layer, color_key):
-    """Set every loop UV of `face` to the palette cell center for `color_key`."""
-    u, v = _lib.palette_uv(color_key)
-    for loop in face.loops:
-        loop[uv_layer].uv = (u, v)
-
-
-def _bm_finalize_to_object(bm, mesh_name, obj_name, location, collection_name,
-                           material, rotation_euler=(0.0, 0.0, 0.0),
-                           hide=False):
-    """Write a bmesh to a fresh mesh datablock + object, link into the
-    requested collection, attach the shared palette material, free the bmesh.
-
-    `location` is in Blender axes (x, y_north, z_height). Caller is
-    responsible for computing that from runtime coords.
-    """
-    mesh = bpy.data.meshes.get(mesh_name)
-    if mesh is not None:
-        bpy.data.meshes.remove(mesh, do_unlink=True)
-    mesh = bpy.data.meshes.new(mesh_name)
-
-    bm.normal_update()
-    bm.to_mesh(mesh)
-    bm.free()
-
-    obj = _replace_object(obj_name, mesh)
-    obj.location = location
-    obj.rotation_euler = rotation_euler
-    obj.scale = (1.0, 1.0, 1.0)
-    _attach_palette_material(obj, material)
-    _lib.place_in(collection_name, obj)
-
-    if hide:
-        obj.hide_viewport = True
-        obj.hide_render = True
-
-    return obj
-
-
-def _bm_add_cuboid(bm, uv_layer, center, half_extents, color_key):
-    """Append an axis-aligned cuboid to `bm` at Blender-space `center`. All
-    6 faces get the palette UV for `color_key`. Returns the list of new faces."""
-    cx, cy, cz = center
-    hx, hy, hz = half_extents
-    verts = [
-        bm.verts.new((cx - hx, cy - hy, cz - hz)),
-        bm.verts.new((cx + hx, cy - hy, cz - hz)),
-        bm.verts.new((cx + hx, cy + hy, cz - hz)),
-        bm.verts.new((cx - hx, cy + hy, cz - hz)),
-        bm.verts.new((cx - hx, cy - hy, cz + hz)),
-        bm.verts.new((cx + hx, cy - hy, cz + hz)),
-        bm.verts.new((cx + hx, cy + hy, cz + hz)),
-        bm.verts.new((cx - hx, cy + hy, cz + hz)),
-    ]
-    # Quad winding: outward-facing CCW. Order = bottom, top, -Y, +Y, -X, +X.
-    quad_indices = [
-        (0, 3, 2, 1),
-        (4, 5, 6, 7),
-        (0, 1, 5, 4),
-        (3, 7, 6, 2),
-        (0, 4, 7, 3),
-        (1, 2, 6, 5),
-    ]
-    faces = []
-    for idx in quad_indices:
-        face = bm.faces.new((verts[idx[0]], verts[idx[1]],
-                             verts[idx[2]], verts[idx[3]]))
-        faces.append(face)
-
-    for face in faces:
-        _paint_face(face, uv_layer, color_key)
-
-    return faces
-
-
-def _bm_add_cylinder(bm, uv_layer, center, radius, height, color_key,
-                     segments=24):
-    """Append a Z-axis-aligned cylinder to `bm`. `center` is the cylinder's
-    centre point (Blender axes), `height` is total along Z. Returns the
-    list of new faces (1 cap below, 1 cap above, segments side quads)."""
-    cx, cy, cz = center
-    hz = height * 0.5
-
-    bottom_ring = []
-    top_ring = []
-    for i in range(segments):
-        angle = (i / segments) * math.tau
-        x = cx + math.cos(angle) * radius
-        y = cy + math.sin(angle) * radius
-        bottom_ring.append(bm.verts.new((x, y, cz - hz)))
-        top_ring.append(bm.verts.new((x, y, cz + hz)))
-
-    faces = []
-    for i in range(segments):
-        j = (i + 1) % segments
-        face = bm.faces.new((bottom_ring[i], top_ring[i],
-                             top_ring[j], bottom_ring[j]))
-        faces.append(face)
-
-    # Caps as n-gons. Reversed bottom so its normal points -Z.
-    bottom_cap = bm.faces.new(list(reversed(bottom_ring)))
-    top_cap = bm.faces.new(top_ring)
-    faces.extend([bottom_cap, top_cap])
-
-    for face in faces:
-        _paint_face(face, uv_layer, color_key)
-
-    return faces
 
 
 # ============================================================================
