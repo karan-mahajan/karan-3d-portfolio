@@ -60,22 +60,27 @@ const AVATURN_CLIPS = [
   { action: 'facepalm',        url: '/models/character/animations/facepalm.glb' },
 ];
 
-// Mixamo clips still used for actions Avaturn doesn't ship.
+// Mixamo clips still used for actions Avaturn doesn't ship. The source FBX
+// files have been round-tripped through Three.js's FBXLoader → GLTFExporter
+// pipeline (see .verify/scripts/extract-fbx-as-glb.mjs) into mesh-stripped
+// animation-only GLBs, ~125-300 KB each vs the original ~27 MB each. Bone
+// orientations are preserved because the same FBXLoader that reads them in
+// the app is the one that produced the GLBs.
 const MIXAMO_CLIPS = [
-  { action: 'walking',          url: '/models/character/walking.fbx' },
-  { action: 'walkingBackwards', url: '/models/character/walking-backwards.fbx' },
-  { action: 'jump',             url: '/models/character/jump.fbx' },
-  { action: 'standingUp',       url: '/models/character/standing-up.fbx' },
-  { action: 'startWalking',     url: '/models/character/start-walking.fbx' },
-  { action: 'torchIdle',        url: '/models/character/animations/torch-idle.fbx' },
-  { action: 'torchAim',         url: '/models/character/animations/torch-aim.fbx' },
-  { action: 'torchEquip',       url: '/models/character/animations/torch-equip.fbx' },
+  { action: 'walking',          url: '/models/character/walking.glb' },
+  { action: 'walkingBackwards', url: '/models/character/walking-backwards.glb' },
+  { action: 'jump',             url: '/models/character/jump.glb' },
+  { action: 'standingUp',       url: '/models/character/standing-up.glb' },
+  { action: 'startWalking',     url: '/models/character/start-walking.glb' },
+  { action: 'torchIdle',        url: '/models/character/animations/torch-idle.glb' },
+  { action: 'torchAim',         url: '/models/character/animations/torch-aim.glb' },
+  { action: 'torchEquip',       url: '/models/character/animations/torch-equip.glb' },
 ];
 
 const DEFERRED_MIXAMO_CLIPS = [
-  { action: 'lookingAround', url: '/models/character/looking-around.fbx' },
-  { action: 'pointing',      url: '/models/character/pointing.fbx' },
-  { action: 'waving',        url: '/models/character/waving-gesture.fbx' },
+  { action: 'lookingAround', url: '/models/character/looking-around.glb' },
+  { action: 'pointing',      url: '/models/character/pointing.glb' },
+  { action: 'waving',        url: '/models/character/waving-gesture.glb' },
 ];
 const DEFERRED_MIXAMO_BY_ACTION = new Map(DEFERRED_MIXAMO_CLIPS.map((clip) => [clip.action, clip]));
 
@@ -255,8 +260,8 @@ export class Character {
     // the mixamorig prefix from track names.
     const mixamoResults = await Promise.allSettled(
       MIXAMO_CLIPS.map(async ({ action, url }) => {
-        const fbx = await this.loader.loadFBX(url);
-        return { action, clip: fbx.animations?.[0] };
+        const g = await this.loader.loadGLTF(url);
+        return { action, clip: g.animations?.[0] };
       }),
     );
     for (const r of mixamoResults) {
@@ -497,8 +502,8 @@ export class Character {
     if (!cfg) return false;
     if (!this._deferredClipPromises.has(name)) {
       this._deferredClipPromises.set(name, (async () => {
-        const fbx = await this.loader.loadFBX(cfg.url);
-        const clip = fbx.animations?.[0];
+        const g = await this.loader.loadGLTF(cfg.url);
+        const clip = g.animations?.[0];
         if (!clip) return false;
         stripRootMotion(clip);
         retargetMixamoToAvaturn(clip);
