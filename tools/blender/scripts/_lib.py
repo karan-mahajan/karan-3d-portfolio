@@ -7,6 +7,7 @@ side-effect free at import time — every helper must be called explicitly.
 """
 
 import bpy
+from mathutils import Vector
 
 import _palette
 
@@ -151,6 +152,36 @@ def palette_uv(color_key):
             f"{sorted(_palette.PALETTE_CELL_INDEX)}"
         )
     return _palette.cell_uv(idx)
+
+
+def height_at(x, z):
+    """
+    Raycast from above onto the terrain mesh to find ground height.
+
+    Used by Phase 3+ scripts to sit props on the heightfield (mirrors the
+    runtime `terrain.heightAt(x, z)` contract — CLAUDE.md rule 4).
+    Arguments are runtime coordinates (Three.js Y-up): x = east-west,
+    z = north-south. Returns runtime Y (height in meters).
+
+    The terrain is authored in Blender's Z-up convention, so runtime
+    (x, _, z) maps to Blender (x, z, _). We raycast from +50 Blender-Z
+    downward; the hit point's Blender-Z is the runtime Y we want.
+
+    Falls back to 0.02 (inner plateau height) if the terrain mesh hasn't
+    been built yet — keeps Phase 3+ scripts importable in isolation.
+    """
+    obj = bpy.data.objects.get("terrain_mesh")
+    if obj is None:
+        return 0.02
+
+    inv = obj.matrix_world.inverted()
+    origin = inv @ Vector((x, z, 50.0))
+    direction = inv.to_3x3() @ Vector((0.0, 0.0, -1.0))
+    success, location, _normal, _face_index = obj.ray_cast(origin, direction)
+    if not success:
+        return 0.02
+    world_hit = obj.matrix_world @ location
+    return world_hit.z  # Blender Z = runtime Y
 
 
 def name_collider(obj, kind, parent_label):
