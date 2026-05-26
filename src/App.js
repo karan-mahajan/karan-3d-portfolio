@@ -10,7 +10,6 @@ import { Grass } from './World/Grass.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
 import { StreetLights } from './World/StreetLights.js';
-import { DistantIslands } from './World/DistantIslands.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -295,6 +294,19 @@ export class App extends EventTarget {
   async boot() {
     const bootStart = performance.now();
     await this.physics.init();
+
+    // Phase 1 of World v2: the heightfield is now baked from world.glb so
+    // physics.addStaticGround MUST run after world.loadAssets — the terrain
+    // object's heightAt/size/segments only get populated by GlbWorld.bake().
+    // The Player needs the world.terrain reference for spawn-Y sampling but
+    // can be constructed lazily once the world has loaded; we still kick its
+    // character GLBs off in parallel with the world parse so total boot time
+    // doesn't regress.
+    const worldLoadPromise = this.world.loadAssets(this.loader, this.physics, {
+      playerUniforms: this.grass.playerUniforms,
+    });
+
+    const worldResult = await worldLoadPromise;
     this.physics.addStaticGround(this.world.terrain);
 
     this.player = new Player(
@@ -306,15 +318,7 @@ export class App extends EventTarget {
     );
     this.playerCamera.follow(this.player.position, true);
 
-    const [characterResult, worldResult] = await Promise.all([
-      this.player.loadCharacter(),
-      // Share Grass's player-bend uniforms — World constructs Nature inside
-      // loadAssets() and passes them straight into its onBeforeCompile hook
-      // so flowers / ferns / plants lean away from the player too (F5).
-      this.world.loadAssets(this.loader, this.physics, {
-        playerUniforms: this.grass.playerUniforms,
-      }),
-    ]);
+    const characterResult = await this.player.loadCharacter();
 
     // Water is built inside world.loadAssets so its exclusions feed Nature.
     // Hook it up to the rain (pond ripple footprint) and TimeOfDay (day/
@@ -330,13 +334,12 @@ export class App extends EventTarget {
       if (this.water.mesh) this.water.mesh.userData.noTorchRaycast = true;
     }
 
-    // Procedural islands on the horizon. Pure decoration — no colliders, no
-    // collision, fog handles the distance fade. Wired into TimeOfDay so the
-    // rock + vegetation tints track day/night together with the rest of the
-    // palette.
-    this.distantIslands = new DistantIslands(this.scene);
-    this.timeOfDay.distantIslands = this.distantIslands;
-    this.distantIslands.setMode(this.timeOfDay.mode, 0);
+    // Phase 1 of the World v2 swap: DistantIslands has been removed. The
+    // Blender-authored world.glb will eventually provide horizon mountain
+    // bands (already authored in Phase 12) so a procedural islands ring is no
+    // longer needed. DistanceGame gets a stub islands provider — Phase 7 will
+    // wire it to refViewpoint_* refs.
+    this.distantIslands = { getIslands: () => [] };
 
     // Kick off street-light load NOW in parallel with grass + interaction
     // wiring below. Billboards + signs are needed for arm-rotation alignment
