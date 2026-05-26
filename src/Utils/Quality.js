@@ -10,6 +10,11 @@ const PROFILES = {
     maxSettledLeaves: 80,
     windLineCount: 350,
     fireflyCount: 144,
+    // Adaptive DPR floor: under sustained frame budget pressure, the
+    // adaptive controller in App.js may scale the renderer's pixelRatio
+    // down to (base * dprFloor) to recover frametime. On a healthy GPU
+    // this never engages; on a weak one it prevents stutter.
+    dprFloor: 0.85,
     postfx: {
       enabled: true,
       bloomStrength: 0.30,
@@ -29,6 +34,7 @@ const PROFILES = {
     maxSettledLeaves: 50,
     windLineCount: 210,
     fireflyCount: 96,
+    dprFloor: 0.7,
     postfx: {
       enabled: true,
       bloomStrength: 0.18,
@@ -48,6 +54,7 @@ const PROFILES = {
     maxSettledLeaves: 24,
     windLineCount: 90,
     fireflyCount: 48,
+    dprFloor: 0.55,
     postfx: {
       enabled: false,
       bloomStrength: 0,

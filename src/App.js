@@ -203,6 +203,14 @@ export class App extends EventTarget {
     this._bgFrame = 0;
     this._fixedAccumulator = this.quality.physicsStep ?? (1 / 60);
     this._lastPlayerSample = null;
+    // Adaptive DPR — base is the original cap set in Sizes (typically 1.0);
+    // factor scales between 1.0 and quality.dprFloor under load. Reapplied
+    // only when factor changes (setPixelRatio reallocates the framebuffer).
+    this._dprBase = this.sizes.pixelRatio;
+    this._dprFactor = 1.0;
+    this._dprFrameAccum = 0;
+    this._dprFrameCount = 0;
+    this._dprFastWindows = 0;
     document.addEventListener('visibilitychange', () => {
       this._backgroundMode = document.hidden;
       this._bgFrame = 0;
@@ -536,6 +544,48 @@ export class App extends EventTarget {
     }
   }
 
+  // Adaptive DPR controller — samples frame time over 60-frame windows.
+  // When average exceeds the drop threshold, scales effective pixelRatio
+  // down by 0.15 (to the quality-tier floor). When it stays comfortably
+  // below the raise threshold for two consecutive windows, scales back
+  // up to 1.0. Hysteresis prevents oscillation; setPixelRatio only fires
+  // on actual factor change (it reallocates the framebuffer).
+  #updateAdaptiveDpr(frameDelta) {
+    this._dprFrameAccum += frameDelta;
+    this._dprFrameCount++;
+    if (this._dprFrameCount < 60) return;
+    const avg = this._dprFrameAccum / this._dprFrameCount;
+    this._dprFrameAccum = 0;
+    this._dprFrameCount = 0;
+
+    const floor = this.quality.dprFloor ?? 0.7;
+    let next = this._dprFactor;
+    if (avg > 0.022) {
+      // Under load — drop a notch toward the tier floor.
+      next = Math.max(floor, this._dprFactor - 0.15);
+      this._dprFastWindows = 0;
+    } else if (avg < 0.014) {
+      // Comfortable — bank a fast window. Recover after two consecutive.
+      this._dprFastWindows++;
+      if (this._dprFastWindows >= 2) {
+        next = Math.min(1.0, this._dprFactor + 0.15);
+        this._dprFastWindows = 0;
+      }
+    } else {
+      // Hysteresis band — neither stress nor headroom, hold.
+      this._dprFastWindows = 0;
+    }
+
+    if (Math.abs(next - this._dprFactor) < 0.01) return;
+    this._dprFactor = next;
+    const eff = this._dprBase * next;
+    this.renderer.setPixelRatio(eff);
+    this.postfx?.resize(this.sizes.width, this.sizes.height, eff);
+    if (this.debug?.enabled) {
+      console.log(`[DPR] avg ${(avg * 1000).toFixed(1)}ms → factor ${next.toFixed(2)} (effective ${eff.toFixed(2)})`);
+    }
+  }
+
   #initMapSystems() {
     assertCoordRoundTrip(WORLD_BOUNDS);
     const solidPushSpots = this.actionPrompts?.pushSpots ?? this.world.nature?.pushSpots ?? [];
@@ -751,6 +801,7 @@ export class App extends EventTarget {
     const elapsed = this.clock.getElapsedTime();
 
     this.renderer.info.reset();
+    this.#updateAdaptiveDpr(frameDelta);
 
     const fixedDelta = this.quality.physicsStep ?? (1 / 60);
     const maxSteps = this.quality.maxPhysicsSteps ?? 5;
