@@ -664,6 +664,10 @@ export class App extends EventTarget {
     // frame's water pre-render + every composer pass. #tick resets once at
     // frame start; the debug HUD reads the full per-frame totals.
     this.renderer.info.autoReset = false;
+    // KTX2 needs the live renderer to detect which compressed texture
+    // formats this GPU supports (BC, ASTC, ETC2, …) so it can pick the
+    // right transcoder path. Must run AFTER the renderer exists.
+    this.loader.attachRenderer(this.renderer);
   }
 
   #initScene() {
