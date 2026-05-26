@@ -17,7 +17,7 @@ import * as THREE from 'three';
  * Toggle via setEnabled(). Setting persists in localStorage.
  */
 
-const COUNT = 350;
+const DEFAULT_COUNT = 350;
 const VOL_X = 60;            // full extent in x
 const VOL_Z = 60;            // full extent in z
 const HALF_X = VOL_X * 0.5;
@@ -80,9 +80,10 @@ export class WindLines {
    * @param {THREE.Scene} scene
    * @param {import('../World/Wind.js').Wind} wind  Read-only — shares uniforms.
    */
-  constructor(scene, wind) {
+  constructor(scene, wind, { count = DEFAULT_COUNT } = {}) {
     this.scene = scene;
     this.wind = wind;
+    this.count = Math.max(0, Math.floor(count));
     this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
     this.visibility = 0; // ramps with wind strength
 
@@ -107,13 +108,13 @@ export class WindLines {
     const instGeom = new THREE.InstancedBufferGeometry();
     instGeom.setAttribute('position', baseGeom.attributes.position);
     instGeom.setIndex(baseGeom.index);
-    instGeom.instanceCount = COUNT;
+    instGeom.instanceCount = this.count;
 
     // Per-ribbon world-space center.
-    this.offsets = new Float32Array(COUNT * 3);
-    this.speeds = new Float32Array(COUNT);
+    this.offsets = new Float32Array(this.count * 3);
+    this.speeds = new Float32Array(this.count);
 
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < this.count; i++) {
       this.offsets[i * 3]     = (Math.random() - 0.5) * VOL_X;
       this.offsets[i * 3 + 1] = Y_MIN + Math.random() * (Y_MAX - Y_MIN);
       this.offsets[i * 3 + 2] = (Math.random() - 0.5) * VOL_Z;
@@ -198,7 +199,7 @@ export class WindLines {
     const px = playerPos.x;
     const pz = playerPos.z;
 
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < this.count; i++) {
       const v = this.speeds[i];
       const ix = i * 3;
       this.offsets[ix]     += dx * v * delta;

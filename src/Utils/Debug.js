@@ -27,8 +27,10 @@ export class Debug {
         if (this.renderer) {
           const r = this.renderer.info.render;
           const m = this.renderer.info.memory;
+          const q = window.__quality?.name ?? 'unknown';
           this.hud.textContent =
             `${this.fps} fps\n` +
+            `quality ${q}\n` +
             `tris ${r.triangles.toLocaleString()}\n` +
             `calls ${r.calls}\n` +
             `geos ${m.geometries}  tex ${m.textures}`;
@@ -42,6 +44,7 @@ export class Debug {
       const r = this.renderer.info.render;
       const m = this.renderer.info.memory;
       console.log('=== PERFORMANCE BASELINE ===');
+      console.log('Quality:', window.__quality?.name ?? 'unknown');
       console.log('Triangles:', r.triangles);
       console.log('Draw calls:', r.calls);
       console.log('Points:', r.points);

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Sizes } from './Utils/Sizes.js';
 import { Debug } from './Utils/Debug.js';
 import { Loader } from './Utils/Loader.js';
+import { detectQuality } from './Utils/Quality.js';
 import { World } from './World/World.js';
 import { DUSK } from './World/Palette.js';
 import { Wind } from './World/Wind.js';
@@ -55,6 +56,8 @@ export class App extends EventTarget {
     this.debug = new Debug();
     this.clock = new THREE.Clock();
     this.loader = new Loader();
+    this.quality = detectQuality();
+    window.__quality = this.quality;
 
     this.loader.addEventListener('progress', (e) => {
       this.dispatchEvent(new CustomEvent('progress', { detail: e.detail }));
@@ -89,7 +92,7 @@ export class App extends EventTarget {
 
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
-    this.fireflies = new Fireflies(this.scene);
+    this.fireflies = new Fireflies(this.scene, { count: this.quality.fireflyCount });
     if (this.fireflies.points) this.fireflies.points.userData.noTorchRaycast = true;
     // Sky dome is created in World ctor — flag it so the torch beam can
     // never land on the inside of the sky sphere when the mouse points
@@ -99,11 +102,17 @@ export class App extends EventTarget {
     // register Nature exclusions before nature.load() scatters props. The
     // reference is grabbed in boot() once the world has loaded.
     this.water = null;
-    this.rain = new Rain(this.scene, this.camera);
+    this.rain = new Rain(this.scene, this.camera, {
+      count: this.quality.rainCount,
+      splashBudget: this.quality.rainSplashBudget,
+    });
     if (this.rain.group) this.rain.group.userData.noTorchRaycast = true;
-    this.windLines = new WindLines(this.scene, this.wind);
+    this.windLines = new WindLines(this.scene, this.wind, { count: this.quality.windLineCount });
     if (this.windLines.mesh) this.windLines.mesh.userData.noTorchRaycast = true;
-    this.leaves = new Leaves(this.scene, this.wind, this.world.terrain);
+    this.leaves = new Leaves(this.scene, this.wind, this.world.terrain, {
+      count: this.quality.leafCount,
+      maxSettled: this.quality.maxSettledLeaves,
+    });
     if (this.leaves.mesh) this.leaves.mesh.userData.noTorchRaycast = true;
     // Footprints — persistent flat decals dropped on each footstep. Cadence
     // is driven by AudioManager.onStep (set up after boot) so visual prints
@@ -112,7 +121,7 @@ export class App extends EventTarget {
     this.footprints = new Footprints(this.scene, this.world.terrain);
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
-    this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes);
+    this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes, this.quality.postfx);
 
     this.audio = new AudioManager();
     // Rain's toggle button (built in its own constructor) plays a toggle
@@ -192,6 +201,8 @@ export class App extends EventTarget {
     // visible state of the tab is the single source of truth.
     this._backgroundMode = false;
     this._bgFrame = 0;
+    this._fixedAccumulator = this.quality.physicsStep ?? (1 / 60);
+    this._lastPlayerSample = null;
     document.addEventListener('visibilitychange', () => {
       this._backgroundMode = document.hidden;
       this._bgFrame = 0;
@@ -380,6 +391,7 @@ export class App extends EventTarget {
       pathRadius: 1.4,
       treePositions,
       exclusionCircles: INTERACTABLE_PROP_EXCLUSIONS,
+      multiplier: this.quality.grassMultiplier,
     });
     // Grass is thousands of instances per tuft species — skip them at the
     // raycast filter. They're not in the curated target list anyway, this
@@ -508,10 +520,20 @@ export class App extends EventTarget {
     this.interaction.torchLight = this.torchLight;
 
     this.#tick();
+    this.#scheduleDeferredAnimationWarmup();
     if (this.debug?.enabled) {
       console.log(`[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`);
     }
     return { character: characterResult, world: worldResult };
+  }
+
+  #scheduleDeferredAnimationWarmup() {
+    const warm = () => this.player?.character?.preloadDeferredAnimations?.();
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(warm, { timeout: 5000 });
+    } else {
+      window.setTimeout(warm, 2500);
+    }
   }
 
   #initMapSystems() {
@@ -721,50 +743,63 @@ export class App extends EventTarget {
       return;
     }
 
-    const delta = Math.min(this.clock.getDelta(), 1 / 30);
+    const frameDelta = Math.min(this.clock.getDelta(), 0.1);
     const elapsed = this.clock.getElapsedTime();
 
     this.renderer.info.reset();
 
-    this.physics.step(delta);
-    const sample = this.player.update(delta);
+    const fixedDelta = this.quality.physicsStep ?? (1 / 60);
+    const maxSteps = this.quality.maxPhysicsSteps ?? 5;
+    this._fixedAccumulator = Math.min(this._fixedAccumulator + frameDelta, fixedDelta * maxSteps);
+
+    let sample = this._lastPlayerSample;
+    let steps = 0;
+    while (this._fixedAccumulator >= fixedDelta && steps < maxSteps) {
+      this.physics.step(fixedDelta);
+      sample = this.player.update(fixedDelta);
+      this._fixedAccumulator -= fixedDelta;
+      steps++;
+    }
+    if (!sample) sample = this._lastPlayerSample ?? { moving: false, velocity: { x: 0, y: 0, z: 0 }, speed: 0 };
+    this._lastPlayerSample = sample;
+
     // Drive the camera's dynamic movement-zoom before update() reads it.
     this.playerCamera.setMovementState({
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,
     });
-    this.playerCamera.update(delta);
+    this.playerCamera.update(frameDelta);
     if (this.discovery) this.discovery.update(this.player.position.x, this.player.position.z);
-    if (this.clickToMove) this.clickToMove.update(delta);
+    if (this.clickToMove) this.clickToMove.update(frameDelta);
     if (this.miniMap) this.miniMap.update();
     if (this.mapOverlay) this.mapOverlay.update();
     if (this.compass) this.compass.update();
-    this.world.update(elapsed, this.camera, delta, this.player.position);
-    this.wind.update(delta);
+    this.world.update(elapsed, this.camera, frameDelta, this.player.position);
+    this.wind.update(frameDelta);
     // Grass's wind sway is driven by uWindTime; the per-frame work is one
     // uniform write for the player-bend (F5) — blades within
     // uPlayerBendRadius lean away from the player.
     this.grass?.setPlayerPos(this.player.position);
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
-    if (this.actionPrompts) this.actionPrompts.tick(this.player.position, delta);
+    if (this.actionPrompts) this.actionPrompts.tick(this.player.position, frameDelta);
     if (this.interaction) this.interaction.tick(this.player.position);
-    if (this.interactables) this.interactables.update(delta);
+    if (this.interactables) this.interactables.update(frameDelta);
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
     this.fireflies.update(elapsed);
-    if (this.water) this.water.update(elapsed, delta, this.player.position, sample);
-    this.rain.update(delta);
-    this.thunderstorm.update(delta, this.player.position);
-    this.windLines.update(delta, this.player.position);
-    this.leaves.update(delta, this.player.position);
+    if (this.water) this.water.update(elapsed, frameDelta, this.player.position, sample);
+    this.rain.update(frameDelta);
+    this.thunderstorm.update(frameDelta, this.player.position);
+    this.windLines.update(frameDelta, this.player.position);
+    this.leaves.update(frameDelta, this.player.position);
     const _grounded = this.player._grounded !== false;
-    this.footprints.update(delta);
+    this.footprints.update(frameDelta);
     const px = this.player.position.x;
     const pz = this.player.position.z;
     const surface = this.#surfaceAt(px, pz);
-    this.audio?.tick(delta, {
+    this.audio?.tick(frameDelta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,
       grounded: _grounded, // default to true so we don't false-trigger on first frame
@@ -804,7 +839,7 @@ export class App extends EventTarget {
       const r = Math.hypot(ppos.x, ppos.z);
       const inWater = r > Player.WATER_ENTRY_RADIUS;
       const waterDepth = inWater ? (r - Player.WATER_ENTRY_RADIUS) * 0.1 : 0;
-      this.achievements.tick(delta, {
+      this.achievements.tick(frameDelta, {
         playerPos: ppos,
         moving: !!sample?.moving,
         running: this.player.controller.isRunning,
@@ -821,7 +856,7 @@ export class App extends EventTarget {
     // Distance-guess mini-game — early-exits when the player isn't in the
     // shore zone, so the cost off-trigger is one hypot + branch per frame.
     if (this.distanceGame) {
-      this.distanceGame.update(delta, this.player.position, {
+      this.distanceGame.update(frameDelta, this.player.position, {
         moving: !!sample?.moving,
         isNight: this.timeOfDay?.mode === 'night',
       });
@@ -852,7 +887,7 @@ export class App extends EventTarget {
     // frame total (vs. 10 if each surface owned its own pair).
     if (this.water) this.water.preRender(this.renderer, this.camera);
 
-    this.postfx.render(delta);
+    this.postfx.render(frameDelta);
     this.debug.tick();
     requestAnimationFrame(this.#tick);
   };

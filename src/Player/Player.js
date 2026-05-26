@@ -299,9 +299,9 @@ export class Player {
    * State machine: idle, walking, running, walkingBackwards, standingWalkRight,
    * jump, lookingAround. startWalking is a brief one-shot bridge from idle.
    *
-   * Critical one-shots (standingUp spawn) block all transitions. Cosmetic
-   * one-shots (lookingAround / pointing / waving) are interrupted by movement
-   * so the character can't slide while playing an idle gesture.
+   * Non-interruptible one-shots block all transitions. Cosmetic one-shots
+   * (lookingAround / pointing / waving) are interrupted by movement so the
+   * character can't slide while playing an idle gesture.
    */
   #updateAnimationState(sample) {
     if (!this.character) return;

@@ -67,13 +67,17 @@ const MIXAMO_CLIPS = [
   { action: 'jump',             url: '/models/character/jump.fbx' },
   { action: 'standingUp',       url: '/models/character/standing-up.fbx' },
   { action: 'startWalking',     url: '/models/character/start-walking.fbx' },
-  { action: 'lookingAround',    url: '/models/character/looking-around.fbx' },
-  { action: 'pointing',         url: '/models/character/pointing.fbx' },
-  { action: 'waving',           url: '/models/character/waving-gesture.fbx' },
   { action: 'torchIdle',        url: '/models/character/animations/torch-idle.fbx' },
   { action: 'torchAim',         url: '/models/character/animations/torch-aim.fbx' },
   { action: 'torchEquip',       url: '/models/character/animations/torch-equip.fbx' },
 ];
+
+const DEFERRED_MIXAMO_CLIPS = [
+  { action: 'lookingAround', url: '/models/character/looking-around.fbx' },
+  { action: 'pointing',      url: '/models/character/pointing.fbx' },
+  { action: 'waving',        url: '/models/character/waving-gesture.fbx' },
+];
+const DEFERRED_MIXAMO_BY_ACTION = new Map(DEFERRED_MIXAMO_CLIPS.map((clip) => [clip.action, clip]));
 
 function stripRootMotion(clip) {
   clip.tracks = clip.tracks.filter((t) => !t.name.endsWith('.position'));
@@ -126,6 +130,7 @@ export class Character {
     this._torchOverlayAction = null;
     this._torchOverlayName = null;
     this._torchOverlayTimer = null;
+    this._deferredClipPromises = new Map();
     this.rootBone = null;
     this.rootBoneBindPos = new THREE.Vector3();
     this.torchHandBone = null;
@@ -320,17 +325,24 @@ export class Character {
       }
     }
 
-    if (this.actions.standingUp) {
-      this.play('standingUp', { fade: 0, once: true, then: 'idle' });
-    } else if (this.actions.idle) {
-      this.play('idle');
+    if (this.actions.idle) {
+      this.play('idle', { fade: 0 });
     }
 
     return {
       ok: true,
       animationCount: Object.keys(this.actions).length,
       availableActions: Object.keys(this.actions),
+      deferredActions: DEFERRED_MIXAMO_CLIPS.map((clip) => clip.action),
     };
+  }
+
+  preloadDeferredAnimations() {
+    for (const { action } of DEFERRED_MIXAMO_CLIPS) {
+      this.#loadDeferredAction(action).catch((err) => {
+        console.warn(`[Character] deferred animation "${action}" failed:`, err);
+      });
+    }
   }
 
   /**
@@ -435,7 +447,17 @@ export class Character {
    */
   play(name, opts = {}) {
     const action = this.actions[name];
-    if (!action || this.currentName === name) return;
+    if (!action) {
+      if (DEFERRED_MIXAMO_BY_ACTION.has(name)) {
+        this.#loadDeferredAction(name)
+          .then((loaded) => {
+            if (loaded) this.play(name, opts);
+          })
+          .catch((err) => console.warn(`[Character] deferred animation "${name}" failed:`, err));
+      }
+      return;
+    }
+    if (this.currentName === name) return;
 
     const fade = opts.fade ?? 0.25;
     const next = action;
@@ -443,7 +465,12 @@ export class Character {
     if (opts.once) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
-      this._oneShot = { name, then: opts.then ?? 'idle', interruptible: opts.interruptible === true };
+      this._oneShot = {
+        name,
+        action: next,
+        then: opts.then ?? 'idle',
+        interruptible: opts.interruptible === true,
+      };
     } else {
       next.setLoop(THREE.LoopRepeat, Infinity);
       next.clampWhenFinished = false;
@@ -464,18 +491,49 @@ export class Character {
     this.currentAction = next;
   }
 
+  async #loadDeferredAction(name) {
+    if (this.actions[name]) return true;
+    const cfg = DEFERRED_MIXAMO_BY_ACTION.get(name);
+    if (!cfg) return false;
+    if (!this._deferredClipPromises.has(name)) {
+      this._deferredClipPromises.set(name, (async () => {
+        const fbx = await this.loader.loadFBX(cfg.url);
+        const clip = fbx.animations?.[0];
+        if (!clip) return false;
+        stripRootMotion(clip);
+        retargetMixamoToAvaturn(clip);
+        clip.name = name;
+        this.actions[name] = this.mixer.clipAction(clip);
+        return true;
+      })());
+    }
+    return this._deferredClipPromises.get(name);
+  }
+
   #onActionFinished = (event) => {
     if (!this._oneShot) return;
     const finishedClip = event.action.getClip();
     if (finishedClip.name !== this._oneShot.name) return;
+    this.#finishOneShot();
+  };
+
+  #finishOneShot() {
+    if (!this._oneShot) return;
     const next = this._oneShot.then;
     this._oneShot = null;
     if (next) this.play(next);
-  };
+  }
 
   update(delta) {
     if (!this.mixer) return;
     this.mixer.update(delta);
+    if (this._oneShot?.action) {
+      const action = this._oneShot.action;
+      const duration = action.getClip()?.duration ?? 0;
+      if (duration > 0 && action.time >= duration - 0.03) {
+        this.#finishOneShot();
+      }
+    }
     if (this.rootBone) {
       this.rootBone.position.copy(this.rootBoneBindPos);
     }

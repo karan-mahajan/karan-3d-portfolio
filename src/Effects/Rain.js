@@ -10,7 +10,7 @@ import * as THREE from 'three';
  * Toggle on/off via setEnabled(). The toggle button is provided externally.
  */
 
-const RAIN_COUNT = 1200;
+const DEFAULT_RAIN_COUNT = 1200;
 const AREA = 70;            // half-extent of the rain volume
 const FALL_SPEED = 18;      // units per second
 const SPAWN_HEIGHT = 28;
@@ -38,9 +38,11 @@ const dropFrag = /* glsl */ `
 `;
 
 export class Rain {
-  constructor(scene, camera) {
+  constructor(scene, camera, { count = DEFAULT_RAIN_COUNT, splashBudget = 8 } = {}) {
     this.scene = scene;
     this.camera = camera;
+    this.count = Math.max(80, Math.floor(count));
+    this.splashBudget = Math.max(0, Math.floor(splashBudget));
     this.enabled = localStorage.getItem(STORAGE_KEY) !== '1';
     this.group = new THREE.Group();
     this.group.name = 'rain';
@@ -78,11 +80,11 @@ export class Rain {
     const instGeom = new THREE.InstancedBufferGeometry();
     instGeom.setAttribute('position', baseGeom.attributes.position);
     instGeom.setIndex(null);
-    instGeom.instanceCount = RAIN_COUNT;
+    instGeom.instanceCount = this.count;
 
-    this.offsets = new Float32Array(RAIN_COUNT * 3);
-    this.speeds = new Float32Array(RAIN_COUNT);
-    for (let i = 0; i < RAIN_COUNT; i++) {
+    this.offsets = new Float32Array(this.count * 3);
+    this.speeds = new Float32Array(this.count);
+    for (let i = 0; i < this.count; i++) {
       this.offsets[i * 3]     = (Math.random() - 0.5) * AREA * 2;
       this.offsets[i * 3 + 1] = Math.random() * SPAWN_HEIGHT;
       this.offsets[i * 3 + 2] = (Math.random() - 0.5) * AREA * 2;
@@ -253,8 +255,8 @@ export class Rain {
     this.drops.position.set(cx, 0, cz);
 
     // Advance each drop. When a drop falls below y=0, recycle it to the top.
-    let splashBudget = 8; // cap splashes per frame (was 4 — distance gating skips more now)
-    for (let i = 0; i < RAIN_COUNT; i++) {
+    let splashBudget = this.splashBudget; // quality tier scales the splash cost.
+    for (let i = 0; i < this.count; i++) {
       this.offsets[i * 3 + 1] -= this.speeds[i] * delta;
       if (this.offsets[i * 3 + 1] < 0) {
         // World x/z of the drop = base offset + camera position.

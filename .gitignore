@@ -14,6 +14,11 @@ thumbs.db
 /Extra/
 /static/models/wildlife/incoming/
 
+# Local cold-storage for assets we've replaced/removed. Kept on disk for
+# fast reference but never committed — git history holds the originals if
+# they're ever needed back.
+/_archive/
+
 # Verification sandbox — playwright harness scripts (verify-*.mjs) AND the
 # screenshots they produce. Everything in this folder stays local; future
 # Claude sessions read it to see what's already been driven and write new

@@ -74,7 +74,13 @@ const TiltShiftShader = {
 export class PostFX {
   #tiltShift;
 
-  constructor(renderer, scene, camera, sizes) {
+  constructor(renderer, scene, camera, sizes, quality = {}) {
+    this.renderer = renderer;
+    this.scene = scene;
+    this.camera = camera;
+    this.enabled = quality.enabled !== false;
+    if (!this.enabled) return;
+
     this.composer = new EffectComposer(renderer);
     this.composer.setPixelRatio(sizes.pixelRatio);
     this.composer.setSize(sizes.width, sizes.height);
@@ -88,9 +94,9 @@ export class PostFX {
     // the per-pixel work again — bloom is the second-most-expensive pass).
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(sizes.width * 0.25, sizes.height * 0.25),
-      0.30,   // strength
-      0.55,   // radius
-      0.92,   // threshold
+      quality.bloomStrength ?? 0.30,
+      quality.bloomRadius ?? 0.55,
+      quality.bloomThreshold ?? 0.92,
     );
     this.bloom = bloom;
     this.composer.addPass(bloom);
@@ -99,6 +105,7 @@ export class PostFX {
     // edges instead of staying razor-sharp against a blurred sky.
     const tiltShift = new ShaderPass(TiltShiftShader);
     this.#tiltShift = tiltShift;
+    this.tiltShiftAmount = quality.tiltShiftAmount ?? 1.0;
     this.composer.addPass(tiltShift);
 
     // OutputPass handles tonemapping + colorspace conversion correctly when
@@ -108,20 +115,26 @@ export class PostFX {
 
   /** Live-tune tilt-shift intensity (default 1.0). */
   set tiltShiftAmount(value) {
+    if (!this.#tiltShift) return;
     this.#tiltShift.uniforms.uTiltShiftAmount.value = value;
   }
 
   get tiltShiftAmount() {
-    return this.#tiltShift.uniforms.uTiltShiftAmount.value;
+    return this.#tiltShift?.uniforms.uTiltShiftAmount.value ?? 0;
   }
 
   resize(width, height, pixelRatio) {
+    if (!this.enabled) return;
     this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(width, height);
     this.bloom.setSize(width * 0.25, height * 0.25);
   }
 
   render(delta) {
+    if (!this.enabled) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     this.composer.render(delta);
   }
 }

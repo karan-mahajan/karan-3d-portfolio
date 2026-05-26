@@ -97,6 +97,7 @@ export class Grass {
     pathRadius = 1.4,
     treePositions = [],
     exclusionCircles = [],
+    multiplier = 1,
   } = {}) {
     const layers = [
       { url: '/models/nature/quaternius/grass.glb',         count: SHORT_COUNT,  scale: [0.7, 1.1],   ring: [3, FIELD_RADIUS] },
@@ -104,9 +105,14 @@ export class Grass {
       { url: '/models/nature/quaternius/grass-wispy-2.glb', count: WISPY2_COUNT, scale: [0.7, 1.2],   ring: [3, FIELD_RADIUS] },
       { url: '/models/nature/quaternius/tall-grass.glb',    count: TALL_COUNT,   scale: [0.75, 1.15], ring: [TALL_RING_INNER, TALL_RING_OUTER] },
     ];
+    multiplier = Math.max(0.05, Math.min(1, multiplier));
+    const tunedLayers = layers.map((cfg) => ({
+      ...cfg,
+      count: Math.max(1, Math.round(cfg.count * multiplier)),
+    }));
 
     const ex = { pathPositions, pathCount, pathRadius, treePositions, exclusionCircles };
-    const results = await Promise.allSettled(layers.map((cfg) => this.#buildLayer(cfg, ex)));
+    const results = await Promise.allSettled(tunedLayers.map((cfg) => this.#buildLayer(cfg, ex)));
 
     let placed = 0;
     let failed = 0;

@@ -9,7 +9,7 @@ import * as THREE from 'three';
 // 144 — dialed down 20% from the earlier 180 bump. User felt the swarm
 // was too dense at night; still ~20% above the original 120 so there's
 // some extra breadcrumb effect between street lamps.
-const COUNT = 144;
+const DEFAULT_COUNT = 144;
 const SPREAD = 60;          // half-extent of the firefly spawn box
 const HEIGHT_BAND = [0.6, 3.0];
 
@@ -60,15 +60,16 @@ const frag = /* glsl */ `
 `;
 
 export class Fireflies {
-  constructor(scene) {
+  constructor(scene, { count = DEFAULT_COUNT } = {}) {
     this.scene = scene;
+    this.count = Math.max(0, Math.floor(count));
     this.geometry = new THREE.BufferGeometry();
 
-    const positions = new Float32Array(COUNT * 3);
-    const seeds = new Float32Array(COUNT * 3);
-    const bases = new Float32Array(COUNT * 3);
+    const positions = new Float32Array(this.count * 3);
+    const seeds = new Float32Array(this.count * 3);
+    const bases = new Float32Array(this.count * 3);
 
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < this.count; i++) {
       const x = (Math.random() - 0.5) * SPREAD;
       const y = HEIGHT_BAND[0] + Math.random() * (HEIGHT_BAND[1] - HEIGHT_BAND[0]);
       const z = (Math.random() - 0.5) * SPREAD;

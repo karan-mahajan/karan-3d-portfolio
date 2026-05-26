@@ -3,7 +3,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
- * Asset loading manager. Wraps Three's FBX/GLTF loaders in Promises,
+ * Asset loading manager. Wraps Three's GLTF loader in Promises,
  * tracks a single global progress (0–1) for the loading screen.
  */
 export class Loader extends EventTarget {
@@ -22,15 +22,9 @@ export class Loader extends EventTarget {
       this.dispatchEvent(new CustomEvent('error', { detail: { url } }));
     };
 
-    this.fbx = new FBXLoader(this.manager);
     this.gltf = new GLTFLoader(this.manager);
+    this.fbx = new FBXLoader(this.manager);
     this.texture = new THREE.TextureLoader(this.manager);
-  }
-
-  loadFBX(url) {
-    return new Promise((resolve, reject) => {
-      this.fbx.load(url, resolve, undefined, reject);
-    });
   }
 
   loadGLTF(url) {
@@ -42,6 +36,12 @@ export class Loader extends EventTarget {
   loadTexture(url) {
     return new Promise((resolve, reject) => {
       this.texture.load(url, resolve, undefined, reject);
+    });
+  }
+
+  loadFBX(url) {
+    return new Promise((resolve, reject) => {
+      this.fbx.load(url, resolve, undefined, reject);
     });
   }
 }

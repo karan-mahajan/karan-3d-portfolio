@@ -22,8 +22,8 @@ import { DUSK } from '../World/Palette.js';
  * Toggle via setEnabled(); persists under 'karan-portfolio:leaves'.
  */
 
-const COUNT = 120;
-const MAX_SETTLED = 80;
+const DEFAULT_COUNT = 120;
+const DEFAULT_MAX_SETTLED = 80;
 const VOL_X = 60;
 const VOL_Z = 60;
 const HALF_X = VOL_X * 0.5;
@@ -179,10 +179,12 @@ export class Leaves {
    * @param {import('../World/Wind.js').Wind} wind        Read-only; supplies direction + strength.
    * @param {import('../World/Terrain.js').Terrain} [terrain]  Heightfield sampler — leaves land on this.
    */
-  constructor(scene, wind, terrain = null) {
+  constructor(scene, wind, terrain = null, { count = DEFAULT_COUNT, maxSettled = DEFAULT_MAX_SETTLED } = {}) {
     this.scene = scene;
     this.wind = wind;
     this.terrain = terrain;
+    this.count = Math.max(8, Math.floor(count));
+    this.maxSettled = Math.max(0, Math.floor(maxSettled));
     this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
 
     this.#buildMesh();
@@ -197,29 +199,29 @@ export class Leaves {
     instGeom.setAttribute('position', base.attributes.position);
     instGeom.setAttribute('uv', base.attributes.uv);
     instGeom.setIndex(base.index);
-    instGeom.instanceCount = COUNT;
+    instGeom.instanceCount = this.count;
     // Bounding sphere set huge so frustum-culling never drops us — leaves
     // live in a player-following volume, so per-frame culling math would be
     // wrong anyway.
     instGeom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
-    this.offsets     = new Float32Array(COUNT * 3);
-    this.spinAxes    = new Float32Array(COUNT * 3);
-    this.angles      = new Float32Array(COUNT);
-    this.tints       = new Float32Array(COUNT * 3);
-    this.falls       = new Float32Array(COUNT);
-    this.drifts      = new Float32Array(COUNT);
-    this.spinSpeeds  = new Float32Array(COUNT);
+    this.offsets     = new Float32Array(this.count * 3);
+    this.spinAxes    = new Float32Array(this.count * 3);
+    this.angles      = new Float32Array(this.count);
+    this.tints       = new Float32Array(this.count * 3);
+    this.falls       = new Float32Array(this.count);
+    this.drifts      = new Float32Array(this.count);
+    this.spinSpeeds  = new Float32Array(this.count);
     // Per-leaf settled state. settled[i] = 1 means frozen on the ground.
-    this.settled     = new Float32Array(COUNT);
-    this.settledYaw  = new Float32Array(COUNT);
-    this.scales      = new Float32Array(COUNT);
-    this.landedAt    = new Float32Array(COUNT); // elapsed-time when settled
-    this.fadeTimer   = new Float32Array(COUNT); // >0 while recycling-shrink
+    this.settled     = new Float32Array(this.count);
+    this.settledYaw  = new Float32Array(this.count);
+    this.scales      = new Float32Array(this.count);
+    this.landedAt    = new Float32Array(this.count); // elapsed-time when settled
+    this.fadeTimer   = new Float32Array(this.count); // >0 while recycling-shrink
     this._settledCount = 0;
     this._elapsed = 0;
 
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < this.count; i++) {
       const ix = i * 3;
       // Initial volume centered on origin — player spawns at (0,0,0) so
       // first frame already shows leaves around them.
@@ -350,7 +352,7 @@ export class Leaves {
     const px = playerPos.x;
     const pz = playerPos.z;
 
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < this.count; i++) {
       const ix = i * 3;
 
       // Recycling-shrink branch: a settled leaf chosen for replacement
@@ -410,10 +412,10 @@ export class Leaves {
     // Recycle policy: while too many leaves sit on the ground, mark the
     // oldest non-fading one to fade out. We mark one per frame so a single
     // huge backlog drains over multiple frames instead of popping all at once.
-    if (this._settledCount > MAX_SETTLED) {
+    if (this._settledCount > this.maxSettled) {
       let oldestIdx = -1;
       let oldestTime = Infinity;
-      for (let i = 0; i < COUNT; i++) {
+      for (let i = 0; i < this.count; i++) {
         if (this.settled[i] > 0.5 && this.fadeTimer[i] <= 0 && this.landedAt[i] < oldestTime) {
           oldestTime = this.landedAt[i];
           oldestIdx = i;
