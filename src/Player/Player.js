@@ -12,10 +12,12 @@ export class Player {
   static GRAVITY = -25;
   static JUMP_VELOCITY = 8.5;
   static IDLE_LOOK_AROUND_SECONDS = 8;
-  // Ocean interaction. Must mirror src/Effects/Water.js ISLAND_RADIUS /
-  // WATER_ENTRY_RADIUS. Past WATER_ENTRY the character starts to slow down;
-  // SLOWDOWN_PER_M controls how fast resistance ramps with depth.
-  static WATER_ENTRY_RADIUS = 45;
+  // Ocean interaction. TODO Phase 5: replace the radius check with a
+  // WorldWater raycast against the actual river/lake/ocean meshes from
+  // world.glb. These radii are interim values that just hold the player
+  // back from the void past the new world's far edge while we ship the
+  // procedural-water swap. Original v1 island used 45/52.
+  static WATER_ENTRY_RADIUS = 120;
   static WATER_SLOWDOWN_PER_M = 0.1;
   static WATER_SLOWDOWN_MIN = 0.15;
 
@@ -30,11 +32,10 @@ export class Player {
     running: 5.2,
     crouchWalk: 1.35,
   };
-  // Soft clamp just past the wading band — island ends at r=45 and the
-  // ocean floor hits y=-2 by r=57, so anything further lets the player
-  // walk fully submerged with no swim animation. 52 lands the wall at
-  // the beach lip; wading slowdown handles the last ~7m organically.
-  static MAX_TRAVEL_RADIUS = 52;
+  // Soft clamp at the far edge of the world.glb terrain. TODO Phase 5:
+  // tighten this once WorldWater can identify the actual ocean meshes.
+  // Original v1 island used 52 (island ended at r=45, ocean floor at r=57).
+  static MAX_TRAVEL_RADIUS = 150;
   static RESPAWN_FALL_Y = -5;
 
   constructor(scene, playerCamera, terrain = null, loader = null, physics = null) {

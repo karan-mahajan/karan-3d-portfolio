@@ -288,6 +288,10 @@ export class Interaction {
 
     this.controller.paused = true;
     this.playerCamera.locked = true;
+    // Hide the player so the character mesh doesn't sit between the focus
+    // camera and the screen (the camera tweens to `screen + 4m forward`,
+    // which is roughly where the player is standing when E is pressed).
+    if (this.player?.character?.root) this.player.character.root.visible = false;
 
     // Stash the camera's current world transform so we can return to it.
     if (!this._returnPos) {
@@ -354,6 +358,7 @@ export class Interaction {
         this.controller.paused = false;
         this.playerCamera.locked = false;
         this.playerCamera.resync();
+        if (this.player?.character?.root) this.player.character.root.visible = true;
       },
     });
   }
