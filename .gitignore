@@ -41,6 +41,11 @@ thumbs.db
 tools/bruno-analysis/
 tools/compress-animations.mjs
 tools/compress-glbs.mjs
+tools/blender/reference/*
+!tools/blender/reference/.gitkeep
+tools/blender/scripts/__pycache__/
+# Blender auto-backup of world.blend — regenerated on every save.
+tools/blender/*.blend1
 
 # Reports — bulk Bruno extraction artifacts + working logs stay local. Only
 # the two design-relevant markdowns are committed:
