@@ -34,7 +34,7 @@ import { Achievements } from './Systems/Achievements.js';
 import { DistanceGame } from './Systems/DistanceGame.js';
 import { AchievementToast } from './UI/AchievementToast.js';
 import { AchievementPanel } from './UI/AchievementPanel.js';
-import { WORLD_BOUNDS, BLOCKERS, LAMPS } from './Portfolio/WorldMap.js';
+import { WORLD_BOUNDS, BLOCKERS, LAMPS, SECTIONS } from './Portfolio/WorldMap.js';
 import { assertCoordRoundTrip } from './UI/coords.js';
 import { Discovery } from './UI/Discovery.js';
 import { MiniMap } from './UI/MiniMap.js';
@@ -622,6 +622,8 @@ export class App extends EventTarget {
       transitionFx: this.transitionFx,
       audio: this.audio,
       discovery: this.discovery,
+      sections: SECTIONS,
+      world: this.world,
     });
     this.clickToMove = new ClickToMove({
       player: this.player,

@@ -1,9 +1,11 @@
 import gsap from "gsap";
 import * as THREE from "three";
 import { contact } from "./ContactData.js";
+import { resume } from "./ResumeData.js";
 
 const PROXIMITY = 4.5; // distance from billboard to show prompt
 const CONTACT_PROXIMITY = 3.2;
+const RESUME_PROXIMITY = 4;
 const ZOOM_DURATION = 1.1; // seconds
 const ZOOM_STANDOFF = 4.0; // distance from screen during focused view — sized so the full 3m-tall screen fits the 45° vertical FOV with margin
 const ZOOM_HEIGHT_OFFSET = 0.0; // vertical bias relative to screen center
@@ -47,6 +49,8 @@ export class Interaction {
     this.candidate = null; // billboard the player is currently near
     this.contactCandidate = false;
     this.contactOpen = false;
+    this.resumeCandidate = false;
+    this.resumeOpen = false;
     this.zooming = false;
     this.torchAiming = false;
     this._lastTodMode = this.timeOfDay?.mode ?? null;
@@ -123,6 +127,26 @@ export class Interaction {
       .querySelector(".panel-close")
       .addEventListener("click", () => this.closeContact());
 
+    // ── Resume overlay ─────────────────────────────────────────────────────
+    // Mirrors the contact-panel structure so existing .contact-panel CSS
+    // applies (avoids a CSS round-trip in Phase 2). Renders raw HTML from
+    // ResumeData.js — later sessions can swap in a real CV.
+    this.resumeEl = document.createElement("div");
+    this.resumeEl.className = "contact-panel resume-panel hidden";
+    this.resumeEl.innerHTML = `
+      <button class="panel-close" aria-label="Close">×</button>
+      <div class="contact-accent"></div>
+      <div class="resume-body">${resume.html}</div>
+      ${resume.downloadUrl
+        ? `<div class="panel-actions"><a class="panel-link" href="${resume.downloadUrl}" target="_blank" rel="noopener noreferrer">Download PDF ↗</a></div>`
+        : ''}
+      <div class="panel-hint">ESC to close</div>
+    `;
+    document.body.appendChild(this.resumeEl);
+    this.resumeEl
+      .querySelector(".panel-close")
+      .addEventListener("click", () => this.closeResume());
+
     this.torchHintEl = document.createElement("div");
     this.torchHintEl.className = "billboard-prompt torch-hint hidden";
     this.torchHintEl.innerHTML = `
@@ -138,20 +162,25 @@ export class Interaction {
     this._onKey = (e) => {
       if (this.zooming) return;
       if (e.code === "KeyE") {
-        if (this.contactOpen) return;
+        if (this.contactOpen || this.resumeOpen) return;
         if (this.activeIndex === -1) {
-          if (this.contactCandidate) this.openContact();
+          // Resume is a smaller proximity than contact, so when both fire
+          // (shouldn't happen — different anchors — but be defensive), the
+          // resume lectern wins.
+          if (this.resumeCandidate) this.openResume();
+          else if (this.contactCandidate) this.openContact();
           else if (this.candidate) this.focus(this.candidate.index);
         }
       } else if (e.code === "KeyF") {
-        if (this.activeIndex !== -1 || this.contactOpen) return;
+        if (this.activeIndex !== -1 || this.contactOpen || this.resumeOpen) return;
         if (document.body.classList.contains("is-mobile")) return;
         const torchOn = this.player?.character?.torchMesh?.visible === true;
         const night = this.timeOfDay?.mode === "night";
         if (!torchOn || !night) return;
         this.toggleTorchAim();
       } else if (e.code === "Escape") {
-        if (this.contactOpen) this.closeContact();
+        if (this.resumeOpen) this.closeResume();
+        else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
         else if (this.torchAiming) this.exitTorchAim();
       } else if (this.activeIndex !== -1) {
@@ -173,7 +202,7 @@ export class Interaction {
       this._lastTodMode = tod;
       if (tod !== "night" && this.torchAiming) this.exitTorchAim();
     }
-    if (this.activeIndex !== -1 || this.zooming || this.contactOpen) {
+    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen) {
       this.#hidePrompt();
       return;
     }
@@ -188,9 +217,13 @@ export class Interaction {
       nearBillboard = null;
     }
     const nearContact =
-      this.signs && this.signs.nearContact(playerPosition, CONTACT_PROXIMITY);
+      this.signs && this.signs.nearContact?.(playerPosition, CONTACT_PROXIMITY);
+    const nearResume =
+      this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
     this.candidate = nearBillboard;
-    this.contactCandidate = !!nearContact && !nearBillboard;
+    // Resume has the smallest proximity radius — when both fire, prefer it.
+    this.resumeCandidate = !!nearResume && !nearBillboard;
+    this.contactCandidate = !!nearContact && !nearBillboard && !nearResume;
 
     // Defer to ActionPrompts — if it's about to show its own E prompt at the
     // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
@@ -204,6 +237,7 @@ export class Interaction {
     }
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
+    else if (this.resumeCandidate) this.#showPrompt("Résumé");
     else if (this.contactCandidate) this.#showPrompt("Contact");
     else this.#hidePrompt();
   }
@@ -408,6 +442,27 @@ export class Interaction {
     this.contactEl.classList.add("hidden");
   }
 
+  // ── Resume ────────────────────────────────────────────────────────────────
+
+  openResume() {
+    if (this.resumeOpen) return;
+    if (this.torchAiming) this.exitTorchAim();
+    this.resumeOpen = true;
+    this.#hidePrompt();
+    this.audio?.playMenuOpen();
+    this.controller.paused = true;
+    this.resumeEl.classList.remove("hidden");
+    this.achievements?.onSectionVisited?.('resume');
+  }
+
+  closeResume() {
+    if (!this.resumeOpen) return;
+    this.resumeOpen = false;
+    this.audio?.playMenuClose();
+    this.controller.paused = false;
+    this.resumeEl.classList.add("hidden");
+  }
+
   #populatePanel(item) {
     const p = item.project;
     this.panelEl.querySelector(".panel-title").textContent = p.name;
@@ -465,7 +520,7 @@ export class Interaction {
     const torchOn = this.player?.character?.torchMesh?.visible === true;
     const night = this.timeOfDay?.mode === "night";
     const modalOpen =
-      this.activeIndex !== -1 || this.contactOpen || this.zooming;
+      this.activeIndex !== -1 || this.contactOpen || this.resumeOpen || this.zooming;
     // Same gate every other corner toggle / HUD uses — stay hidden while the
     // loading + welcome overlays are up. main.js strips `booting` from <body>
     // the moment the user starts the journey.

@@ -8,6 +8,8 @@ export class Teleport {
     transitionFx,
     audio,
     discovery,
+    sections = null,
+    world = null,
   }) {
     this.player = player;
     this.playerCamera = playerCamera;
@@ -17,11 +19,20 @@ export class Teleport {
     this.transitionFx = transitionFx;
     this.audio = audio;
     this.discovery = discovery;
+    // Section catalog + world handle let toSection() accept a string key (used
+    // by the .verify probes and any future quick-jump UI). Map UI still passes
+    // full section objects so this is additive.
+    this.sections = sections;
+    this.world = world;
     this.isActive = false;
   }
 
   async toSection(section, clickScreenPos = null) {
-    if (this.isActive || !section) return false;
+    if (this.isActive) return false;
+    if (typeof section === 'string') {
+      section = this.#resolveSectionKey(section);
+    }
+    if (!section) return false;
     this.isActive = true;
     const center = this.#screenPct(clickScreenPos);
     this.controller?.lock?.();
@@ -48,6 +59,31 @@ export class Teleport {
     this.controller?.unlock?.();
     this.isActive = false;
     return true;
+  }
+
+  /**
+   * Resolve a string key ('projects', 'skills', 'experience', 'contact',
+   * 'resume') to a section object compatible with #safeLanding. Looks first
+   * in the catalog passed at construction, then falls back to world.signs
+   * for 'resume' (which lives on the portfolio mounts, not SECTIONS).
+   */
+  #resolveSectionKey(key) {
+    if (Array.isArray(this.sections)) {
+      const found = this.sections.find((s) => s.id === key);
+      if (found) return found;
+    }
+    if (key === 'resume') {
+      const pos = this.world?.signs?.resumePosition;
+      if (pos) {
+        return {
+          id: 'resume',
+          name: 'Résumé',
+          position: [pos.x, pos.y ?? 0, pos.z],
+          landingOffset: [0, 0, 2.5],   // stand a couple metres south of the lectern
+        };
+      }
+    }
+    return null;
   }
 
   #screenPct(pos) {

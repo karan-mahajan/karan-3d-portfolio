@@ -1,6 +1,7 @@
 import { GlbWorld } from './GlbWorld.js';
 import { Sky } from './Sky.js';
-import { setSectionPositions } from './SectionPositions.js';
+import { setSectionPositions, SECTION_POSITIONS } from './SectionPositions.js';
+import { PortfolioMounts } from '../Portfolio/PortfolioMounts.js';
 
 /**
  * Top-level world facade. Wraps GlbWorld + Sky and (in later phases)
@@ -34,10 +35,15 @@ export class World {
 
     if (playerUniforms) this.glb.nature.setPlayerUniforms(playerUniforms);
 
+    // Phase 2 — PortfolioMounts replaces the Signs.js stub. Mounts panels
+    // onto Blender artifact meshes via refs collected during glb.load().
+    this.portfolioMounts = new PortfolioMounts(this.scene, this.glb.refs, SECTION_POSITIONS);
+    this.signs = this.portfolioMounts;
+
     return {
       nature:     this.glb.nature.pushSpots.length,
       billboards: 0,                              // populated in Phase 3
-      experience: 0,                              // populated in Phase 2
+      experience: this.portfolioMounts.experienceItems.length,
       paths:      this.glb.paths.getTileCount(),
     };
   }
