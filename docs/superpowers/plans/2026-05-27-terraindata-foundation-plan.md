@@ -1,5 +1,7 @@
 # TerrainData Foundation Implementation Plan
 
+> **STATUS (2026-05-27): PARKED.** Per the world.blend overhaul roadmap ([docs/superpowers/specs/2026-05-27-world-overhaul-roadmap.md](../specs/2026-05-27-world-overhaul-roadmap.md)), the user is doing Blender work first and verifying it visually in Blender before any code under `src/` / `static/` / `.verify/` is touched. This plan resumes after **sub-project F** (`phase-14-terrain-data.py`) of the roadmap bakes our own `static/textures/terrainData.png`. When that happens, Phase 1 below ("copy Bruno's PNG") becomes a verification step ("confirm phase-14 output exists") since F will have already produced the file.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a runtime `TerrainData` module to karan-portfolio that loads a worldspace data mask (`terrainData.png`) once at boot and exposes it to both CPU consumers (bilinear sampler + threshold predicates) and GPU consumers (shader uniforms + GLSL helper). Foundation for future spike-grass / cobblestone-slab / leaves-damping sub-projects.
