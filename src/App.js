@@ -85,9 +85,10 @@ export class App extends EventTarget {
     // Shared wind source — drives the grass field today; future leaves /
     // water ripples / particle systems will read the same uniforms.
     this.wind = new Wind();
-    // Grass is loaded inside boot() once paths, water, and tree placements
-    // are known (it filters its placement against those exclusion lists).
-    this.grass = new Grass(this.scene, this.loader, this.world.terrain, this.wind);
+    // Grass disabled — green blade tufts read poorly on the v2 baked terrain.
+    // Re-enable by un-commenting this and the load() call in boot().
+    // this.grass = new Grass(this.scene, this.loader, this.world.terrain, this.wind);
+    this.grass = null;
 
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
@@ -303,7 +304,8 @@ export class App extends EventTarget {
     // character GLBs off in parallel with the world parse so total boot time
     // doesn't regress.
     const worldLoadPromise = this.world.loadAssets(this.loader, this.physics, {
-      playerUniforms: this.grass.playerUniforms,
+      playerUniforms: this.grass?.playerUniforms ?? null,
+      wind: this.wind,
     });
 
     const worldResult = await worldLoadPromise;
@@ -390,26 +392,23 @@ export class App extends EventTarget {
     this._pathCount = this.world.paths?.getTileCount() ?? 0;
     this._pathRadius2 = 1.4 * 1.4;
 
-    // Build the grass field now that paths, water, and trees are placed —
-    // tufts filter against those exclusions at load time. Trees' positions
-    // come from Nature.pushSpots (only entries with type === 'tree').
-    const treePositions = (this.world.nature?.pushSpots ?? [])
-      .filter((s) => s.type === 'tree')
-      .map((s) => ({ x: s.position.x, z: s.position.z }));
-    await this.grass.load({
-      pathPositions: this.world.paths?.getTilePositions() ?? new Float32Array(0),
-      pathCount: this.world.paths?.getTileCount() ?? 0,
-      pathRadius: 1.4,
-      treePositions,
-      exclusionCircles: INTERACTABLE_PROP_EXCLUSIONS,
-      multiplier: this.quality.grassMultiplier,
-    });
-    // Grass is thousands of instances per tuft species — skip them at the
-    // raycast filter. They're not in the curated target list anyway, this
-    // belt-and-braces flag covers any future change that adds them in.
-    for (const inst of this.grass.instancedMeshes ?? []) {
-      inst.userData.noTorchRaycast = true;
-    }
+    // Grass disabled — see ctor. Skipping the load() call leaves no tufts
+    // in the scene. The blocks below remain so re-enable is a one-shot
+    // uncomment.
+    // const treePositions = (this.world.nature?.pushSpots ?? [])
+    //   .filter((s) => s.type === 'tree')
+    //   .map((s) => ({ x: s.position.x, z: s.position.z }));
+    // await this.grass.load({
+    //   pathPositions: this.world.paths?.getTilePositions() ?? new Float32Array(0),
+    //   pathCount: this.world.paths?.getTileCount() ?? 0,
+    //   pathRadius: 1.4,
+    //   treePositions,
+    //   exclusionCircles: INTERACTABLE_PROP_EXCLUSIONS,
+    //   multiplier: this.quality.grassMultiplier,
+    // });
+    // for (const inst of this.grass.instancedMeshes ?? []) {
+    //   inst.userData.noTorchRaycast = true;
+    // }
     // Skip ourselves when the mouse points down at our own feet — otherwise
     // the spot beam lands on the avatar's torso and the decal sticks to the
     // shirt. Flag both the character.root group AND the inner mesh so the
@@ -930,6 +929,10 @@ export class App extends EventTarget {
     this.lights.sun.position.set(p.x + off.x, p.y + off.y, p.z + off.z);
     this.lights.sun.target.position.set(p.x, p.y, p.z);
     this.lights.sun.target.updateMatrixWorld();
+    // Foliage two-tone blend follows the sun: direction = (light - target).
+    if (this.world.foliage) {
+      this.world.foliage.setSunDirection(off);
+    }
     this.sun.update(this.camera);
     this.timeOfDay.tick(p, this.camera, elapsed);
     this.streetLights?.update(p);

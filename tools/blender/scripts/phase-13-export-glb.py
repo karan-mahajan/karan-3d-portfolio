@@ -173,7 +173,7 @@ SECTION_POSITION_TOLERANCE_M = 0.5
 # shared mesh datablocks via instancing) lands at ~128k — marginally above
 # Bruno and well within modern desktop/laptop GPU envelopes. 150k caps
 # growth without forcing a Phase 11 re-run to shave per-tree geometry.
-TRIANGLE_BUDGET = 150_000
+TRIANGLE_BUDGET = 180_000  # phase-11c curved branches (multi-segment tubes) push past 150k
 
 
 # ============================================================================

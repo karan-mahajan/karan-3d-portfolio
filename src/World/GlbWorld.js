@@ -97,7 +97,7 @@ export class GlbWorld {
       particles: { forgeSmoke: null, brazierFlame: null, waterfallSpray: null },
       interaction: { resumeLectern: null, showcaseMount: null },
       viewpoint: {},            // refViewpoint_<key>
-      foliage: { heroTree: [], bench: [] },
+      foliage: { heroTree: [], bench: [], leaves: [], bushes: [] },
       raw: new Map(),           // name → Object3D for any ref we didn't classify
     };
 
@@ -257,6 +257,17 @@ export class GlbWorld {
       this.refs.foliage.heroTree.push({ name, position: pos });
     } else if (name.startsWith('refBench_')) {
       this.refs.foliage.bench.push({ name, position: pos });
+    } else if (name.startsWith('refTreeLeaves_')) {
+      // Phase-11c canopy anchor. `radius` carries the canopy size; the
+      // species custom property drives which color pair the runtime uses.
+      const species = obj.userData?.species || 'pine';
+      this.refs.foliage.leaves.push({
+        name, position: pos, radius: obj.scale.x || 1, species,
+      });
+    } else if (name.startsWith('refBushLeaves_')) {
+      this.refs.foliage.bushes.push({
+        name, position: pos, radius: obj.scale.x || 0.42, species: 'bush',
+      });
     }
   }
 
