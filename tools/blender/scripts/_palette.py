@@ -31,7 +31,7 @@ PALETTE_COLORS = {
     "pine_canopy":         "#3a5536",
     "sunlit_pine":         "#5a7253",
     "deep_shade":          "#283933",
-    "meadow_grass":        "#94a978",
+    "meadow_grass":        "#a8b870",
     # Water (3)
     "glacial_river":       "#9ec5d6",
     "deeper_water":        "#5d8094",
@@ -40,8 +40,8 @@ PALETTE_COLORS = {
     "sun_glow":            "#f4d6b0",
     "lantern_warm":        "#ffc46d",
     "wood_lantern_body":   "#b87850",
-    "dirt_path":           "#6e6256",
-    "sand_gravel":         "#9a8a72",
+    "dirt_path":           "#85715a",
+    "sand_gravel":         "#b09778",
 }
 
 

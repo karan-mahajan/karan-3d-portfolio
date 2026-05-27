@@ -253,7 +253,7 @@ def _verify_png(path):
     expected = [
         ((2, 2),     (198, 195, 188, 255), "cell 0 sky_high #c6c3bc"),
         ((pine_x, 2), (58, 85, 54, 255),   f"cell {pine_idx} pine_canopy #3a5536"),
-        ((122, 2),   (154, 138, 114, 255), "cell 24 sand_gravel #9a8a72"),
+        ((122, 2),   (176, 151, 120, 255), "cell 24 sand_gravel #b09778"),
         ((126, 2),   (224, 212, 192, 255), "padding mist_horizon #e0d4c0"),
     ]
     for (x, y), want, label in expected:
