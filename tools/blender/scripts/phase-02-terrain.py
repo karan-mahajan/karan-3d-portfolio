@@ -122,12 +122,14 @@ CLIFF_DROP_MAX = 25.0
 OCEAN_FLOOR_Y = -2.0
 
 # Slabs cobblestone overlay (Bruno's slabs.png from folio-2025). Walkable
-# faces (dirt_path + meadow_grass + rock_mid) get material slot 1 using a
-# world-XZ tiled UV; sand_gravel and deeper_water keep palette (slot 0).
-# UV scale matches Bruno's slabTextureFrequency=0.175 → ~5.7m per 256px
-# repeat → ~44cm per cobblestone tile.
-SLAB_UV_SCALE = 0.175
-SLAB_COLOR_KEYS = {"dirt_path", "meadow_grass", "rock_mid"}
+# faces (only dirt_path — the 3m cardinal corridors at r<=20) get material
+# slot 1 using a world-XZ tiled UV; meadow_grass + rock_mid + sand_gravel
+# + deeper_water all keep palette (slot 0). Meadow + ridge stay exposed
+# in their warm-shifted palette colors (sub-project A).
+# UV scale doubled from Bruno's 0.175 to 0.35 so the narrower path strip
+# reads as ~6 stones across (~2.86m per 256px repeat → ~22cm per tile).
+SLAB_UV_SCALE = 0.35
+SLAB_COLOR_KEYS = {"dirt_path"}
 
 # Warm cobble tint — Bruno's slabLowColor/slabHighColor from folio-2025
 # Floor.js. Grayscale slabs.png drives a ColorRamp that remaps dark grout
