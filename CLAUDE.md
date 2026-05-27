@@ -103,15 +103,20 @@ static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/,
 ## World layout
 
 - Spawn at (0, 0.02, 0). Player faces north (+Z).
-- Island radius ≈ 45m; shore slope 45→57m down to y=-2 ocean floor.
-- **Projects** — east, **single Project Showcase** screen at `PROJECTS_CENTER`
-  (Billboards.js) that cycles through projects. Replaced the old per-project
-  fan; legacy `world.billboards.items[0]` is the showcase itself.
-- **Experience** — north, signs along `SECTION_POSITIONS.experiencePath`
-- **Skills** — south, around `SECTION_POSITIONS.skills`
-- **Contact** — west, around `SECTION_POSITIONS.contact`
-- Past r=45 player wades (→ 15% speed); past r=120 soft-clamps back. Below
-  y=-5 respawns at origin.
+- v2 Blender world (post-2026-05-27 resize): walkable perimeter r ≈ 60m,
+  terrain mesh ±96.85m, ocean plane ±105m, cardinal sections at ±52.15m.
+  Mountains pulled to scale 0.7 of original (far_snow at y≈126), lighthouse
+  islet east edge at x=-106.85 (10m offshore). See [tools/blender/scripts/resize-world.py](tools/blender/scripts/resize-world.py)
+  + [tighten-backdrop.py](tools/blender/scripts/tighten-backdrop.py) for the
+  exact transforms applied to the source blend.
+- **Projects** — east at +52.15m, **single Project Showcase** screen at
+  `PROJECTS_CENTER` (Billboards.js) that cycles through projects.
+- **Experience** — north at +52.15m, signs along `SECTION_POSITIONS.experiencePath`
+- **Skills** — south at -52.15m, around `SECTION_POSITIONS.skills`
+- **Contact** — west at -52.15m, around `SECTION_POSITIONS.contact`
+- Runtime wade/clamp/respawn thresholds (`Past r=45 wades, r=120 clamps,
+  y=-5 respawns`) PREDATE the v2 build — they're still calibrated for the
+  legacy procedural island and likely need updating to match r≈60 walkable.
 - Distant islands ring the horizon (DistantIslands.js) — visual only, no colliders.
 - `Nature.addExclusion(x, z, r)` keeps trees out of clearings; always exclude
   new sections so trees don't clip props.

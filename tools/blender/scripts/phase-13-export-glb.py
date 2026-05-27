@@ -156,12 +156,14 @@ COLLIDER_PREFIXES = ("cuboid_", "tube_", "trimesh_")
 
 
 # Spec §3 section roots — Blender X-Y (runtime E-W, N-S). Z (height) is
-# terrain-sampled per phase, not asserted here.
+# terrain-sampled per phase, not asserted here. Values reflect the 2026-05-27
+# resize (factor 0.745 applied via resize-world.py): originals were ±70.0,
+# post-resize are ±52.15.
 EXPECTED_SECTION_XY = {
-    "refZoneBounding_projects":   (+70.0,   0.0),
-    "refZoneBounding_skills":     (  0.0, -70.0),
-    "refZoneBounding_experience": (  0.0, +70.0),
-    "refZoneBounding_contact":    (-70.0,   0.0),
+    "refZoneBounding_projects":   (+52.15,   0.0),
+    "refZoneBounding_skills":     (   0.0, -52.15),
+    "refZoneBounding_experience": (   0.0, +52.15),
+    "refZoneBounding_contact":    (-52.15,   0.0),
 }
 
 SECTION_POSITION_TOLERANCE_M = 0.5
