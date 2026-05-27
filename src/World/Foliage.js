@@ -133,10 +133,10 @@ export class Foliage {
       { a: "#3a4f24", b: "#6f9b3a" }, // mid green
     ],
     bush: [
-      { a: "#2c4a20", b: "#5a8a3a" },
-      { a: "#3f5827", b: "#7eaa45" },
-      { a: "#5b2618", b: "#a8421f" },
-      { a: "#5a4a1a", b: "#b09030" },
+      { a: "#b4b536", b: "#d8cf3b" }, // Bruno's exact (folio-2025 Bushes.js)
+      { a: "#909030", b: "#b8b035" }, // darker olive
+      { a: "#c5b020", b: "#e8d840" }, // brighter yellow-lime
+      { a: "#a0b540", b: "#c5d145" }, // greener variant
     ],
   };
 
