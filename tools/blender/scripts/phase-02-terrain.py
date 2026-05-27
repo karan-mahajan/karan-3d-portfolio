@@ -121,6 +121,20 @@ CLIFF_DROP_MAX = 25.0
 
 OCEAN_FLOOR_Y = -2.0
 
+# Slabs cobblestone overlay (Bruno's slabs.png from folio-2025). Walkable
+# faces (dirt_path + meadow_grass + rock_mid) get material slot 1 using a
+# world-XZ tiled UV; sand_gravel and deeper_water keep palette (slot 0).
+# UV scale matches Bruno's slabTextureFrequency=0.175 → ~5.7m per 256px
+# repeat → ~44cm per cobblestone tile.
+SLAB_UV_SCALE = 0.175
+SLAB_COLOR_KEYS = {"dirt_path", "meadow_grass", "rock_mid"}
+
+# Warm cobble tint — Bruno's slabLowColor/slabHighColor from folio-2025
+# Floor.js. Grayscale slabs.png drives a ColorRamp that remaps dark grout
+# pixels to LOW (warm brown) and light tile-face pixels to HIGH (warm tan).
+SLAB_LOW_COLOR  = (0.659, 0.467, 0.384, 1.0)   # #a87762 — grout
+SLAB_HIGH_COLOR = (1.000, 0.812, 0.545, 1.0)   # #ffcf8b — slab face
+
 
 # ----- generic math helpers (terrain-specific; kept out of _lib.py) -----
 
@@ -333,10 +347,12 @@ def _build_terrain_mesh():
 
     bm.faces.ensure_lookup_table()
 
-    # UV map: every loop of a face gets the SAME UV (the center of the
-    # palette cell). Combined with NearestFilter sampling, this paints the
-    # whole face a single flat color from the palette PNG.
+    # Two UV layers. "palette" = per-face single pixel (flat-color fallback,
+    # used by sand/water faces on material slot 0). "slabs" = world-XZ-tiled
+    # so the cobblestone slabs.png repeats across the walkable plateau on
+    # material slot 1. Per-face material_index decides which one shows.
     uv_layer = bm.loops.layers.uv.new("palette")
+    uv_slabs = bm.loops.layers.uv.new("slabs")
 
     for face in bm.faces:
         cx = sum(v.co.x for v in face.verts) / len(face.verts)
@@ -347,6 +363,17 @@ def _build_terrain_mesh():
         u, v = _lib.palette_uv(color_key)
         for loop in face.loops:
             loop[uv_layer].uv = (u, v)
+            # Slabs UV is world-XZ-scaled — every face contributes the same
+            # absolute coordinate so adjacent faces stitch into one seamless
+            # tile pattern. (Blender Y is runtime Z.)
+            loop[uv_slabs].uv = (
+                loop.vert.co.x * SLAB_UV_SCALE,
+                loop.vert.co.y * SLAB_UV_SCALE,
+            )
+        # NOTE: face.material_index is intentionally NOT set here. Bmesh
+        # silently clamps it to 0 when no material slots exist on the mesh
+        # yet, and both materials are appended after bm.to_mesh(). The
+        # assignment runs in _assign_terrain_face_materials() instead.
 
     bm.normal_update()
     bm.to_mesh(mesh)
@@ -416,6 +443,105 @@ def _ensure_palette_material(terrain_obj):
     return mat
 
 
+def _ensure_slabs_material(terrain_obj):
+    """Create (or reuse) world_slabs_material and attach to slot 1.
+
+    Slabs.png is Bruno's 256×256 grayscale cobblestone pattern (folio-2025,
+    static/floor/slabs.png — copied verbatim into our static/textures/ground/
+    stone/). Sampled with Linear filter + Repeat wrap so the world-XZ UV
+    tiling produces a seamless slab carpet over walkable terrain.
+
+    No tinting yet — the user wants to see Bruno's slabs as-is first; warm
+    color mix (Bruno's slabHighColor/slabLowColor) is a later polish pass.
+    """
+    mat_name = "world_slabs_material"
+    mat = bpy.data.materials.get(mat_name)
+    if mat is None:
+        mat = bpy.data.materials.new(mat_name)
+    mat.use_nodes = True
+
+    nt = mat.node_tree
+    for node in list(nt.nodes):
+        nt.nodes.remove(node)
+
+    output = nt.nodes.new("ShaderNodeOutputMaterial")
+    output.location = (500, 0)
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (200, 0)
+    ramp = nt.nodes.new("ShaderNodeValToRGB")  # ColorRamp
+    ramp.location = (-100, 0)
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.location = (-500, 0)
+    uv_node = nt.nodes.new("ShaderNodeUVMap")
+    uv_node.location = (-700, 0)
+    uv_node.uv_map = "slabs"
+
+    slabs_path = os.path.abspath(os.path.join(
+        SCRIPT_DIR, "..", "..", "..",
+        "static", "textures", "ground", "stone", "slabs.png",
+    ))
+    existing_name = os.path.basename(slabs_path)
+    image = bpy.data.images.get(existing_name)
+    if image is None and os.path.isfile(slabs_path):
+        image = bpy.data.images.load(slabs_path)
+    if image is not None:
+        # slabs.png is a pattern mask, not perceptual color — sample linearly.
+        image.colorspace_settings.name = 'Non-Color'
+        tex.image = image
+    tex.interpolation = 'Linear'
+    tex.extension = 'REPEAT'
+
+    # ColorRamp remaps the grayscale slabs.png into warm Bruno colors.
+    # Stop 0 = dark grout → SLAB_LOW_COLOR, stop 1 = light tile → SLAB_HIGH.
+    ramp.color_ramp.interpolation = 'LINEAR'
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = SLAB_LOW_COLOR
+    ramp.color_ramp.elements[1].position = 1.0
+    ramp.color_ramp.elements[1].color = SLAB_HIGH_COLOR
+
+    nt.links.new(uv_node.outputs["UV"], tex.inputs["Vector"])
+    nt.links.new(tex.outputs["Color"], ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+    nt.links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+
+    # Append as slot 1 (palette is slot 0). Only append if not already there —
+    # re-runs re-use the existing slot.
+    mesh = terrain_obj.data
+    if mat.name not in [m.name for m in mesh.materials if m is not None]:
+        mesh.materials.append(mat)
+    return mat
+
+
+def _assign_terrain_face_materials(terrain_obj):
+    """Set per-face material_index on the built terrain mesh.
+
+    Runs AFTER both materials are appended (palette = slot 0, slabs = slot
+    1). Walks bpy mesh.polygons and re-derives color_key from face center
+    coords so we use the exact same classification as the bmesh build pass.
+
+    This MUST be a separate post-build step: bmesh's face.material_index
+    assignment clamps to 0 when the bpy mesh has no material slots yet, and
+    materials only get appended after _build_terrain_mesh() returns.
+    """
+    mesh = terrain_obj.data
+    verts = mesh.vertices
+    slab_count = 0
+    for poly in mesh.polygons:
+        n = len(poly.vertices)
+        cx = sum(verts[i].co.x for i in poly.vertices) / n
+        cz = sum(verts[i].co.y for i in poly.vertices) / n
+        ridge_h = _ridge_contribution(cx, cz)
+        color_key = _face_color_key(cx, cz, ridge_h)
+        is_slab = color_key in SLAB_COLOR_KEYS
+        poly.material_index = 1 if is_slab else 0
+        if is_slab:
+            slab_count += 1
+    print(
+        f"{_lib.LOG_PREFIX}[phase-02] assigned face materials — "
+        f"slabs:{slab_count} / palette:{len(mesh.polygons) - slab_count}"
+    )
+
+
 def _make_trimesh_collider(source_obj):
     """Duplicate the visible mesh data, triangulate, and link as
     `trimesh_terrain`. Hidden in viewport + render."""
@@ -459,6 +585,8 @@ def main():
     _lib.clear_collection("terrain")
     terrain_obj = _build_terrain_mesh()
     _ensure_palette_material(terrain_obj)
+    _ensure_slabs_material(terrain_obj)
+    _assign_terrain_face_materials(terrain_obj)
     _make_trimesh_collider(terrain_obj)
     _place_terrain_refs()
     # Always save to the canonical world.blend, not whatever's currently
