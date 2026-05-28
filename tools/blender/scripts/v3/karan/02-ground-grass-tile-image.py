@@ -1,10 +1,14 @@
-"""Swap Bruno's slabs.png for ours.
+"""Swap Bruno's slabs.png for ours and use it as the tile color.
 
 Bruno's `bruno/01-foundation-bruno-002-images.py` creates a datablock
 named `slabs.png` pointing at `folio-2025/resources/textures/slabs.png`.
-The terrain material's `Image Texture.004` node samples that datablock,
-so swapping the file under it changes the tile/brick pattern everywhere
-without touching the material.
+The terrain material's `Image Texture.004` node samples that datablock.
+
+Bruno's original graph uses that image as a grayscale factor into `Mix.005`
+between two flat colors. Karan's tile PNG is already a full-color painted
+texture, so this script also connects `Image Texture.004.Color` directly into
+`Mix.004`'s tile-color input. The tile mask still comes from
+terrainFurnitures.R; only the color source changes.
 
 Mirrors the same pattern as `01-foundation-palette.py`.
 """
@@ -14,6 +18,7 @@ import os
 TILE_IMAGE = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/tiles.png"
 DATABLOCK_NAME = "slabs.png"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
+TERRAIN_MATERIAL = "terrain"
 
 
 def run():
@@ -42,6 +47,23 @@ def run():
     try: img.alpha_mode = "STRAIGHT"
     except Exception: pass
     print(f"  {DATABLOCK_NAME} now -> {TILE_IMAGE}")
+
+    mat = bpy.data.materials.get(TERRAIN_MATERIAL)
+    if mat is None or mat.node_tree is None:
+        print(f"  [WARN] material {TERRAIN_MATERIAL!r} not found — cannot rewire tile color")
+    else:
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        tex = nodes.get("Image Texture.004")
+        tile_mix = nodes.get("Mix.004")
+        if tex is None or tile_mix is None:
+            print("  [WARN] tile texture/mix nodes not found — leaving material links unchanged")
+        else:
+            color_input = tile_mix.inputs[7]
+            for link in list(color_input.links):
+                links.remove(link)
+            links.new(tex.outputs[0], color_input)
+            print("  material: Image Texture.004.Color -> Mix.004 tile color (full PNG color)")
 
     try:
         bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
