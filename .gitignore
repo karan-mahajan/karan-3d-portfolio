@@ -46,11 +46,6 @@ tools/blender/reference/*
 tools/blender/scripts/**/__pycache__/
 # Blender auto-backup of world.blend — regenerated on every save.
 tools/blender/*.blend1
-# v3 .blends are regenerable from tools/blender/scripts/v3/*.py
-tools/blender/world-v3*.blend
-# Authored terrain mask EXR cache — re-emitted on every run of the v3 grass
-# + tiles scripts. Source of truth is the polyline data in the *.py scripts.
-tools/blender/scripts/v3/karan/resources/masks/
 
 # Reports — bulk Bruno extraction artifacts + working logs stay local. Only
 # the two design-relevant markdowns are committed:

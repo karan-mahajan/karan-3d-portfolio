@@ -25,11 +25,15 @@ so iterations persist.
 import bpy
 import importlib.util
 import numpy as np
+import os
 
 IMAGE_FURNITURE = "terrainFurnitures"
 IMAGE_WATER = "terrainWater"
 IMAGE_GRASS = "terrainGrass"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
+MASK_DIR = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/masks"
+FURNITURE_MASK_FILE = f"{MASK_DIR}/terrainFurnitures-authored.exr"
+GRASS_MASK_FILE = f"{MASK_DIR}/terrainGrass-authored.exr"
 
 # Source of truth for path polylines and width. Hardcoded absolute path so
 # the import works both via run-all.py (where __file__ is set) and via
@@ -48,10 +52,21 @@ WATER_GATE_END = 0.18
 
 def _load_grass_module():
     """Import the grass authoring script for its PATH_POLYLINES + helpers."""
-    spec = importlib.util.spec_from_file_location("_karan_grass", GRASS_SCRIPT)
+    spec = importlib.util.spec_from_file_location("_authored_grass", GRASS_SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _save_mask_image(img, filepath):
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        img.filepath_raw = filepath
+        img.file_format = "OPEN_EXR"
+        img.save()
+        print(f"  {img.name}: saved edited pixels -> {filepath}")
+    except Exception as e:
+        print(f"  [WARN] could not save {img.name!r}: {e}")
 
 
 def run():
@@ -106,12 +121,15 @@ def run():
         img_f.update()
     except Exception:
         pass
+    _save_mask_image(img_f, FURNITURE_MASK_FILE)
 
     grass_zeroed = 0
     if img_g is not None and tuple(img_g.size) == (w, h):
         channels_g = img_g.channels
         grass_pixels = np.asarray(img_g.pixels[:], dtype=np.float32).reshape((h, w, channels_g))
-        path_pixels = tile_r > 0.01
+        # Do not clear feathered/light-green transition pixels. Only the
+        # readable stone core is grass-free; soft edges should still grow grass.
+        path_pixels = tile_r > 0.48
         grass_zeroed = int(path_pixels.sum())
         grass_pixels[:, :, 1] = np.where(path_pixels, 0.0, grass_pixels[:, :, 1])
         if channels_g >= 4:
@@ -121,6 +139,7 @@ def run():
             img_g.update()
         except Exception:
             pass
+        _save_mask_image(img_g, GRASS_MASK_FILE)
     elif img_g is None:
         print(f"  [WARN] image {IMAGE_GRASS!r} not found — cannot force grass off paths")
     else:

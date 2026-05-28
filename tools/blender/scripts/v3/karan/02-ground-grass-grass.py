@@ -35,11 +35,14 @@ base.py re-hides Plane.003.
 """
 import bpy
 import numpy as np
+import os
 
 GRASS_IMAGE = "terrainGrass"
 WATER_IMAGE = "terrainWater"
 GRASS_OBJECT = "Plane.003"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
+MASK_DIR = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/masks"
+GRASS_MASK_FILE = f"{MASK_DIR}/terrainGrass-authored.exr"
 
 # Shoreline band on terrainWater.R. Below LAND_START → fully grass; above
 # LAND_END → fully water; smooth fade in between matches the beach material
@@ -64,8 +67,6 @@ LAND_END = 0.18
 # tile texture lights up exactly where the grass drops out.
 PATH_HALFWIDTH = 9.0   # ≈ 4.4 m wide main tile corridor
 DETAIL_PATH_HALFWIDTH = 6.0  # sketched tile strokes stay readable
-GRASS_CLEAR_HALFWIDTH = 16.0
-DETAIL_GRASS_CLEAR_HALFWIDTH = 11.0
 PATH_PEAK = 1.0        # full clearance at path centre
 GRASS_STRENGTH = 0.52  # keep meadows lighter so the island is not a solid grass mat
 
@@ -96,9 +97,11 @@ PATH_POLYLINES = [
     # island between the lagoon and the lower-right pond.
     [(320, 315), (350, 345), (390, 372), (425, 405), (445, 440), (440, 468)],
 
-    # Upper-left spur — short trail from the spine toward the lighthouse
-    # corner (NW lobe), threading between the two upper ponds.
-    [(190, 165), (170, 145), (140, 130), (105, 125)],
+    # Upper-left spur — from the spine, curving south of the upper-left pond
+    # (X=60-170, Y=58-161) and continuing toward the upper west coast. The
+    # NW lobe is mostly under that pond, so the spur stops at the shoreline
+    # rather than reaching the lighthouse corner.
+    [(190, 165), (205, 130), (215, 90), (215, 50), (200, 25)],
 
     # Bottom-left loop gives the large empty meadow another readable route
     # and connects the lagoon-side trail back into the main spine.
@@ -160,7 +163,10 @@ OPEN_AREAS = [
     {"center": (356, 410), "radius": (22, 16), "angle": 0.22, "wobble": 0.14},
 ]
 
-SPARSE_GRASS_AREAS = [
+# Patches where the meadow lifts ABOVE the GRASS_STRENGTH baseline — taller,
+# denser-looking blades. Math is `meadow = max(GRASS_STRENGTH, lush)`, so
+# `strength` only matters when it exceeds GRASS_STRENGTH (0.52).
+LUSH_PATCHES = [
     {"center": (160, 360), "radius": (34, 22), "angle": 0.10, "strength": 0.64},
     {"center": (250, 360), "radius": (30, 24), "angle": -0.36, "strength": 0.60},
     {"center": (365, 250), "radius": (36, 24), "angle": 0.22, "strength": 0.62},
@@ -208,13 +214,6 @@ def _stamp_solid_polyline(mask, px, py, waypoints, halfwidth, edge_width, peak):
         np.maximum(mask, np.maximum(core, edge), out=mask)
 
 
-def _stamp_hard_polyline(mask, px, py, waypoints, halfwidth):
-    for (x0, y0), (x1, y1) in zip(waypoints, waypoints[1:]):
-        d = _segment_distance(px, py, x0, y0, x1, y1)
-        intensity = np.where(d < halfwidth, 1.0, 0.0)
-        np.maximum(mask, intensity, out=mask)
-
-
 def _stamp_open_area(mask, px, py, center, radius, angle, wobble):
     cx, cy = center
     rx, ry = radius
@@ -231,7 +230,7 @@ def _stamp_open_area(mask, px, py, center, radius, angle, wobble):
     np.maximum(mask, intensity, out=mask)
 
 
-def _stamp_sparse_grass(mask, px, py, area):
+def _stamp_lush_patch(mask, px, py, area):
     cx, cy = area["center"]
     rx, ry = area["radius"]
     angle = area["angle"]
@@ -258,35 +257,25 @@ def build_path_mask(w, h):
     return np.clip(path, 0.0, 1.0)
 
 
-def build_grass_clear_mask(w, h):
-    clear = np.zeros((h, w), dtype=np.float32)
+def build_lush_patches_mask(w, h):
+    lush = np.zeros((h, w), dtype=np.float32)
     px, py = _build_pixel_grid(w, h)
-    for poly in PATH_POLYLINES:
-        _stamp_hard_polyline(clear, px, py, poly, GRASS_CLEAR_HALFWIDTH)
-    for poly in DETAIL_PATH_POLYLINES:
-        _stamp_hard_polyline(clear, px, py, poly, DETAIL_GRASS_CLEAR_HALFWIDTH)
-    for area in OPEN_AREAS:
-        expanded = (area["radius"][0] + 4.0, area["radius"][1] + 4.0)
-        _stamp_open_area(clear, px, py, area["center"], expanded, area["angle"], area["wobble"])
-    return np.where(clear > 0.02, 1.0, 0.0).astype(np.float32)
-
-
-def build_sparse_grass_mask(w, h):
-    sparse = np.zeros((h, w), dtype=np.float32)
-    px, py = _build_pixel_grid(w, h)
-    for area in SPARSE_GRASS_AREAS:
-        _stamp_sparse_grass(sparse, px, py, area)
-    return np.clip(sparse, 0.0, 1.0)
+    for area in LUSH_PATCHES:
+        _stamp_lush_patch(lush, px, py, area)
+    return np.clip(lush, 0.0, 1.0)
 
 
 def _author_grass_mask(w, h, water_r):
     land = 1.0 - np.clip((water_r - LAND_START) / (LAND_END - LAND_START), 0.0, 1.0)
 
-    clear = build_grass_clear_mask(w, h)
-    sparse = build_sparse_grass_mask(w, h)
-    meadow = np.maximum(GRASS_STRENGTH, sparse)
+    path = build_path_mask(w, h)
+    lush = build_lush_patches_mask(w, h)
+    meadow = np.maximum(GRASS_STRENGTH, lush)
 
-    return land * meadow * (1.0 - clear)
+    # Only the solid stone core is grass-free. Feathered/light-green edge
+    # pixels should keep blades so they do not become empty colored bands.
+    solid_path = np.where(path > 0.48, 1.0, 0.0)
+    return land * meadow * (1.0 - solid_path)
 
 
 def _show_grass():
@@ -297,6 +286,17 @@ def _show_grass():
     ob.hide_viewport = False
     ob.hide_render = False
     print(f"  {GRASS_OBJECT}: hide flags cleared (grass blades visible)")
+
+
+def _save_mask_image(img, filepath):
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        img.filepath_raw = filepath
+        img.file_format = "OPEN_EXR"
+        img.save()
+        print(f"  {img.name}: saved edited pixels -> {filepath}")
+    except Exception as e:
+        print(f"  [WARN] could not save {img.name!r}: {e}")
 
 
 def run():
@@ -335,6 +335,7 @@ def run():
         img_g.update()
     except Exception:
         pass
+    _save_mask_image(img_g, GRASS_MASK_FILE)
 
     coverage = float((grass_g > 0.5).mean()) * 100.0
     full = float((grass_g > 0.95).mean()) * 100.0

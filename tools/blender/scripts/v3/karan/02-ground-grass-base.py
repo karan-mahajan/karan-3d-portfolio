@@ -84,7 +84,7 @@ ORGANIC_PONDS = [
         (250, 198), (267, 184), (286, 190), (297, 210), (287, 230),
         (263, 238), (242, 228), (235, 211),
     ], 10.0, 0.82),
-    # Large upper-right lagoon: one coherent irregular shape, not merged discs.
+    # Large lower-right lagoon: one coherent irregular shape, not merged discs.
     ([
         (352, 338), (372, 311), (404, 305), (430, 320), (456, 318),
         (484, 340), (492, 376), (474, 412), (439, 428), (404, 421),
