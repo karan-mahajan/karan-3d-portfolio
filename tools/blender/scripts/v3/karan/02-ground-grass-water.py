@@ -23,6 +23,7 @@ import bpy
 import numpy as np
 
 IMAGE_NAME = "terrainWater"
+BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
 
 
 def run():
@@ -54,6 +55,12 @@ def run():
         f"  {IMAGE_NAME}.B authored — shallow (teal forming) {shallow:.1f}%, "
         f"deep (navy forming) {deep:.1f}%."
     )
+
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
+        print(f"  saved -> {BLEND_PATH}")
+    except Exception as e:
+        print(f"  [WARN] save failed: {e}")
 
 
 if __name__ == "__main__":

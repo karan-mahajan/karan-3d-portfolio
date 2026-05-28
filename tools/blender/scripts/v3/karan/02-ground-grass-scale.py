@@ -19,6 +19,7 @@ Mesh datablocks (Plane.134, Plane.012) and the GeometryNodes groups
 import bpy
 
 SCALE_XY = 125.0 / 192.0  # ≈ 0.6510
+BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
 
 
 def _set_xy_scale(name, factor):
@@ -35,6 +36,12 @@ def run():
     _set_xy_scale("terrain", SCALE_XY)
     _set_xy_scale("Plane.003", SCALE_XY)
     print(f"  done (XY scale = {SCALE_XY:.4f}; Z preserved)")
+
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
+        print(f"  saved -> {BLEND_PATH}")
+    except Exception as e:
+        print(f"  [WARN] save failed: {e}")
 
 
 if __name__ == "__main__":

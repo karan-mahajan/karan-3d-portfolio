@@ -28,6 +28,12 @@ import numpy as np
 
 IMAGE_NAME = "terrainWater"
 GRASS_OBJECT = "Plane.003"
+BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
+
+# Softens the otherwise-perfectly-square island. Distance is in pixels of the
+# 512x512 mask (≈0.244m/px at karan's 125m world). 80 px ≈ 19.5m — corners
+# read as gently rounded instead of a hard 90° angle.
+ISLAND_CORNER_RADIUS = 80
 
 # All coords are EXR pixel space (512x512). With karan's 125m walkable
 # world (terrain scaled to 0.651 of Bruno's 192m), 1 pixel ≈ 0.244m.
@@ -61,24 +67,77 @@ SOUTH_BRANCH = [
     (290, -40),  # south: extends into ocean
 ]
 
-# Standalone ponds: (cx, cy, radius_px, peak_depth_value)
+# Ponds — mixed shapes for an organic feel.
 #
 # Image-to-screen axis mapping (terrain at rotation 0, Blender top-down view):
 #   Image X axis (0→511) → screen TOP→BOTTOM
 #   Image Y axis (0→511) → screen LEFT→RIGHT
 # So image pixel (0,0) renders at screen TOP-LEFT; (511,511) at BOTTOM-RIGHT.
 # Use that when tuning waypoints from a screenshot.
-PONDS = [
-    (110, 145, 22, 0.70),  # UPPER-LEFT pond
-    (430, 110, 24, 0.65),  # LOWER-LEFT pond ("SE" in world space but screen-LL)
-    (256, 200, 26, 0.80),  # CENTER pond (stone-rimmed pool in reference image)
-    (410, 365, 80, 1.80),  # LOWER-RIGHT pond (per hand-drawn circle in screenshot)
+
+# Perfectly circular ponds — (cx, cy, radius_px, peak_depth_value)
+PONDS_CIRCLES = [
+    (110, 145, 22, 0.70),  # UPPER-LEFT — kept circular by request (1 still-water pool)
+    ( 75, 100, 18, 0.70),  # NEW small pond above the original (drawn oval)
+]
+
+# Organic ponds — each is (list_of_component_circles, peak_depth_value).
+# Each component is (cx, cy, radius_px). The union of overlapping circles
+# produces an irregular outline that reads as a natural shape instead of
+# a perfect disc.
+PONDS_BLOBS = [
+    # LOWER-LEFT pond — kidney shape (was 24-px circle)
+    ([(430, 110, 22),
+      (450, 100, 16),
+      (415, 125, 14)], 0.65),
+    # CENTER pond — small irregular blob (was 26-px circle)
+    ([(256, 200, 22),
+      (240, 215, 16),
+      (272, 188, 17),
+      (248, 188, 14)], 0.80),
+    # LOWER-RIGHT pond — large organic blob (was 80-px circle)
+    ([(410, 365, 62),
+      (370, 340, 40),
+      (450, 390, 38),
+      (395, 415, 32),
+      (440, 335, 30)], 1.80),
 ]
 
 RIVER_HALFWIDTH = 6.0       # pixels — channel half-width
 RIVER_PEAK = 0.65           # peak R value at river center
 BEACH_INSET = 32            # pixels — how far inland the beach slope reaches
 BEACH_PEAK = 1.00           # peak R value at very edge (full ocean)
+
+# Secondary water features (the user-drawn marks):
+#   - Small streams crossing parts of the island
+#   - Coastal bays/inlets that punch the smooth perimeter inward
+# Stamped with the same polyline machinery as MAIN_RIVER, just thinner
+# (≈75% of river width) and slightly shallower so they read as smaller
+# water features.
+STREAM_HALFWIDTH = 4.5
+STREAM_PEAK = 0.60
+
+STREAMS = [
+    # Upper-right diagonals — 2 parallel streams that flow INTO the big
+    # blob pond. Endpoints extend past the pond outline (~410, 365) so
+    # the stream visually merges with it instead of stopping short.
+    [(180, 510), (250, 470), (320, 425), (380, 390), (410, 365)],
+    [(220, 510), (290, 460), (350, 405), (400, 380), (425, 360)],
+
+    # Lower-left squiggle — short curving stream coming IN from the
+    # south-west ocean (starts past the image edge so it joins the sea).
+    [(540,  80), (511,  90), (485, 110), (465, 140), (450, 165)],
+
+    # Right-edge inlet — bay curving in from the east coast. First
+    # waypoint sits past Y=511 so the inlet merges with the ocean.
+    [(265, 540), (270, 511), (285, 490), (290, 470)],
+
+    # Bottom-edge arcs ∩∩ — two coastal inlets. Endpoints extend past
+    # X=511 on both sides so each inlet visibly enters and exits the
+    # sea instead of fizzling at the coastline.
+    [(540, 200), (511, 205), (495, 215), (490, 230), (495, 245), (511, 260), (540, 265)],
+    [(540, 270), (511, 275), (495, 285), (490, 300), (495, 315), (511, 330), (540, 335)],
+]
 
 
 def _build_pixel_grid(w, h):
@@ -127,11 +186,28 @@ def _stamp_circle(r, px, py, cx, cy, radius, peak):
 
 
 def _stamp_beach(r, px, py, w, h, inset, peak):
-    """Add soft beach slope at all four edges, taking max into r in-place."""
-    edge_dist = np.minimum.reduce([px, py, (w - 1) - px, (h - 1) - py])
-    # Clamp base to >= 0 so fractional power doesn't produce NaN on
-    # pixels past the beach inset (np.where evaluates both branches).
-    base = np.maximum(0.0, 1.0 - edge_dist / inset)
+    """Soft beach slope along the ROUNDED-RECTANGLE island border.
+
+    Uses the standard rounded-box signed distance function so the
+    perimeter is straight along the four sides but curves inward at
+    each corner with radius ISLAND_CORNER_RADIUS. Pixels outside the
+    rounded shape (the cut-off corner regions of the image) get full
+    peak so they read as open ocean wrapping the island.
+    """
+    cx = (w - 1) * 0.5
+    cy = (h - 1) * 0.5
+    hx = (w - 1) * 0.5
+    hy = (h - 1) * 0.5
+    cr = float(ISLAND_CORNER_RADIUS)
+    qx = np.abs(px - cx) - hx + cr
+    qy = np.abs(py - cy) - hy + cr
+    outside_d = np.sqrt(np.maximum(0.0, qx) ** 2 + np.maximum(0.0, qy) ** 2)
+    inside_d = np.minimum(np.maximum(qx, qy), 0.0)
+    sdf = outside_d + inside_d - cr
+    # sdf >= 0      → outside rounded boundary (full ocean, clipped to 1)
+    # sdf == -inset → far edge of beach (dry land begins)
+    # sdf <= -inset → fully dry interior (clipped to 0)
+    base = np.clip(1.0 + sdf / inset, 0.0, 1.0)
     intensity = peak * base ** 1.5
     np.maximum(r, intensity, out=r)
 
@@ -142,8 +218,13 @@ def _author_water_mask(w, h):
     _stamp_beach(r, px, py, w, h, BEACH_INSET, BEACH_PEAK)
     _stamp_polyline(r, px, py, MAIN_RIVER, RIVER_HALFWIDTH, RIVER_PEAK)
     _stamp_polyline(r, px, py, SOUTH_BRANCH, RIVER_HALFWIDTH * 0.85, RIVER_PEAK)
-    for cx, cy, radius, peak in PONDS:
+    for cx, cy, radius, peak in PONDS_CIRCLES:
         _stamp_circle(r, px, py, cx, cy, radius, peak)
+    for components, peak in PONDS_BLOBS:
+        for cx, cy, radius in components:
+            _stamp_circle(r, px, py, cx, cy, radius, peak)
+    for stream in STREAMS:
+        _stamp_polyline(r, px, py, stream, STREAM_HALFWIDTH, STREAM_PEAK)
     return r
 
 
@@ -190,6 +271,12 @@ def run():
         f"deep (>0.3) {deep_coverage:.1f}%. G+B zeroed (no water-color rendering)."
     )
     _hide_grass()
+
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
+        print(f"  saved -> {BLEND_PATH}")
+    except Exception as e:
+        print(f"  [WARN] save failed: {e}")
 
 
 if __name__ == "__main__":
