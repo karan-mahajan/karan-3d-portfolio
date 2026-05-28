@@ -179,6 +179,114 @@ For heavy scripts (lots of empties + lots of meshes), use **multiple parallel ag
 
 ---
 
+## Phase 2/3 — Build our world (BUILD SESSIONS, after Phase 1 is complete)
+
+Once all 142 per-script `.md` files exist, Phase 2/3 begins: actually constructing OUR Blender world. **One build session per thematic section.** Each session does the full loop: recreate Bruno → user reviews → brainstorm modifications → implement custom version → verify → bundle commit.
+
+### Per-section session workflow
+
+1. **Recreate** — write Python that mirrors Bruno's setup for this section. File: `tools/blender/scripts/v3/NN-section-bruno.py`. Read the per-script `.md` deep analyses in `docs/superpowers/research/2026-05-27-bruno-world/NN-section/` as the recipe.
+2. **User runs in Blender, sees Bruno's faithful version.**
+3. **Brainstorm** — interactive with user: skip whole section? change layout? different theme? fewer instances? combine with another section? The user might decide they don't want this section at all — that's fine, see below.
+4. **Modify** — write customized version: `tools/blender/scripts/v3/NN-section.py` (side-by-side with `bruno.py`).
+5. **User verifies** the custom version in Blender. Iterate if needed.
+6. **Bundle commit** at session end — confirm message with user, NO co-author trailer.
+
+### Build session order
+
+| # | Section | Required? | Notes |
+|---:|---|---|---|
+| 1 | 01-foundation | **REQUIRED** | Textures, mats, node groups, mesh data, curves, collections — everything depends on this |
+| 2 | 02-ground-grass | **REQUIRED** | Terrain canvas + grass scatter |
+| 3 | 03-surface-detail | likely keep | Rocks, slabs, roads, bridges |
+| 4 | 04-trees | likely keep | 3 species |
+| 5 | 05-foliage-flowers-boundaries | likely keep | Bushes, flowers, fences, bricks |
+| 6 | 06-buildings-structures | optional | Building, altar, cabin, lab anchors |
+| 7 | 07-major-areas | required if any sections kept | Zone-anchor architecture |
+| 8 | 08-race-track | optional (probably skip) | Full race mini-game |
+| 9 | 09-bowling | optional (probably skip) | Full bowling alley |
+| 10 | 10-lighting | likely keep | Lanterns + poleLights + bonfire |
+| 11 | 11-furniture-displays-boards | partial | Furniture/screens/boards per section kept |
+| 12 | 12-workshop-portfolio-icons | likely keep | Career/projects/social — your actual portfolio content |
+| 13 | 13-food-misc-fx | partial | Cookie, title, airDancers — pick what you want |
+| 14 | 14-reference-hidden | partial | Tree-template, statue, minimap rig, vehicle template |
+| 15 | 15-finalize | **REQUIRED** | Parenting + view-layer wiring (must come last) |
+
+Sections #1, #2, #15 are mandatory. Order between them is up to you, but build dependencies suggest: trees + foliage before structures that exclude them; areas/anchors before furniture that lives inside them; lighting + finalize last.
+
+### Skipped sections
+
+If you decide to skip a section entirely during the brainstorm:
+- Session writes a SHORT `NN-section-bruno.py` (placeholder + comment explaining what Bruno had and why we skipped) — useful as a marker.
+- No `NN-section.py` is written.
+- Bundle commit notes the skip.
+
+### Naming convention
+
+- `NN-section-bruno.py` — faithful Bruno recreation, never re-edited after first commit
+- `NN-section.py` — your customized version (modified from -bruno)
+- For sections needing multiple .py files (e.g., foundation), split as: `01-foundation-bruno-01-images.py`, `01-foundation-bruno-02-materials.py`, etc. — keep the `-bruno-` infix consistent.
+
+### What goes in v3/
+
+```
+tools/blender/scripts/v3/
+├── README.md                         (sub-project intro; written in Build Session 1)
+├── 01-foundation-bruno-*.py          (split into chunks if large)
+├── 01-foundation-*.py
+├── 02-ground-grass-bruno.py
+├── 02-ground-grass.py
+├── ...
+└── 15-finalize-bruno.py
+    15-finalize.py
+```
+
+`v3/` is a clean slate — does NOT touch existing `tools/blender/scripts/phase-00..phase-13.py`. Old build remains as reference; v3 becomes the new canonical build once finalized.
+
+### Build-session prompt (template — copy into a new chat to start a section)
+
+```
+I'm continuing a multi-session project to build our own Blender world
+using Bruno Simon's folio-2025 as a knowledge base.
+Phase 1 (deep Python analysis of all 142 Bruno scripts) is done.
+
+THIS SESSION = BUILD SECTION [NN-section-name]
+(e.g., "01-foundation", "04-trees", "10-lighting")
+
+START HERE — read in order:
+1. docs/superpowers/research/2026-05-27-bruno-world/HANDOFF.md
+   (workflow, session split, naming, rules — Phase 2/3 section)
+2. The per-script deep analyses for THIS section at
+   docs/superpowers/research/2026-05-27-bruno-world/[NN-section]/
+   (these are the recipe for what to recreate)
+3. docs/superpowers/research/2026-05-27-bruno-world/[NN-section].md
+   (group navigation — optional context)
+
+DO THE FULL LOOP THIS SESSION (per HANDOFF.md Phase 2/3 workflow):
+  Part 1: Recreate Bruno's version → tools/blender/scripts/v3/[NN-section]-bruno-*.py
+  Part 2: Ask user to run it in Blender, wait for them to confirm.
+  Part 3: Brainstorm what they want different (use brainstorming skill
+          if helpful — invoke superpowers:brainstorming).
+  Part 4: Write customized version → tools/blender/scripts/v3/[NN-section]-*.py
+  Part 5: User verifies the custom version. Iterate.
+  Part 6: Bundle commit — confirm message with user, NO Co-Authored-By.
+
+Constraints (do not violate):
+- NO commits before Part 6. All section work = ONE bundled commit.
+- NO karan-portfolio src/ or static/ code is touched.
+- ONLY write inside tools/blender/scripts/v3/. Don't modify the
+  existing phase-00 through phase-13 scripts.
+- world.blend may be touched by scripts that call save_as_mainfile —
+  `git restore tools/blender/world.blend` if no intentional .blend edit.
+- If user wants to skip this entire section, write a placeholder bruno.py
+  with a comment explaining the skip, then bundle commit and stop.
+
+When section is done (Part 6 committed), report a short summary and
+stop. Don't start the next section — user opens a new chat for that.
+```
+
+---
+
 ## Pointers
 
 - **Bruno's repo:** `/Users/mahajankaran/Documents/Projects/folio-2025/`
