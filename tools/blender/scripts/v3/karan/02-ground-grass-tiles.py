@@ -29,11 +29,9 @@ import os
 
 IMAGE_FURNITURE = "terrainFurnitures"
 IMAGE_WATER = "terrainWater"
-IMAGE_GRASS = "terrainGrass"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
 MASK_DIR = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/masks"
 FURNITURE_MASK_FILE = f"{MASK_DIR}/terrainFurnitures-authored.exr"
-GRASS_MASK_FILE = f"{MASK_DIR}/terrainGrass-authored.exr"
 
 # Source of truth for path polylines and width. Hardcoded absolute path so
 # the import works both via run-all.py (where __file__ is set) and via
@@ -73,7 +71,6 @@ def run():
     print("[02-ground-grass-tiles] author tile overlay on path zones only")
     img_f = bpy.data.images.get(IMAGE_FURNITURE)
     img_w = bpy.data.images.get(IMAGE_WATER)
-    img_g = bpy.data.images.get(IMAGE_GRASS)
     if img_f is None:
         print(f"  [WARN] image {IMAGE_FURNITURE!r} not found — skipping")
         return
@@ -123,27 +120,10 @@ def run():
         pass
     _save_mask_image(img_f, FURNITURE_MASK_FILE)
 
-    grass_zeroed = 0
-    if img_g is not None and tuple(img_g.size) == (w, h):
-        channels_g = img_g.channels
-        grass_pixels = np.asarray(img_g.pixels[:], dtype=np.float32).reshape((h, w, channels_g))
-        # Do not clear feathered/light-green transition pixels. Only the
-        # readable stone core is grass-free; soft edges should still grow grass.
-        path_pixels = tile_r > 0.48
-        grass_zeroed = int(path_pixels.sum())
-        grass_pixels[:, :, 1] = np.where(path_pixels, 0.0, grass_pixels[:, :, 1])
-        if channels_g >= 4:
-            grass_pixels[:, :, 3] = 1.0
-        img_g.pixels.foreach_set(grass_pixels.ravel())
-        try:
-            img_g.update()
-        except Exception:
-            pass
-        _save_mask_image(img_g, GRASS_MASK_FILE)
-    elif img_g is None:
-        print(f"  [WARN] image {IMAGE_GRASS!r} not found — cannot force grass off paths")
-    else:
-        print(f"  [WARN] {IMAGE_GRASS!r} size {img_g.size} != path size {(w, h)} — grass path clear skipped")
+    # terrainGrass.G is owned by 02-ground-grass-grass.py, which authors a
+    # SOFT sqrt falloff that already eases blade scale + ground tint to 0
+    # at path centres. Re-zeroing G here on a hard tile threshold would
+    # clobber that gradient and bring back the harsh grey/green seam.
 
     coverage = float((tile_r > 0.05).mean()) * 100.0
     full = float((tile_r >= 0.95).mean()) * 100.0
@@ -151,8 +131,7 @@ def run():
         f"  {IMAGE_FURNITURE}.R authored — tile coverage {coverage:.1f}% "
         f"(full-strength {full:.1f}%, gated against water). "
         f"{len(polylines)} main paths + {len(detail_polylines)} detail paths "
-        f"+ {len(open_areas)} open areas stamped. "
-        f"terrainGrass.G forced to 0 on {grass_zeroed} path pixels."
+        f"+ {len(open_areas)} open areas stamped."
     )
 
     try:

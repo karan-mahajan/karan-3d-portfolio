@@ -15,14 +15,24 @@ ground green wherever G is high. So one mask drives both the geometry and
 the colour.
 
 Authoring rule for this file:
-  grass_G = land_mask * (1 - path_mask)
+  grass_G = land_mask * meadow * (1 - grass_falloff_mask)
 
-  land_mask: 1 where terrainWater.R is below the shoreline threshold, 0 in
-             water. Sharp shoreline fade matches the beach material edge so
-             blades stop right at the waterline.
-  path_mask: 1 inside a path stamp's core, fading to 0 at the path edge.
-             Defined as a polyline network through the island that avoids
-             every known water body in base.py.
+  land_mask:          1 on land, 0 in water. The fade band is intentionally
+                      wider than the tile mask so the orange-tinted beach
+                      shows through at the shoreline (matches Bruno's
+                      sand/water transition).
+  meadow:             GRASS_STRENGTH baseline, lifted by LUSH_PATCHES.
+  grass_falloff_mask: SOFT sqrt falloff peaking at 1 in path centres and
+                      fading smoothly to 0 well past the tile edge. The
+                      falloff radius is larger than the tile radius so
+                      grass G eases from full → 0 across a wide band; that
+                      partial-G zone is where Bruno's warm orange halo
+                      appears (the ground material paints orange wherever
+                      grass is thin/absent). Hard threshold cutoffs produce
+                      a sharp grey gap instead, which is not the look.
+
+Tile authoring in tiles.py uses the narrower PATH_HALFWIDTH so the tile
+shapes themselves do not shrink — only the grass density fades wider.
 
 Side effects:
   - Un-hides `Plane.003` (base.py hides it; this re-shows it now that we
@@ -45,10 +55,11 @@ MASK_DIR = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender
 GRASS_MASK_FILE = f"{MASK_DIR}/terrainGrass-authored.exr"
 
 # Shoreline band on terrainWater.R. Below LAND_START → fully grass; above
-# LAND_END → fully water; smooth fade in between matches the beach material
-# threshold so blades and waves meet at the same pixel.
-LAND_START = 0.05
-LAND_END = 0.18
+# LAND_END → no grass. Band is wider than the strict water edge so the
+# orange beach material is visible between grass and waves (Bruno's
+# sand-halo look — see screenshots in karan/resources/reference).
+LAND_START = 0.04
+LAND_END = 0.14
 
 # Path polylines — winding sandy trail network through the island.
 #
@@ -69,6 +80,16 @@ PATH_HALFWIDTH = 9.0   # ≈ 4.4 m wide main tile corridor
 DETAIL_PATH_HALFWIDTH = 6.0  # sketched tile strokes stay readable
 PATH_PEAK = 1.0        # full clearance at path centre
 GRASS_STRENGTH = 0.52  # keep meadows lighter so the island is not a solid grass mat
+
+# Grass-falloff radius extends just past the tile mask. Falloff peaks at 1
+# in path centres (grass G = 0 → no blades, no green tint, pure tile colour)
+# and fades to 0 a short distance past the tile edge. The partial-G band
+# is where Bruno's warm orange halo appears between grass and tile/water.
+#   main: tile reaches ~9 px, grass eases to 0 by ~12 px → ~0.7 m halo
+#   detail: tile reaches ~6 px, grass eases to 0 by ~8 px → ~0.5 m halo
+GRASS_FALLOFF_HALFWIDTH = 12.0
+DETAIL_GRASS_FALLOFF_HALFWIDTH = 8.0
+OPEN_AREA_FALLOFF_PADDING = 2.0
 
 PATH_POLYLINES = [
     # Long curving spine — enters from north (top), meanders down past the
@@ -265,17 +286,35 @@ def build_lush_patches_mask(w, h):
     return np.clip(lush, 0.0, 1.0)
 
 
+def build_grass_falloff_mask(w, h):
+    """Soft sqrt falloff around paths/areas — drives grass G smoothly to 0.
+
+    Wider than the tile mask so a partial-G band sits past the tile edge;
+    that band is where Bruno's warm orange halo shows through.
+    """
+    falloff = np.zeros((h, w), dtype=np.float32)
+    px, py = _build_pixel_grid(w, h)
+    for poly in PATH_POLYLINES:
+        _stamp_polyline(falloff, px, py, poly, GRASS_FALLOFF_HALFWIDTH, PATH_PEAK)
+    for poly in DETAIL_PATH_POLYLINES:
+        _stamp_polyline(falloff, px, py, poly, DETAIL_GRASS_FALLOFF_HALFWIDTH, PATH_PEAK)
+    for area in OPEN_AREAS:
+        padded_radius = (
+            area["radius"][0] + OPEN_AREA_FALLOFF_PADDING,
+            area["radius"][1] + OPEN_AREA_FALLOFF_PADDING,
+        )
+        _stamp_open_area(falloff, px, py, area["center"], padded_radius, area["angle"], area["wobble"])
+    return np.clip(falloff, 0.0, 1.0)
+
+
 def _author_grass_mask(w, h, water_r):
     land = 1.0 - np.clip((water_r - LAND_START) / (LAND_END - LAND_START), 0.0, 1.0)
 
-    path = build_path_mask(w, h)
+    falloff = build_grass_falloff_mask(w, h)
     lush = build_lush_patches_mask(w, h)
     meadow = np.maximum(GRASS_STRENGTH, lush)
 
-    # Only the solid stone core is grass-free. Feathered/light-green edge
-    # pixels should keep blades so they do not become empty colored bands.
-    solid_path = np.where(path > 0.48, 1.0, 0.0)
-    return land * meadow * (1.0 - solid_path)
+    return land * meadow * (1.0 - falloff)
 
 
 def _show_grass():
