@@ -1,78 +1,103 @@
-"""Author tile/brick mask on terrainFurnitures.R — tiles cover the entire
-walkable island except water.
+"""Author the tile/path overlay on terrainFurnitures.R — only on path zones.
 
-The mask is derived from the existing terrainWater.R (authored by
-02-ground-grass-base.py): tiles fill everywhere R is low, fade out where
-R rises, and stay out of any water depression.
+The path polylines live in `02-ground-grass-grass.py` so the tile texture
+lights up exactly where the grass mask drops out. We import that module via
+importlib (run-all.py loads scripts in alphabetical order so grass.py has
+already executed by the time we get here, but the import doesn't require
+that — it just reads constants).
 
-Mapping (inverse-water with a soft shoreline ramp):
-   water_R <= FADE_START  →  tiles_R = 1.0   (full tile pattern)
-   water_R == midpoint    →  tiles_R = 0.5   (shoreline transition)
-   water_R >= FADE_END    →  tiles_R = 0.0   (no tiles — water shows)
+Mapping:
+   path_d <= 0          (path centre)  → tiles_R = 1.0
+   path_d == halfwidth  (path edge)    → tiles_R fades to 0
+   path_d  > halfwidth                  → tiles_R = 0
 
-The result:
-  - rivers + south tributary  → no tiles (covered by water)
-  - all 4 ponds               → no tiles
-  - ocean ring (4 borders)    → no tiles
-  - everywhere else on island → full tile pattern
+Edge of path also receives an explicit water gate so the tile texture never
+bleeds into a pond or river even if a polyline waypoint drifts too close.
 
 Bruno's slabs.png is the tile texture used until the user supplies their
-own. Material's vector-math scale on the texture is (0.2, 0.2, 0.2) →
+own. Material vector-math scale on the texture is (0.2, 0.2, 0.2) →
 bricks repeat every ~5m at world scale.
 
-Bruno's material puts the tile overlay LAST in the shader chain
-(Mix.004), so wherever we paint R high here, it overrides grass and
-water. The water-fade threshold below leaves a small dry shoreline band
-to keep the transitions readable.
-
-Per the keep-everything policy: only mutates terrainFurnitures.R pixels
-in memory. Re-running blank-bruno.py zeros it again. Saves the .blend
-at end so iterations persist.
+Per the keep-everything policy: mutates terrainFurnitures.R pixels in
+memory. Re-running blank-bruno.py zeros it again. Saves the .blend at end
+so iterations persist.
 """
 import bpy
+import importlib.util
 import numpy as np
 
 IMAGE_FURNITURE = "terrainFurnitures"
 IMAGE_WATER = "terrainWater"
+IMAGE_GRASS = "terrainGrass"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
 
-# Shoreline fade band in water_R units.
-# water_R below FADE_START → full tiles; above FADE_END → no tiles.
-# A 0.10 wide band ≈ a few pixels of soft transition along each shoreline.
-FADE_START = 0.05
-FADE_END = 0.15
+# Source of truth for path polylines and width. Hardcoded absolute path so
+# the import works both via run-all.py (where __file__ is set) and via
+# `exec(open(...).read())` in the Blender Python Console (where it isn't).
+GRASS_SCRIPT = (
+    "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/"
+    "scripts/v3/karan/02-ground-grass-grass.py"
+)
+
+# Fade band on the water-R mask. Tile alpha drops to 0 wherever this gate
+# says "water" so paths can graze the shoreline without producing tile
+# slivers floating in water.
+WATER_GATE_START = 0.05
+WATER_GATE_END = 0.18
+
+
+def _load_grass_module():
+    """Import the grass authoring script for its PATH_POLYLINES + helpers."""
+    spec = importlib.util.spec_from_file_location("_karan_grass", GRASS_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def run():
-    print("[02-ground-grass-tiles] author tile mask on terrainFurnitures.R (everywhere except water)")
+    print("[02-ground-grass-tiles] author tile overlay on path zones only")
     img_f = bpy.data.images.get(IMAGE_FURNITURE)
     img_w = bpy.data.images.get(IMAGE_WATER)
+    img_g = bpy.data.images.get(IMAGE_GRASS)
     if img_f is None:
         print(f"  [WARN] image {IMAGE_FURNITURE!r} not found — skipping")
         return
     if img_w is None:
-        print(f"  [WARN] image {IMAGE_WATER!r} not found — cannot derive tile mask")
+        print(f"  [WARN] image {IMAGE_WATER!r} not found — cannot derive water gate")
         return
 
     w, h = img_f.size
     if w == 0 or h == 0:
         print(f"  [WARN] image {IMAGE_FURNITURE!r} has zero size — skipping")
         return
-    if (img_w.size[0], img_w.size[1]) != (w, h):
-        print(f"  [WARN] image sizes differ ({img_w.size} vs {img_f.size}) — using furnitures size")
 
-    channels_f = img_f.channels
+    grass = _load_grass_module()
+    polylines = grass.PATH_POLYLINES
+    detail_polylines = getattr(grass, "DETAIL_PATH_POLYLINES", [])
+    open_areas = getattr(grass, "OPEN_AREAS", [])
+    if hasattr(grass, "build_path_mask"):
+        path = grass.build_path_mask(w, h)
+    else:
+        halfwidth = grass.PATH_HALFWIDTH
+        px, py = grass._build_pixel_grid(w, h)
+        path = np.zeros((h, w), dtype=np.float32)
+        for poly in polylines:
+            grass._stamp_polyline(path, px, py, poly, halfwidth, 1.0)
+        path = np.clip(path, 0.0, 1.0)
+
     channels_w = img_w.channels
-
     water_pixels = np.asarray(img_w.pixels[:], dtype=np.float32).reshape((h, w, channels_w))
     water_r = water_pixels[:, :, 0]
+    land_gate = 1.0 - np.clip(
+        (water_r - WATER_GATE_START) / (WATER_GATE_END - WATER_GATE_START),
+        0.0, 1.0,
+    )
 
-    # Smooth inverse: 1 where water is absent, 0 where water is present
-    t = np.clip((water_r - FADE_START) / (FADE_END - FADE_START), 0.0, 1.0)
-    new_r = 1.0 - t
+    tile_r = path * land_gate
 
+    channels_f = img_f.channels
     furniture_pixels = np.asarray(img_f.pixels[:], dtype=np.float32).reshape((h, w, channels_f))
-    furniture_pixels[:, :, 0] = new_r
+    furniture_pixels[:, :, 0] = tile_r
     if channels_f >= 4:
         furniture_pixels[:, :, 3] = 1.0
 
@@ -82,11 +107,33 @@ def run():
     except Exception:
         pass
 
-    coverage = float((new_r > 0.05).mean()) * 100.0
-    full = float((new_r >= 0.95).mean()) * 100.0
+    grass_zeroed = 0
+    if img_g is not None and tuple(img_g.size) == (w, h):
+        channels_g = img_g.channels
+        grass_pixels = np.asarray(img_g.pixels[:], dtype=np.float32).reshape((h, w, channels_g))
+        path_pixels = tile_r > 0.01
+        grass_zeroed = int(path_pixels.sum())
+        grass_pixels[:, :, 1] = np.where(path_pixels, 0.0, grass_pixels[:, :, 1])
+        if channels_g >= 4:
+            grass_pixels[:, :, 3] = 1.0
+        img_g.pixels.foreach_set(grass_pixels.ravel())
+        try:
+            img_g.update()
+        except Exception:
+            pass
+    elif img_g is None:
+        print(f"  [WARN] image {IMAGE_GRASS!r} not found — cannot force grass off paths")
+    else:
+        print(f"  [WARN] {IMAGE_GRASS!r} size {img_g.size} != path size {(w, h)} — grass path clear skipped")
+
+    coverage = float((tile_r > 0.05).mean()) * 100.0
+    full = float((tile_r >= 0.95).mean()) * 100.0
     print(
         f"  {IMAGE_FURNITURE}.R authored — tile coverage {coverage:.1f}% "
-        f"(full-strength {full:.1f}%, rest is the shoreline fade band)."
+        f"(full-strength {full:.1f}%, gated against water). "
+        f"{len(polylines)} main paths + {len(detail_polylines)} detail paths "
+        f"+ {len(open_areas)} open areas stamped. "
+        f"terrainGrass.G forced to 0 on {grass_zeroed} path pixels."
     )
 
     try:
