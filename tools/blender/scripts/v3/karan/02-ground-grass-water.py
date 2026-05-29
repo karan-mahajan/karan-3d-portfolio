@@ -18,12 +18,20 @@ shoreline tints fade smoothly to ground color.
 
 Per the keep-everything policy: only mutates in-memory pixels of the
 existing `terrainWater` datablock. Re-running `base.py` resets B to 0.
+
+ISOLATION (added 2026-05-29): Bruno's foundation loads `terrainWater` from
+`bruno/resources/textures/terrainWater.exr` — his pristine reference, which
+karan must NEVER overwrite (doing so once corrupted Bruno's world). After
+painting, this script repoints the datablock at karan's OWN copy and PACKS the
+painted pixels into `world-v3-karan.blend`, so the karan world is self-contained
+and Bruno's reference file stays untouched no matter what is saved.
 """
 import bpy
 import numpy as np
 
 IMAGE_NAME = "terrainWater"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
+KARAN_TERRAINWATER = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/textures/terrainWater.exr"
 
 
 def run():
@@ -48,6 +56,16 @@ def run():
         img.update()
     except Exception:
         pass
+
+    # --- Isolation: keep karan's painted water on karan's own file + packed ---
+    # so Bruno's shared EXR is never written and the karan world is self-contained.
+    img.filepath = KARAN_TERRAINWATER
+    img.filepath_raw = KARAN_TERRAINWATER
+    try:
+        img.pack()
+        print(f"  packed terrainWater into .blend, repointed -> {KARAN_TERRAINWATER}")
+    except Exception as e:
+        print(f"  [WARN] pack failed: {e}")
 
     shallow = float(((new_b >= 0.10) & (new_b < 0.30)).mean()) * 100.0
     deep = float((new_b >= 0.30).mean()) * 100.0
