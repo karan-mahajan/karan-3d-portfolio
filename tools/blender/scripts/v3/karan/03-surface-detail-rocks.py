@@ -1,23 +1,35 @@
-"""Place stylized basalt rocks on karan's island — tune-by-iteration.
+"""Place stylized basalt rocks on karan's island — locked to hand placement.
 
-Section-03 rocks delta. Generates low-poly rock clusters and links them into
-the `basaltRocks` collection (child of scenery.002).
+Section-03 rocks delta. Generates two low-poly rock meshes (a rounded
+boulder-cluster and jagged volcanic shards) and places every stone at the exact
+transform captured from the hand-placed blend, read from
+`resources/shore_stones.json` (10 inland rock* + 195 shoreRock* along the
+shore). This is the read-back-and-lock source of truth: edit the stones in
+Blender, re-capture the JSON, and a re-run reproduces them perfectly.
 
-Five rocks use a rounded boulder-cluster silhouette; five use jagged volcanic
-shards. Positions were checked against terrainWater so they stay off water.
+The earlier procedural shore-scan helpers are kept for reference but no longer
+called — placement comes entirely from the JSON.
 
 Run additively on the open world (which already has the bridges):
     exec(open('/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/03-surface-detail-rocks.py').read())
 """
+import json
 import math
+import os
 
 import bpy
+import numpy as np
+from mathutils import Vector
 
 TERRAIN_OBJECT = "terrain"
 ROCKS_COLLECTION = "basaltRocks"
 FOAM_COLLECTION = "shoreFoam"
 CONTAINER_COLLECTION = "scenery.002"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
+# All stone transforms captured from the hand-placed blend (read-back-and-lock).
+# Re-running reproduces every stone's exact position/yaw/scale. Regenerate with
+# the capture step after any manual shoreline edits.
+LOCKED_STONES_JSON = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/shore_stones.json"
 
 # Distinct basalt colour (object-level override). Dark charcoal-grey so the
 # columns read as volcanic rock against the sunset terrain. Tell me to change it.
@@ -25,6 +37,11 @@ ROCK_COLOR = (0.055, 0.055, 0.065, 1.0)   # near-black basalt grey
 ROCK_MATERIAL = "rock"
 FOAM_COLOR = (0.78, 0.96, 0.92, 0.62)
 FOAM_MATERIAL = "shoreFoam"
+TERRAIN_WORLD_SIZE = 125.0
+GRASS_EDGE_THRESHOLD = 0.08
+SHORE_GRASS_MAX = 0.03
+SHORE_WATER_MIN = 0.12
+SHORE_WATER_MAX = 0.28
 
 # Scatter on dry land (world XYZ). Existing values are locked from Blender;
 # new placements were checked against terrainWater with a 4m footprint.
@@ -41,81 +58,140 @@ ROCKS = [
     {"name": "rock10", "style": "shard", "location": (43.0, -10.0, -0.0001220703125), "yaw_deg": 95.0, "scale": 0.85},
 ]
 
-# Clustered outer-coast rocks. Each anchor is the first coast edge found by
-# scanning from ocean toward land. Rocks are offset toward the water side so
-# they fill the pale shoreline band after the grass instead of sitting on grass.
-SHORE_CLUSTERS = [
-    ("W", (-52.5, 36.0, -0.03656005859375), 4),
-    ("W", (-53.0, 28.0, -0.0928955078125), 3),
-    ("W", (-52.0, 20.0, -0.05511474609375), 3),
-    ("W", (-50.0, 12.0, -0.00567626953125), 4),
-    ("W", (-48.5, 2.0, -0.07244873046875), 3),
-    ("W", (-51.5, -10.0, -0.50054931640625), 4),
-    ("W", (-53.0, -22.0, -0.25469970703125), 3),
-    ("W", (-54.0, -34.0, -0.35601806640625), 4),
-    ("S", (-46.0, -47.0, -0.00323486328125), 4),
-    ("S", (-36.0, -47.5, -0.08489990234375), 3),
-    ("S", (-26.0, -52.0, -0.13690185546875), 4),
-    ("S", (-16.0, -51.0, -0.15264892578125), 3),
-    ("S", (-6.0, -46.0, -0.03033447265625), 4),
-    ("S", (6.0, -51.0, -0.20904541015625), 3),
-    ("S", (18.0, -54.5, -0.49371337890625), 4),
-    ("S", (30.0, -53.0, -0.03643798828125), 3),
-    ("S", (42.0, -43.0, 0.00006103515625), 4),
-    ("E", (49.5, -12.0, -0.063232421875), 4),
-    ("E", (51.0, 16.0, -0.19744873046875), 3),
-    ("E", (50.0, 40.0, -0.0186767578125), 4),
-    ("N", (-44.0, 50.0, -0.7315673828125), 3),
-    ("N", (-32.0, 52.0, -0.5072021484375), 4),
-    ("N", (-18.0, 51.5, -0.17535400390625), 3),
-    ("N", (-4.0, 46.0, -0.1588134765625), 4),
-    ("N", (12.0, 51.5, -0.4310302734375), 3),
-    ("N", (28.0, 54.0, -0.22607421875), 4),
-    ("N", (42.0, 53.0, -0.58721923828125), 3),
+# Locked from the Blender file after manual shoreline cleanup. These are the
+# actual hand-placed rocks on the west edge; generated rocks skip this band.
+MANUAL_SHORE_ROCKS = [
+    {"name": "shoreRock02", "location": (-53.493767, 34.157505, -0.155157), "yaw_deg": 108.999997, "scale": (0.4, 0.328, 0.216)},
+    {"name": "shoreRock04", "location": (-53.389153, 35.790607, -0.13656), "yaw_deg": 100.000001, "scale": (0.46, 0.3772, 0.2484)},
+    {"name": "shoreRock06", "location": (-52.900635, 38.343296, -0.257049), "yaw_deg": 100.000001, "scale": (0.28, 0.2296, 0.1512)},
+    {"name": "shoreRock07", "location": (-53.30666, 37.7463, 0.053404), "yaw_deg": 90.000003, "scale": (0.38, 0.3116, 0.2052)},
+    {"name": "shoreRock08", "location": (-52.371758, 39.11755, -0.13656), "yaw_deg": 222.999994, "scale": (0.26, 0.2132, 0.1404)},
+    {"name": "shoreRock09", "location": (-52.969864, 24.970039, 0.071629), "yaw_deg": 90.000003, "scale": (0.3, 0.246, 0.162)},
+    {"name": "shoreRock10", "location": (-53.212833, 26.354218, 0.0), "yaw_deg": 98.999999, "scale": (0.4, 0.328, 0.216)},
+    {"name": "shoreRock11", "location": (-52.848186, 23.524136, 0.0), "yaw_deg": 90.000003, "scale": (0.32, 0.2624, 0.1728)},
+    {"name": "shoreRock12", "location": (-53.418991, 28.016211, -0.192896), "yaw_deg": 95.000002, "scale": (0.46, 0.3772, 0.2484)},
+    {"name": "shoreRock13", "location": (-53.571144, 31.228167, -0.192896), "yaw_deg": 90.000003, "scale": (0.34, 0.2788, 0.1836)},
+    {"name": "shoreRock14", "location": (-53.386837, 29.399939, -0.192896), "yaw_deg": 185.000004, "scale": (0.28, 0.2296, 0.1512)},
+    {"name": "shoreRock16", "location": (-53.27557, 32.587086, -0.192896), "yaw_deg": 222.999994, "scale": (0.26, 0.2132, 0.1404)},
+    {"name": "shoreRock18", "location": (-52.567619, 18.464676, -0.155115), "yaw_deg": 108.999997, "scale": (0.4, 0.328, 0.216)},
+    {"name": "shoreRock19", "location": (-52.30835, 15.939413, -0.155115), "yaw_deg": 90.000003, "scale": (0.32, 0.2624, 0.1728)},
+    {"name": "shoreRock20", "location": (-52.619999, 19.82, -0.155115), "yaw_deg": 105.0, "scale": (0.46, 0.3772, 0.2484)},
+    {"name": "shoreRock21", "location": (-52.814671, 16.805195, -0.155115), "yaw_deg": 90.000003, "scale": (0.34, 0.2788, 0.1836)},
+    {"name": "shoreRock22", "location": (-52.967827, 21.217245, -0.155115), "yaw_deg": 100.000001, "scale": (0.28, 0.2296, 0.1512)},
+    {"name": "shoreRock23", "location": (-52.720001, 22.08, -0.155115), "yaw_deg": 90.000003, "scale": (0.38, 0.3116, 0.2052)},
+    {"name": "shoreRock24", "location": (-52.975597, 21.166512, 0.158587), "yaw_deg": 100.000001, "scale": (0.26, 0.2132, 0.1404)},
+    {"name": "shoreRock28", "location": (-51.58427, 12.32245, -0.105676), "yaw_deg": 79.999998, "scale": (0.46, 0.3772, 0.2484)},
+    {"name": "shoreRock31", "location": (-51.974411, 14.181248, -0.105676), "yaw_deg": 79.999998, "scale": (0.38, 0.3116, 0.2052)},
+    {"name": "shoreRock32", "location": (-51.993298, 15.023856, -0.105676), "yaw_deg": 222.999994, "scale": (0.26, 0.2132, 0.1404)},
 ]
 
 
-def _expand_shore_rocks():
-    directions = {
-        "W": {"normal": (-1.0, 0.0), "tangent": (0.0, 1.0), "yaw": 90.0},
-        "E": {"normal": (1.0, 0.0), "tangent": (0.0, 1.0), "yaw": 270.0},
-        "S": {"normal": (0.0, -1.0), "tangent": (1.0, 0.0), "yaw": 0.0},
-        "N": {"normal": (0.0, 1.0), "tangent": (1.0, 0.0), "yaw": 180.0},
-    }
-    layout = (
-        (-2.55, 0.38, 0.30),
-        (-1.78, 0.92, 0.40),
-        (-0.98, 1.42, 0.32),
-        (-0.18, 0.62, 0.46),
-        (0.58, 1.12, 0.34),
-        (1.34, 1.72, 0.28),
-        (2.08, 0.72, 0.38),
-        (2.82, 1.36, 0.26),
+def _pixel_to_world(row, col, width, height):
+    return (
+        (row / (height - 1) - 0.5) * TERRAIN_WORLD_SIZE,
+        (col / (width - 1) - 0.5) * TERRAIN_WORLD_SIZE,
     )
+
+
+def _terrain_height_at(x, y, fallback):
+    terrain = bpy.data.objects.get(TERRAIN_OBJECT)
+    if terrain is None:
+        return fallback
+    try:
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        eval_terrain = terrain.evaluated_get(depsgraph)
+        local_origin = eval_terrain.matrix_world.inverted() @ Vector((x, y, 20.0))
+        local_dir = (eval_terrain.matrix_world.inverted().to_3x3() @ Vector((0.0, 0.0, -1.0))).normalized()
+        hit, loc, _normal, _face = eval_terrain.ray_cast(local_origin, local_dir)
+        if hit:
+            return (eval_terrain.matrix_world @ loc).z
+    except Exception:
+        pass
+    return fallback
+
+
+def _edge_scan_for_side(side, step=4):
+    img_g = bpy.data.images.get("terrainGrass")
+    img_w = bpy.data.images.get("terrainWater")
+    if img_g is None or img_w is None:
+        print("  [WARN] terrainGrass/terrainWater missing — generated shore rocks skipped")
+        return []
+
+    width, height = img_g.size
+    grass = np.asarray(img_g.pixels[:], dtype=np.float32).reshape((height, width, img_g.channels))[:, :, 1]
+    water = np.asarray(img_w.pixels[:], dtype=np.float32).reshape((height, width, img_w.channels))[:, :, 0]
+
+    directions = {
+        "W": {"scan": range(0, height), "out": (-1, 0), "yaw": 90.0},
+        "E": {"scan": range(height - 1, -1, -1), "out": (1, 0), "yaw": 270.0},
+        "N": {"scan": range(width - 1, -1, -1), "out": (0, 1), "yaw": 180.0},
+        "S": {"scan": range(0, width), "out": (0, -1), "yaw": 0.0},
+    }
+    sizes = (0.44, 0.52, 0.42, 0.58, 0.48, 0.40, 0.56, 0.46)
     rocks = []
-    index = 1
-    for side, (x, y, z), _count in SHORE_CLUSTERS:
-        data = directions[side]
-        nx, ny = data["normal"]
-        tx, ty = data["tangent"]
-        for i, (tangent_offset, normal_offset, size) in enumerate(layout):
-            loc = (
-                x + tx * tangent_offset + nx * normal_offset,
-                y + ty * tangent_offset + ny * normal_offset,
-                z - 0.10,
-            )
-            rocks.append({
-                "name": f"shoreRock{index:02d}",
-                "location": loc,
-                "yaw_deg": data["yaw"] + i * 19.0,
-                "scale": (size, size * 0.82, size * 0.54),
-                "foam": i == 3,
-            })
-            index += 1
+
+    if side in ("W", "E"):
+        samples = ((None, col) for col in range(28, width - 28, step))
+    else:
+        samples = ((row, None) for row in range(28, height - 28, step))
+
+    for sample_index, (sample_row, sample_col) in enumerate(samples):
+        row = sample_row
+        col = sample_col
+        for scan_value in directions[side]["scan"]:
+            if side in ("W", "E"):
+                row = scan_value
+                col = sample_col
+            else:
+                row = sample_row
+                col = scan_value
+            if grass[row, col] > GRASS_EDGE_THRESHOLD:
+                break
+        else:
+            continue
+
+        out_row, out_col = directions[side]["out"]
+        shore_pixel = None
+        for distance in range(1, 22):
+            rr = row + out_row * distance
+            cc = col + out_col * distance
+            if rr < 0 or rr >= height or cc < 0 or cc >= width:
+                break
+            if (
+                grass[rr, cc] <= SHORE_GRASS_MAX
+                and SHORE_WATER_MIN <= water[rr, cc] <= SHORE_WATER_MAX
+            ):
+                shore_pixel = (rr, cc)
+                break
+        if shore_pixel is None:
+            continue
+
+        x, y = _pixel_to_world(shore_pixel[0], shore_pixel[1], width, height)
+        if side == "W" and 10.0 <= y <= 40.0:
+            continue
+
+        size = sizes[sample_index % len(sizes)]
+        water_r = float(water[shore_pixel[0], shore_pixel[1]])
+        fallback_z = -1.5 * water_r
+        z = _terrain_height_at(x, y, fallback_z)
+        rocks.append({
+            "name": "shoreRockPending",
+            "location": (x, y, z),
+            "yaw_deg": directions[side]["yaw"] + ((sample_index % 5) - 2) * 8.0,
+            "scale": (size, size * 0.82, size * 0.54),
+            "source": f"{side}:grass-water-mask",
+        })
     return rocks
 
 
-SHORE_ROCKS = _expand_shore_rocks()
+def _build_shore_rocks():
+    manual = [dict(spec) for spec in MANUAL_SHORE_ROCKS]
+    generated = []
+    for side in ("W", "S", "E", "N"):
+        generated.extend(_edge_scan_for_side(side))
+    for i, spec in enumerate(generated, start=101):
+        spec["name"] = f"shoreRock{i:03d}"
+    return manual + generated
 
 
 def _faceted_mesh(name, verts, faces):
@@ -350,8 +426,27 @@ def _remove_obsolete(prefix, keep_names):
             bpy.data.objects.remove(ob, do_unlink=True)
 
 
+def _load_locked_stones():
+    """Read every hand-placed stone's locked transform from the JSON resource."""
+    if not os.path.exists(LOCKED_STONES_JSON):
+        print(f"  [WARN] {LOCKED_STONES_JSON} not found — no locked stones placed")
+        return []
+    with open(LOCKED_STONES_JSON) as handle:
+        data = json.load(handle)
+    stones = []
+    for entry in data.get("stones", []):
+        stones.append({
+            "name": entry["name"],
+            "style": entry.get("style", "boulder"),
+            "location": tuple(entry["location"]),
+            "yaw_deg": entry["yaw_deg"],
+            "scale": tuple(entry["scale"]),
+        })
+    return stones
+
+
 def run():
-    print("[03-surface-detail-rocks] place basalt rocks on karan's island")
+    print("[03-surface-detail-rocks] place locked basalt rocks on karan's island")
 
     container = bpy.data.collections.get(CONTAINER_COLLECTION)
     if container and container.name not in {c.name for c in bpy.context.scene.collection.children}:
@@ -360,31 +455,21 @@ def run():
         except Exception:
             pass
     coll = bpy.data.collections.get(ROCKS_COLLECTION) or bpy.data.collections.new(ROCKS_COLLECTION)
-    foam_coll = bpy.data.collections.get(FOAM_COLLECTION) or bpy.data.collections.new(FOAM_COLLECTION)
-    if container and foam_coll.name not in {c.name for c in container.children}:
-        try:
-            container.children.link(foam_coll)
-        except Exception:
-            pass
 
-    shore_names = {spec["name"] for spec in SHORE_ROCKS}
-    foam_names = {
-        f"shoreFoam{i:02d}"
-        for i, spec in enumerate((s for s in SHORE_ROCKS if s.get("foam")), start=1)
-    }
-    _remove_obsolete("shoreRock", shore_names)
-    _remove_obsolete("shoreFoam", foam_names)
+    # Source of truth is the captured JSON: every stone (inland rock* + the 195
+    # hand-placed shoreRock*) is reproduced at its exact locked transform. The
+    # procedural shore scan above is superseded and no longer called.
+    stones = _load_locked_stones()
+    keep = {s["name"] for s in stones}
+    _remove_obsolete("shoreRock", keep)
+    _remove_obsolete("rock", keep)
+    _remove_obsolete("shoreFoam", set())
 
-    for spec in ROCKS:
+    for spec in stones:
         _place_rock(coll, spec)
-    for spec in SHORE_ROCKS:
-        _place_rock(coll, {**spec, "style": "boulder"})
-
-    foam_index = 1
-    for spec in SHORE_ROCKS:
-        if spec.get("foam"):
-            _place_foam(foam_coll, spec, foam_index)
-            foam_index += 1
+    print(f"  placed {len(stones)} locked stones "
+          f"({sum(1 for s in stones if s['style']=='shard')} shard / "
+          f"{sum(1 for s in stones if s['style']=='boulder')} boulder)")
 
     try:
         bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
