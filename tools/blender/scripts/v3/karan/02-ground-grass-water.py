@@ -6,10 +6,10 @@ material's Map Range chain paints water color where the depressions are.
 
 Bruno's terrain material samples `terrainWater.B` only (R and G are unused
 by the material). The B-channel drives two Map Range thresholds:
-  - B in [0.10, 0.30]: blends ground → teal  (RGB.002 = 0.10, 0.54, 0.49)
-  - B in [0.30, 1.00]: blends teal  → navy   (RGB.003 = 0.01, 0.04, 0.11)
+  - B in [0.10, 0.30]: blends ground → shallow water color
+  - B in [0.30, 1.00]: blends shallow color → deep water color
   - B  < 0.10: no water tint
-  - B >= 1.00: full navy (ocean)
+  - B >= 1.00: full deep water color
 
 In Bruno's source EXR, R == G == B identically (verified). So mirroring R
 into B is the faithful approach and gives water exactly where depressions

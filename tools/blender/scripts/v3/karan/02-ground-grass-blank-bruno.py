@@ -42,16 +42,16 @@ GRASS_IMAGE = "terrainGrass"
 FURNITURE_IMAGE = "terrainFurnitures"
 TERRAIN_MATERIAL = "terrain"
 
-# Color overrides for the terrain material's RGB color nodes. All values
-# sampled from resources/reference/reference.png — distinct from Bruno's
-# dark muddy-teal / near-black-navy water palette.
+# Color overrides for the terrain material's RGB color nodes. The water pair
+# keeps Bruno's depth-falloff behavior, but with Karan's Option B palette:
+# blue-teal shallows and a dramatic blue-navy center.
 #   RGB.001 = base ground   (Bruno: warm sand-orange 1.00,0.40,0.08)
 #   RGB.002 = shallow water (Bruno: dark muddy teal  0.10,0.54,0.49)
 #   RGB.003 = deep water    (Bruno: near-black navy  0.01,0.04,0.11)
 COLOR_OVERRIDES = {
-    "RGB.001": (0.48, 0.60, 0.11, 1.0),  # vibrant grass green
-    "RGB.002": (0.23, 0.63, 0.73, 1.0),  # bright cyan-teal (mid-water in reference)
-    "RGB.003": (0.01, 0.50, 0.54, 1.0),  # saturated dark teal (deepest in reference)
+    "RGB.001": (0.50, 0.61, 0.13, 1.0),   # warm meadow green base
+    "RGB.002": (0.28, 0.68, 0.72, 1.0),   # shallow blue-teal edge
+    "RGB.003": (0.015, 0.12, 0.25, 1.0),  # deep stylized navy center
 }
 
 

@@ -132,6 +132,12 @@ export class Foliage {
       { a: "#5a2818", b: "#9c3e22" }, // autumn
       { a: "#3a4f24", b: "#6f9b3a" }, // mid green
     ],
+    cherry: [
+      { a: "#7a2d3d", b: "#f2a0ad" }, // warm blossom
+      { a: "#8b3750", b: "#ffd0d7" }, // pale pink
+      { a: "#5c2437", b: "#d96f8a" }, // deeper pink
+      { a: "#9a4a4f", b: "#f4b7a8" }, // salmon
+    ],
     bush: [
       { a: "#b4b536", b: "#d8cf3b" }, // Bruno's exact (folio-2025 Bushes.js)
       { a: "#909030", b: "#b8b035" }, // darker olive
