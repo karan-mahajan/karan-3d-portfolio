@@ -161,20 +161,20 @@ SIZE_BUCKET_THRESHOLD_LEGACY = "Blade Size Threshold"  # removed if present
 # Blade colour palette — sRGB hex stops fed into the ColorRamp on
 # `Grass Palette` material. Position 0.0 = blade base, 1.0 = tip.
 BLADE_PALETTE = [
-    (0.00, "#235B08"),  # base dark green
-    (0.30, "#5C9E12"),  # lower/middle rich green
-    (0.55, "#9BBE2E"),  # upper/middle yellow-green
-    (0.75, "#B7C943"),  # lime
-    (0.90, "#D6C36A"),  # dry straw
-    (1.00, "#E0D49A"),  # dry yellow-beige tip
+    (0.00, "#4F6429"),  # dark olive base
+    (0.30, "#617707"),  # lower/middle olive
+    (0.55, "#80890C"),  # mockup median grass
+    (0.75, "#90A110"),  # highlighted blade face
+    (0.90, "#A8AD36"),  # muted sunlit tip
+    (1.00, "#B8B868"),  # soft dry yellow-green tip
 ]
 # Dry-tip palette — applied to ~DRY_FRACTION of blades. Base/middle
 # stays green so the blade still looks rooted; only the upper section
 # transitions to the brown stops the user requested.
 BLADE_PALETTE_DRY = [
-    (0.00, "#235B08"),  # base dark green (same as green ramp)
-    (0.30, "#5C9E12"),  # rich green       (same as green ramp)
-    (0.55, "#9BBE2E"),  # yellow-green    (same as green ramp)
+    (0.00, "#4F6429"),  # dark olive base (same as green ramp)
+    (0.30, "#617707"),  # olive middle    (same as green ramp)
+    (0.55, "#80890C"),  # mockup grass    (same as green ramp)
     (0.75, "#6B4A30"),  # transition to dry-brown
     (0.90, "#8A6A55"),  # older dry brown
     (1.00, "#9B6B75"),  # mauve-brown tip
