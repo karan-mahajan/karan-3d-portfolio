@@ -9,7 +9,8 @@ zero into `world-v3-karan.blend`:
   Step 4: karan/02-ground-grass-*.py          (karan section-02: terrain shape, water, grass)
   Step 5: karan/03-surface-detail-*.py        (karan section-03: bridges, rocks, slabs)
   Step 6: karan/04-decorations-*.py           (benches, lanterns, bonfire, pole-lights)
-  Step 7: karan/04-vegetation-*.py            (oak, cherry, birch trees)
+  Step 7: karan/04-markers-*.py               (cardinal section landmarks)
+  Step 8: karan/04-vegetation-*.py            (oak, cherry, birch trees)
 
 Why no bruno/03-surface-detail-* or bruno/04-* step: karan's sections 03+
 fully DIVERGE from Bruno (keep-everything-but-can-diverge policy). The kept
@@ -76,6 +77,7 @@ def main():
     total += _run_section("karan-ground-grass",   KARAN_DIR, "02-ground-grass-")
     total += _run_section("karan-surface-detail", KARAN_DIR, "03-surface-detail-")
     total += _run_section("karan-decorations",    KARAN_DIR, "04-decorations-")
+    total += _run_section("karan-markers",        KARAN_DIR, "04-markers-")
     total += _run_section("karan-vegetation",     KARAN_DIR, "04-vegetation-")
     try:
         import bpy

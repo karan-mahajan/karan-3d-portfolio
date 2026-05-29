@@ -62,7 +62,7 @@ LAND_MIN = -0.05        # karan land plateau sits at height 0.0; ponds/river are
                         # >= -0.05 so only the flat plateau passes (rejects all
                         # water + beach slopes). Verified: corr(R_water,h)=-0.998.
 OBSTACLE_MARGIN = 1.6   # metres of clearance around bridges/rocks
-OBSTACLE_KEYS = ("bridge", "basalt", "boulder", "shard", "rock")
+OBSTACLE_KEYS = ("bridge", "basalt", "boulder", "shard", "rock", "sectionfootprint", "sectionmarker")
 
 # bias trees toward these friendly anchors (slabs + bonfire) so the scatter
 # clusters around the lived-in areas; purely a sort preference, not a gate.

@@ -44,6 +44,9 @@ tools/compress-glbs.mjs
 tools/blender/reference/*
 !tools/blender/reference/.gitkeep
 tools/blender/scripts/**/__pycache__/
+# Local approval mockups for v3 section-marker brainstorming.
+tools/blender/scripts/v3/karan/contact-skills-mockup.html
+tools/blender/scripts/v3/karan/projects-hut-mockup.html
 # Blender auto-backup of world.blend — regenerated on every save.
 tools/blender/*.blend1
 
