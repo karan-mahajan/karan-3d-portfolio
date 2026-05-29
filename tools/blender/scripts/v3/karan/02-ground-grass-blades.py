@@ -63,10 +63,24 @@ Three things this script does:
      (keep-everything policy); only the slot assignment on Plane.012
      changes.
 
-     TODO (v2): per-blade brown-tip variation — pick ~10% of blades
-     and render the ramp in the brown palette (#8A6A55 → #9B6B75)
-     instead of the green one. Needs per-instance attribute plumbing
-     from Geometry Nodes into the material; deferred.
+  6. PER-INSTANCE DRY-TIP VARIATION
+     ~10% of blades render with a second ramp whose top stops are brown
+     (#8A6A55 → #9B6B75) instead of the green ramp's straw stops, so
+     the field shows occasional older / drying blades.
+
+     Plumbing:
+       - In Geometry Nodes: a `Store Named Attribute` (POINT domain,
+         FLOAT) writes a per-point random value as `blade_dry_seed`
+         BEFORE `Instance on Points`. Each instance inherits its
+         parent point's value; after `Realize Instances` every vertex
+         of an instance shares the same dry-seed value.
+       - In the material: a second ColorRamp is fed the same
+         `blade_height` factor as the green one. A Math LESS_THAN(seed,
+         0.10) gates a Mix node between the two ramps' outputs —
+         factor 0 picks green, factor 1 picks dry.
+       - Brown palette keeps the green base (a dry blade is still
+         rooted as a living plant); only the tip section transitions
+         to brown.
 
 The original `grass` material on `Plane.012` is LEFT ASSIGNED. It already
 applies Bruno's Z-gradient (dark green base → bright yellow-green tip),
@@ -154,6 +168,22 @@ BLADE_PALETTE = [
     (0.90, "#D6C36A"),  # dry straw
     (1.00, "#E0D49A"),  # dry yellow-beige tip
 ]
+# Dry-tip palette — applied to ~DRY_FRACTION of blades. Base/middle
+# stays green so the blade still looks rooted; only the upper section
+# transitions to the brown stops the user requested.
+BLADE_PALETTE_DRY = [
+    (0.00, "#235B08"),  # base dark green (same as green ramp)
+    (0.30, "#5C9E12"),  # rich green       (same as green ramp)
+    (0.55, "#9BBE2E"),  # yellow-green    (same as green ramp)
+    (0.75, "#6B4A30"),  # transition to dry-brown
+    (0.90, "#8A6A55"),  # older dry brown
+    (1.00, "#9B6B75"),  # mauve-brown tip
+]
+DRY_FRACTION = 0.10            # P(blade is dry) — used in shader Math node
+DRY_SEED_ATTR = "blade_dry_seed"
+DRY_RANDOM_NODE = "Blade Dry Seed Random"
+DRY_STORE_NODE = "Blade Dry Seed Store"
+DRY_RANDOM_SEED = 99           # distinct from rotation (0) + size (42)
 
 
 def _replace_blade_mesh():
@@ -193,8 +223,39 @@ def _hex_to_linear_rgba(hex_str):
     return (sr ** 2.2, sg ** 2.2, sb ** 2.2, 1.0)
 
 
+def _populate_color_ramp(ramp_node, palette):
+    """Reset and rewrite a ColorRamp node's stops from an (pos, hex) list."""
+    cr = ramp_node.color_ramp
+    while len(cr.elements) > 1:
+        cr.elements.remove(cr.elements[-1])
+    cr.elements[0].position = palette[0][0]
+    cr.elements[0].color = _hex_to_linear_rgba(palette[0][1])
+    for pos, hex_str in palette[1:]:
+        elem = cr.elements.new(pos)
+        elem.color = _hex_to_linear_rgba(hex_str)
+
+
+def _find_enabled_input(node, socket_name):
+    """Return the first ENABLED input on `node` with that display name.
+
+    Blender's Mix / RandomValue / StoreNamedAttribute nodes expose all
+    type variants of each input but disable the ones that don't match
+    the current data_type. Indexing by integer is fragile (the index of
+    the enabled FLOAT/RGBA slot moves between versions).
+    """
+    for inp in node.inputs:
+        if inp.name == socket_name and inp.enabled:
+            return inp
+    return None
+
+
 def _build_palette_material():
-    """Create or refresh `Grass Palette` — ColorRamp keyed by blade_height."""
+    """Create or refresh `Grass Palette`.
+
+    Two ColorRamps (green + dry) keyed by `blade_height`; a Mix node
+    picks between them using the per-instance `blade_dry_seed` attribute
+    (factor = 1 if seed < DRY_FRACTION, else 0).
+    """
     mat = bpy.data.materials.get(BLADE_PALETTE_MATERIAL)
     if mat is None:
         mat = bpy.data.materials.new(BLADE_PALETTE_MATERIAL)
@@ -206,34 +267,63 @@ def _build_palette_material():
     nt.nodes.clear()
 
     out = nt.nodes.new("ShaderNodeOutputMaterial")
-    out.location = (520, 0)
+    out.location = (820, 0)
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (260, 0)
-    # Reduce specular so leaves read as matte foliage, not wet plastic.
+    bsdf.location = (560, 0)
     if "Specular IOR Level" in bsdf.inputs:
         bsdf.inputs["Specular IOR Level"].default_value = 0.1
     if "Roughness" in bsdf.inputs:
         bsdf.inputs["Roughness"].default_value = 0.85
 
-    ramp = nt.nodes.new("ShaderNodeValToRGB")
-    ramp.location = (-40, 0)
-    cr = ramp.color_ramp
-    # ColorRamp starts with 2 default stops at 0.0 and 1.0. Reset to match
-    # our palette length, then write positions + linear-RGB colours.
-    while len(cr.elements) > 1:
-        cr.elements.remove(cr.elements[-1])
-    cr.elements[0].position = BLADE_PALETTE[0][0]
-    cr.elements[0].color = _hex_to_linear_rgba(BLADE_PALETTE[0][1])
-    for pos, hex_str in BLADE_PALETTE[1:]:
-        elem = cr.elements.new(pos)
-        elem.color = _hex_to_linear_rgba(hex_str)
+    # Two ColorRamps fed by the same height factor.
+    ramp_green = nt.nodes.new("ShaderNodeValToRGB")
+    ramp_green.location = (-40, 200)
+    ramp_green.label = "Green Ramp"
+    _populate_color_ramp(ramp_green, BLADE_PALETTE)
 
-    attr = nt.nodes.new("ShaderNodeAttribute")
-    attr.location = (-300, 0)
-    attr.attribute_name = BLADE_HEIGHT_ATTR
+    ramp_dry = nt.nodes.new("ShaderNodeValToRGB")
+    ramp_dry.location = (-40, -200)
+    ramp_dry.label = "Dry Ramp"
+    _populate_color_ramp(ramp_dry, BLADE_PALETTE_DRY)
 
-    nt.links.new(attr.outputs["Fac"], ramp.inputs["Fac"])
-    nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+    # blade_height attribute (per-vertex, from Plane.012) — drives the
+    # ramp lookup for BOTH ramps.
+    attr_h = nt.nodes.new("ShaderNodeAttribute")
+    attr_h.location = (-300, 200)
+    attr_h.attribute_name = BLADE_HEIGHT_ATTR
+    attr_h.label = "blade_height"
+
+    # blade_dry_seed attribute (per-instance, stored in Geometry Nodes)
+    # — every vertex of an instance shares the same seed value.
+    attr_dry = nt.nodes.new("ShaderNodeAttribute")
+    attr_dry.location = (-300, -400)
+    attr_dry.attribute_name = DRY_SEED_ATTR
+    attr_dry.label = "blade_dry_seed"
+
+    is_dry = nt.nodes.new("ShaderNodeMath")
+    is_dry.operation = "LESS_THAN"
+    is_dry.location = (-40, -400)
+    is_dry.label = "is_dry"
+    is_dry.inputs[1].default_value = DRY_FRACTION
+
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.blend_type = "MIX"
+    mix.location = (320, 0)
+    mix.label = "green <- mix -> dry"
+
+    factor_in = _find_enabled_input(mix, "Factor")
+    a_in = _find_enabled_input(mix, "A")
+    b_in = _find_enabled_input(mix, "B")
+    result_out = next((o for o in mix.outputs if o.name == "Result" and o.enabled), None)
+
+    nt.links.new(attr_h.outputs["Fac"], ramp_green.inputs["Fac"])
+    nt.links.new(attr_h.outputs["Fac"], ramp_dry.inputs["Fac"])
+    nt.links.new(attr_dry.outputs["Fac"], is_dry.inputs[0])
+    nt.links.new(is_dry.outputs["Value"], factor_in)
+    nt.links.new(ramp_green.outputs["Color"], a_in)
+    nt.links.new(ramp_dry.outputs["Color"], b_in)
+    nt.links.new(result_out, bsdf.inputs["Base Color"])
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
 
     return mat
@@ -249,6 +339,99 @@ def _assign_palette_material():
     else:
         mesh.materials[0] = mat
     print(f"  {BLADE_MESH}: material slot[0] → {mat.name} (palette ColorRamp)")
+
+
+def _add_dry_seed_attribute():
+    """Splice a per-point random into `blade_dry_seed` before Instance on Points.
+
+    Wires `Store Named Attribute` between whatever currently feeds
+    `Instance on Points.Points` and the input socket itself:
+
+      <upstream> ──► Store Named Attribute (POINT, FLOAT, "blade_dry_seed")
+                  Random Value (0..1, seed=99) ─┘
+                                                 │
+                                                 ▼
+                                      Instance on Points.Points
+
+    Material's Attribute node reads `blade_dry_seed`; every realized
+    vertex of a given instance shares the spawning point's value.
+    """
+    ng = bpy.data.node_groups.get(SCATTER_NODE_GROUP)
+    if ng is None:
+        return
+    iop = next((n for n in ng.nodes if n.bl_idname == "GeometryNodeInstanceOnPoints"), None)
+    if iop is None:
+        print("  [WARN] Instance on Points not found — skipping dry seed")
+        return
+    points_in = iop.inputs.get("Points")
+    if points_in is None:
+        print("  [WARN] Instance on Points has no 'Points' input — skipping dry seed")
+        return
+
+    upstream_link = next(
+        (l for l in ng.links if l.to_node == iop and l.to_socket == points_in),
+        None,
+    )
+    if upstream_link is None:
+        print("  [WARN] no upstream link feeding Points — skipping dry seed")
+        return
+    upstream_sock = upstream_link.from_socket  # cache BEFORE we remove the link
+
+    def _get_or_make(name, bl_idname, location):
+        node = ng.nodes.get(name)
+        if node is None:
+            node = ng.nodes.new(bl_idname)
+            node.name = name
+            node.label = name
+            node.location = location
+        return node
+
+    base_x = iop.location.x - 520.0
+    base_y = iop.location.y + 220.0
+
+    rnd = _get_or_make(DRY_RANDOM_NODE, "FunctionNodeRandomValue", (base_x, base_y))
+    rnd.data_type = "FLOAT"
+    min_in = _find_enabled_input(rnd, "Min")
+    max_in = _find_enabled_input(rnd, "Max")
+    seed_in = _find_enabled_input(rnd, "Seed")
+    if min_in is not None:
+        min_in.default_value = 0.0
+    if max_in is not None:
+        max_in.default_value = 1.0
+    if seed_in is not None:
+        seed_in.default_value = DRY_RANDOM_SEED
+
+    store = _get_or_make(DRY_STORE_NODE, "GeometryNodeStoreNamedAttribute", (base_x + 240.0, base_y - 200.0))
+    store.data_type = "FLOAT"
+    store.domain = "POINT"
+    name_in = store.inputs.get("Name")
+    if name_in is not None:
+        name_in.default_value = DRY_SEED_ATTR
+
+    # Snapshot stale links FIRST, remove SECOND — touching link.to_node
+    # on a removed link raises ReferenceError.
+    stale = [
+        l for l in ng.links
+        if (l.to_node == iop and l.to_socket == points_in)
+        or l.to_node == store
+    ]
+    for l in stale:
+        ng.links.remove(l)
+
+    value_in = _find_enabled_input(store, "Value")
+    geom_in = store.inputs.get("Geometry")
+    if value_in is None or geom_in is None:
+        print("  [WARN] Store node missing Value/Geometry inputs — skipping dry seed")
+        return
+
+    ng.links.new(upstream_sock, geom_in)
+    ng.links.new(rnd.outputs["Value"], value_in)
+    ng.links.new(store.outputs["Geometry"], points_in)
+
+    print(
+        f"  Store Named Attribute: {DRY_SEED_ATTR!r} on POINT domain "
+        f"(random 0..1, seed={DRY_RANDOM_SEED}, P(dry)={DRY_FRACTION:.0%})"
+    )
 
 
 def _add_rotation_jitter():
@@ -416,8 +599,9 @@ def _boost_scatter_density():
 
 
 def run():
-    print("[02-ground-grass-blades] curved blade + palette ramp + continuous size + tilt+spin + dense scatter")
+    print("[02-ground-grass-blades] curved blade + palette ramp + dry-tip variation + continuous size + tilt+spin + dense scatter")
     _replace_blade_mesh()
+    _add_dry_seed_attribute()
     _assign_palette_material()
     _add_rotation_jitter()
     _add_size_variation()
