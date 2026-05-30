@@ -36,9 +36,9 @@ REF_COLLECTION = "refs"
 LOCATION = (-34.14, -35.72)
 YAW = math.radians(180.0)
 FLOAT_CLEARANCE = 1.55
-SPHERE_RADIUS = 8.4
-SPHERE_CENTER_HEIGHT = 9.10
-FOOTPRINT = (17.0, 17.0, 13.0)
+SPHERE_RADIUS = 6.0
+SPHERE_CENTER_HEIGHT = 7.0
+FOOTPRINT = (15.0, 15.0, 13.0)
 
 # Pond anchoring + dressing. No flat water plane exists in this build — water is
 # a terrain shader tint (see 02-ground-grass-water.py) — so the waterline is
@@ -313,10 +313,10 @@ def run():
 
     # Floating layered plinth: high enough to leave visible air over the pond,
     # compact enough that the runtime text sphere remains the hero.
-    _cylinder("skillSphere_plinth_lower", 5.25, 0.32, (x, z, ground + 0.16), dark_stone, vertices=96, scale=(1.03, 0.97, 1.0))
-    _cylinder("skillSphere_plinth_upper", 4.28, 0.26, (x, z, ground + 0.45), edge_stone, vertices=96, scale=(1.01, 0.95, 1.0))
-    _cylinder("skillSphere_inlay_disc", 3.42, 0.06, (x, z, ground + 0.625), green, vertices=96, scale=(1.00, 0.92, 1.0))
-    _cylinder("skillSphere_core_pedestal", 1.06, 1.16, (x, z, ground + 1.24), warm_wood, vertices=18, scale=(1.0, 1.0, 1.0))
+    _cylinder("skillSphere_plinth_lower", 3.75, 0.30, (x, z, ground + 0.15), dark_stone, vertices=96, scale=(1.03, 0.97, 1.0))
+    _cylinder("skillSphere_plinth_upper", 3.06, 0.24, (x, z, ground + 0.42), edge_stone, vertices=96, scale=(1.01, 0.95, 1.0))
+    _cylinder("skillSphere_inlay_disc", 2.44, 0.06, (x, z, ground + 0.58), green, vertices=96, scale=(1.00, 0.92, 1.0))
+    _cylinder("skillSphere_core_pedestal", 0.95, 1.10, (x, z, ground + 1.05), warm_wood, vertices=18, scale=(1.0, 1.0, 1.0))
 
     center = (x, z, ground + SPHERE_CENTER_HEIGHT)
     cz = ground + SPHERE_CENTER_HEIGHT
@@ -324,15 +324,15 @@ def run():
     # Layered glowing nucleus: bright inner orb + soft halo + rising energy
     # column. Each part is a separate centred object so Three.js can fetch it by
     # name and pulse/rotate it independently of the orbit cage.
-    _sphere("skillSphere_core_inner", 0.8, center, core_glow)
-    _sphere("skillSphere_core_halo", 2.0, center, halo_glow, segments=48, ring_count=24)
-    # Column spans pedestal top (ground+1.82) to core centre (ground+9.10):
-    # length 7.28, centred at ground+5.46.
-    _cylinder("skillSphere_energy_column", 0.08, 7.28, (x, z, ground + 5.46), column_glow, vertices=12)
+    _sphere("skillSphere_core_inner", 0.58, center, core_glow)
+    _sphere("skillSphere_core_halo", 1.45, center, halo_glow, segments=48, ring_count=24)
+    # Column spans pedestal top (ground+1.60) to core centre (ground+7.0):
+    # length 5.40, centred at ground+4.30.
+    _cylinder("skillSphere_energy_column", 0.07, 5.40, (x, z, ground + 4.30), column_glow, vertices=12)
 
     # Orbit cage: thickened equator + 4 meridians read as a visible globe frame.
     # Origins sit at the sphere centre so Three.js spins them about the core.
-    _torus("skillSphere_orbit_ring_equator", SPHERE_RADIUS, 0.08, center, (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_ring_equator", SPHERE_RADIUS, 0.09, center, (0.0, 0.0, 0.0), ring_glow)
     _torus("skillSphere_orbit_ring_meridian_a", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(0.0)), ring_glow)
     _torus("skillSphere_orbit_ring_meridian_b", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(45.0)), ring_glow)
     _torus("skillSphere_orbit_ring_meridian_c", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(90.0)), ring_glow)
@@ -340,12 +340,12 @@ def run():
 
     # Horizontal latitude rings (rotation 0) above/below the equator so the cage
     # reads as a globe, not a meridian fan. r = sqrt(R^2 - h^2) per height.
-    lat_mid_r = math.sqrt(SPHERE_RADIUS**2 - 4.2**2)   # ~7.27
-    lat_high_r = math.sqrt(SPHERE_RADIUS**2 - 6.3**2)  # ~5.56
-    _torus("skillSphere_orbit_lat_north_mid", lat_mid_r, 0.08, (x, z, cz + 4.2), (0.0, 0.0, 0.0), ring_glow)
-    _torus("skillSphere_orbit_lat_south_mid", lat_mid_r, 0.08, (x, z, cz - 4.2), (0.0, 0.0, 0.0), ring_glow)
-    _torus("skillSphere_orbit_lat_north_high", lat_high_r, 0.06, (x, z, cz + 6.3), (0.0, 0.0, 0.0), ring_glow)
-    _torus("skillSphere_orbit_lat_south_high", lat_high_r, 0.06, (x, z, cz - 6.3), (0.0, 0.0, 0.0), ring_glow)
+    lat_mid_r = math.sqrt(SPHERE_RADIUS**2 - 3.0**2)   # ~5.20
+    lat_high_r = math.sqrt(SPHERE_RADIUS**2 - 4.5**2)  # ~3.97
+    _torus("skillSphere_orbit_lat_north_mid", lat_mid_r, 0.08, (x, z, cz + 3.0), (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_lat_south_mid", lat_mid_r, 0.08, (x, z, cz - 3.0), (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_lat_north_high", lat_high_r, 0.06, (x, z, cz + 4.5), (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_lat_south_high", lat_high_r, 0.06, (x, z, cz - 4.5), (0.0, 0.0, 0.0), ring_glow)
 
     # Faint emissive shell membrane gives the cage a glowing globe surface
     # without a solid ball (low alpha + BLEND via the _material helper).
@@ -354,14 +354,14 @@ def run():
     # Four slim posts visually cradle the runtime sphere without boxing it in.
     for i, angle in enumerate((45, 135, 225, 315)):
         a = math.radians(angle)
-        px = x + math.cos(a) * 3.72
-        pz = z + math.sin(a) * 3.72
-        post = _cuboid_mesh(f"skillSphere_support_post_{i:02d}", (0.0, 0.0, 2.16), (0.13, 0.13, 2.16), warm_wood)
-        post.location = (px, pz, ground + 0.64)
+        px = x + math.cos(a) * 2.66
+        pz = z + math.sin(a) * 2.66
+        post = _cuboid_mesh(f"skillSphere_support_post_{i:02d}", (0.0, 0.0, 1.55), (0.11, 0.11, 1.55), warm_wood)
+        post.location = (px, pz, ground + 0.55)
         post.rotation_mode = "XYZ"
         post.rotation_euler = (0.0, 0.0, a + math.radians(45.0))
         _place(post)
-        cap = _sphere(f"skillSphere_support_cap_{i:02d}", 0.28, (px, pz, ground + 4.98), ring_glow)
+        cap = _sphere(f"skillSphere_support_cap_{i:02d}", 0.22, (px, pz, ground + 3.75), ring_glow)
         cap.scale = (1.0, 1.0, 0.72)
 
     # === 1. Waterline anchor — tie the floating orb to the pond surface. ===

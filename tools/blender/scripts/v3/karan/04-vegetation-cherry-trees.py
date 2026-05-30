@@ -164,6 +164,12 @@ MAT_TRUNK = 0
 MAT_TIP = 1
 MAT_COLLIDER = 2
 
+OBSTACLE_MARGIN = 1.6   # metres of clearance around section markers
+# Section markers only — cherries are hand-placed (some deliberately flank
+# bridge01), so we avoid section footprints/totems but NOT bridges/rocks.
+OBSTACLE_KEYS = ("sectionfootprint", "sectionmarker")
+LAND_MIN = -0.05        # karan land plateau = 0.0; ponds/river carved below
+
 
 def _height_at(x, z):
     terrain = bpy.data.objects.get("terrain") or bpy.data.objects.get("terrain_mesh")
@@ -176,6 +182,55 @@ def _height_at(x, z):
     if not success:
         return 0.02
     return (terrain.matrix_world @ location).z
+
+
+def _obstacle_boxes():
+    boxes = []
+    for o in bpy.data.objects:
+        if o.type != 'MESH':
+            continue
+        n = o.name.lower()
+        if not any(k in n for k in OBSTACLE_KEYS):
+            continue
+        cs = [o.matrix_world @ Vector(c) for c in o.bound_box]
+        xs = [c.x for c in cs]; ys = [c.y for c in cs]
+        boxes.append((min(xs) - OBSTACLE_MARGIN, max(xs) + OBSTACLE_MARGIN,
+                      min(ys) - OBSTACLE_MARGIN, max(ys) + OBSTACLE_MARGIN))
+    return boxes
+
+
+def _inside_boxes(px, pz, boxes):
+    return [b for b in boxes if b[0] <= px <= b[1] and b[2] <= pz <= b[3]]
+
+
+def _resolve_specs(specs, boxes, label):
+    """Hand-placed avoidance: nudge a spec outward from an offending marker box
+    until it is clear AND on land; skip it (loud warning) if unclearable."""
+    out = []
+    for spec in specs:
+        x, z = spec["location"]
+        hits = _inside_boxes(x, z, boxes)
+        if not hits:
+            out.append(spec)
+            continue
+        bx = (hits[0][0] + hits[0][1]) * 0.5
+        bz = (hits[0][2] + hits[0][3]) * 0.5
+        dx, dz = x - bx, z - bz
+        d = math.hypot(dx, dz) or 1.0
+        ux, uz = dx / d, dz / d
+        placed = None
+        for step in range(1, 9):
+            nx, nz = x + ux * step, z + uz * step
+            h = _height_at(nx, nz)
+            if h is not None and h >= LAND_MIN and not _inside_boxes(nx, nz, boxes):
+                placed = (round(nx, 2), round(nz, 2))
+                break
+        if placed is None:
+            print(f"  [SKIP] {label} {spec['key']!r} clips a section marker and cannot be nudged clear")
+            continue
+        print(f"  [NUDGE] {label} {spec['key']!r} {spec['location']} -> {placed}")
+        out.append({**spec, "location": placed})
+    return out
 
 
 def _solid_material(name, color, roughness=0.82):
@@ -472,7 +527,8 @@ def _build_tree(spec, materials):
 def run():
     print("[04-vegetation-cherry-trees] build Karan cherry tree structures")
     materials = _materials()
-    built = [_build_tree(spec, materials) for spec in CHERRIES]
+    specs = _resolve_specs(CHERRIES, _obstacle_boxes(), "cherry")
+    built = [_build_tree(spec, materials) for spec in specs]
     try:
         bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
         print(f"  saved -> {BLEND_PATH}")
