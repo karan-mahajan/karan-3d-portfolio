@@ -9,7 +9,6 @@ import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
-import { StreetLights } from './World/StreetLights.js';
 import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
@@ -276,7 +275,6 @@ export class App extends EventTarget {
     const applyAndSettle = (mode) => {
       this.timeOfDay.mode = mode;
       this.timeOfDay.reapply();
-      this.streetLights?.update(playerPos);
       this.timeOfDay.tick(playerPos, this.camera, 0);
     };
 
@@ -360,25 +358,10 @@ export class App extends EventTarget {
     // wire it to refViewpoint_* refs.
     this.distantIslands = { getIslands: () => [] };
 
-    // Kick off street-light load NOW in parallel with grass + interaction
-    // wiring below. Billboards + signs are needed for arm-rotation alignment
-    // and were resolved by world.loadAssets above. The promise is awaited
-    // (and the post-load wiring done) right before the boot() returns.
-    this.streetLights = new StreetLights(
-      this.scene,
-      this.loader,
-      this.world.terrain,
-      this.physics,
-    );
-    const streetLightsPromise = this.streetLights
-      .load({
-        billboards: this.world.billboards,
-        signs: this.world.signs,
-      })
-      .catch((err) => {
-        console.warn('[StreetLights] load failed:', err);
-        return null;
-      });
+    // Street lights are gone — all lamps/posts come from the Blender world
+    // (poleLights GLB; point lights wired from refPoleLight_* in a later phase).
+    // The v2 StreetLights system placed duplicate lamps + phantom colliders at
+    // hardcoded cardinal coords, so it was removed entirely.
 
     // Distance-guess mini-game wired against the islands above. Constructed
     // before the player is loaded — its update() is a no-op until the
@@ -513,13 +496,6 @@ export class App extends EventTarget {
     // the right intensity (TimeOfDay was built before they existed). This
     // also fires setTorchVisible() if we booted into night.
     this.timeOfDay.reapply();
-
-    // Street lights — kicked off above in parallel with the grass/UI
-    // block. Await here just to wire setMode + TimeOfDay; the load itself
-    // has been overlapping with everything below.
-    await streetLightsPromise;
-    this.timeOfDay.streetLights = this.streetLights;
-    this.streetLights.setMode(this.timeOfDay.mode, 0);
 
     // Shader prewarm is moved off the critical path. boot() now resolves
     // ~the cost of one compileAsync earlier; the first day/night toggle
@@ -952,7 +928,6 @@ export class App extends EventTarget {
     }
     this.sun.update(this.camera);
     this.timeOfDay.tick(p, this.camera, elapsed);
-    this.streetLights?.update(p);
     if (this.torchLight) {
       const modalOpen = !!(this.interaction?.activeIndex !== -1
         || this.interaction?.contactOpen

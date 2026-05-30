@@ -706,7 +706,6 @@ export class TimeOfDay {
     // Ocean tints (shallow / deep / foam / sun position) ride day-night
     // together — see Water.applyTimeOfDay for the colour palettes.
     if (this.water) this.water.applyTimeOfDay(mode);
-    if (this.streetLights) this.streetLights.setMode(mode, 0);
     if (this.distantIslands) this.distantIslands.setMode(mode, 0);
 
     // sunOffset is computed every frame from real local time in tick();
@@ -866,10 +865,6 @@ export class TimeOfDay {
     // Ocean tint — tweens shallow + deep + foam + sun position together.
     if (this.water)
       this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
-
-    // Street lamps — owns its own gsap tweens for PointLight intensity +
-    // bulb emissive across all instances, lerped over the same duration.
-    if (this.streetLights) this.streetLights.setMode(mode, duration);
 
     // Distant islands fade their rock + vegetation tint together with the
     // sky/fog tween. Tiny lighthouse dots snap visibility in setMode.
