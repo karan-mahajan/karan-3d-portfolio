@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Camera-linked compass HUD (top-right, desktop only).

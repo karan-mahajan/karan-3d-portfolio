@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Global wind source. Owns shared uniforms (time, direction, strength) and a

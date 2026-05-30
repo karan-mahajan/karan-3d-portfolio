@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Drifting emissive points. Each firefly has its own seed and orbits a base

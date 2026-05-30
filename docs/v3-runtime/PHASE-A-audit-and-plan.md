@@ -249,10 +249,40 @@ TSL in B0).
 - **Phase B-export — Split exporter.** Rewrite `16-export-glb.py` per §4; produce
   the split set + `manifest.json`; delete single `world-v3.glb`. Verify each GLB
   opens + counts match. *(Mechanical; could fold into B0's commit.)*
-- **Phase B0 — Renderer → WebGPU/TSL.** Swap renderer (async init), move imports,
-  port palette/lit materials to TSL. Get the *current* scene rendering on WebGPU
-  (WebGL fallback) before touching world content. Do first — everything
-  downstream authors TSL.
+- **Phase B0 — Renderer → WebGPU/TSL.** REAFFIRMED 2026-05-30 (WebGL stay-put
+  considered and rejected: it's "less work," not "better"; Bruno's case study
+  documents auto-WebGPU perf + mobile, which WebGL can't match). Verified API in
+  three@0.184: `three/webgpu` exports `WebGPURenderer`/`PostProcessing`/
+  `MeshLambertNodeMaterial`/`MeshStandardNodeMaterial`; `three/tsl` exports
+  `pass`/`output`/`uniform`/`texture`/`Fn`; `bloom` is in
+  `three/addons/tsl/display/BloomNode.js`.
+
+  **Verified surface + ordered checklist (no small bootable slice — execute as one
+  focused push; tree is non-booting mid-migration):**
+  1. Swap `from 'three'` → `from 'three/webgpu'` in all 29 src files (superset
+     build; mixing the two breaks `instanceof`). Loaders stay on
+     `three/examples/jsm/loaders/*` (renderer-agnostic).
+  2. [App.js:697] `new THREE.WebGLRenderer` → `new THREE.WebGPURenderer` (construct
+     in the sync constructor is fine — only `.init()` is async). Keep shadowMap/
+     toneMapping/outputColorSpace/info.autoReset (WebGPURenderer supports them).
+  3. [App.js boot():295] `await this.renderer.init()` BEFORE the first render.
+  4. [App.js:955] render loop `requestAnimationFrame(#tick)` →
+     `renderer.setAnimationLoop(#tick)`; `postfx.render()` → `await
+     postProcessing.renderAsync()` (WebGPU renders async).
+  5. [Effects/PostFX.js] full rewrite: `EffectComposer`+`RenderPass`+
+     `UnrealBloomPass`+`ShaderPass`(tilt-shift GLSL)+`OutputPass` → WebGPU
+     `PostProcessing` graph: `pass(scene,camera)` → `bloom()` (addons) → tilt-shift
+     as a TSL node (or defer tilt-shift initially) → `output`.
+  6. Custom GLSL `ShaderMaterial`/`onBeforeCompile` → TSL node materials, in
+     dependency order: `SmoothLitPaletteMaterial` (master, palette+lambert+fog+
+     wind+reveal) first, then Sky, then the effect materials (Fireflies, Rain,
+     WindLines, Leaves, Water, Foliage, Grass). Each currently constructed in the
+     App constructor / World, so each must compile clean on WebGPU.
+  7. World load is broken anyway (world.glb removed) — B0 lands together with the
+     Phase B v3 loader so the app boots to a verifiable frame. Verify headless via
+     a WebGPU-capable Chromium flag (or assert the WebGL fallback backend).
+
+  Do B0 first — everything downstream authors TSL.
 - **Phase B — Blend-driven loader.** `GlbV3World`: read `manifest.json`; load
   monolithic GLBs into the scene; bake 129-grid terrain heightfield + Physics
   ground; build Rapier colliders from `colliders.glb` (prefix→shape, bbox→size)

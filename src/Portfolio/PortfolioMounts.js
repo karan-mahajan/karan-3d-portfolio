@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { experience } from './ExperienceData.js';
 import { skills } from './SkillsData.js';
 import { contact } from './ContactData.js';

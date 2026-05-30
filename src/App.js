@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { Sizes } from './Utils/Sizes.js';
 import { Debug } from './Utils/Debug.js';
 import { Loader } from './Utils/Loader.js';
@@ -294,6 +294,9 @@ export class App extends EventTarget {
   /** Loads characters / models; resolves to a summary the loader UI can use. */
   async boot() {
     const bootStart = performance.now();
+    // WebGPURenderer is constructed synchronously but must finish its async
+    // device/adapter handshake before any render/compute runs.
+    await this.renderer.init();
     await this.physics.init();
 
     // Phase 1 of World v2: the heightfield is now baked from world.glb so
@@ -529,7 +532,9 @@ export class App extends EventTarget {
     });
     this.interaction.torchLight = this.torchLight;
 
-    this.#tick();
+    // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
+    // longer re-schedules itself via requestAnimationFrame.
+    this.renderer.setAnimationLoop(this.#tick);
     this.#scheduleDeferredAnimationWarmup();
     if (this.debug?.enabled) {
       console.log(`[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`);
@@ -694,11 +699,10 @@ export class App extends EventTarget {
   }
 
   #initRenderer() {
-    this.renderer = new THREE.WebGLRenderer({
+    this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
       antialias: true,
       powerPreference: 'high-performance',
-      stencil: false,
       alpha: false,
     });
     this.renderer.setPixelRatio(this.sizes.pixelRatio);
@@ -797,7 +801,7 @@ export class App extends EventTarget {
     // clock's delta on the skipped frames — getDelta() is only called on
     // frames we actually process, so the player doesn't teleport on resume.
     if (this._backgroundMode && (++this._bgFrame % 6) !== 0) {
-      requestAnimationFrame(this.#tick);
+      // setAnimationLoop re-fires on its own next frame — just skip work.
       return;
     }
 
@@ -952,7 +956,6 @@ export class App extends EventTarget {
 
     this.postfx.render(frameDelta);
     this.debug.tick();
-    requestAnimationFrame(this.#tick);
   };
 
   /**

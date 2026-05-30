@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import gsap from 'gsap';
 
 export const INTERACTABLE_PROP_EXCLUSIONS = [

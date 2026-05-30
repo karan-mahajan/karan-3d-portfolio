@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Footprints — pooled flat decal quads dropped one-per-step at the player's

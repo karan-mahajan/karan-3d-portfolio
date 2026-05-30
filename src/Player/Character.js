@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 const TARGET_HEIGHT = 1.7;
 const AVATAR_GLB = '/models/character/avatar.glb';

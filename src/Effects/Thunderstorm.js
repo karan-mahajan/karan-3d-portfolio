@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Thunderstorm. Random lightning + thunder while rain is on, plus a manual

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Master material for world props. Phase 1: thin MeshLambertMaterial wrapper.

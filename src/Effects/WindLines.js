@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Ghibli-style drifting wind streaks. ~350 instanced ribbon quads, each
