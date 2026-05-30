@@ -48,6 +48,17 @@ const SIZE_MIN_FACTOR = 0.35;
 const SIZE_MAX_FACTOR = 1.50;
 const DRY_FRACTION = 0.10;
 
+// Mask G → blade coverage. The mask is sparse (G tops out ~0.64, lots of low
+// values), so a naive `G × k` scale leaves the partial-mask halos as stubble
+// while the olive ground shows through. Instead: cull only where G is
+// essentially zero (paths / water / bare plazas), and remap the surviving range
+// [PRESENCE..FULL] → height [MIN_VISIBLE..1] so any grassy land grows a
+// near-full blade. Raise MIN_VISIBLE / lower FULL_AT for even denser cover.
+const GRASS_CULL = 0.03;        // G ≤ this → no blade at all
+const GRASS_PRESENCE = 0.03;    // G where blades start growing
+const GRASS_FULL_AT = 0.42;     // G where blades reach full height
+const GRASS_MIN_VISIBLE = 0.55; // blade height floor wherever any grass exists
+
 // Blade colour ramp (sRGB hex; three converts → linear, matching Blender).
 const PALETTE_GREEN = [
   [0.00, '#4F6429'], [0.30, '#617707'], [0.55, '#80890C'],
@@ -214,10 +225,17 @@ export class Grass {
       const worldXZ = loop.add(this.center);
 
       // Mask → density/size fade + hard cut over water/paths.
-      const maskG = this.mask
-        ? texture(this.mask, worldXZ.mul(invSpan).add(0.5)).g
-        : float(0.5);
-      const grassFactor = clamp(maskG.mul(1.8), 0, 1);
+      // Blender Y → runtime -Z: negate Z so the mask isn't sampled Z-mirrored
+      // (matches the terrain ground material + the slabs sampling). worldXZ.y
+      // is the world Z component.
+      const maskUv = vec2(worldXZ.x, worldXZ.y.negate()).mul(invSpan).add(0.5);
+      const maskG = this.mask ? texture(this.mask, maskUv).g : float(0.5);
+      // Remap G[PRESENCE..FULL] → height[MIN_VISIBLE..1] so partial-mask land
+      // fills with near-full blades, not stubble (see consts above). True-zero
+      // land is culled below, so this only fattens up actual grass.
+      const grassFactor = clamp(
+        maskG.sub(GRASS_PRESENCE).div(GRASS_FULL_AT - GRASS_PRESENCE), 0, 1,
+      ).mul(1 - GRASS_MIN_VISIBLE).add(GRASS_MIN_VISIBLE);
       const size = sizeR.mul(grassFactor);
 
       // Blade local → scaled → leaned → spun (all rooted at the base).
@@ -237,8 +255,10 @@ export class Grass {
       world.x.addAssign(wind.x);
       world.z.addAssign(wind.y);
 
-      // Hide blades with ~no grass by lifting them out of view.
-      world.y.addAssign(step(maskG, 0.06).mul(100.0));
+      // Cull blades only where the mask is essentially zero (paths / water /
+      // bare plazas) by lifting them out of view; anything with even faint grass
+      // now keeps a full blade.
+      world.y.addAssign(step(maskG, GRASS_CULL).mul(100.0));
 
       vBladeH.assign(hb);
       vDry.assign(dry);

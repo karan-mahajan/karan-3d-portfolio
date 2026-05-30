@@ -69,8 +69,11 @@ GRASS_MASK_FILE = f"{MASK_DIR}/terrainGrass-authored.exr"
 # LAND_END → no grass. Band is wider than the strict water edge so the
 # orange beach material is visible between grass and waves (Bruno's
 # sand-halo look — see screenshots in karan/resources/reference).
-LAND_START = 0.04
-LAND_END = 0.14
+# Kept NARROW + right at the water edge so grass carpets the land to the
+# waterline (user: grass everywhere except slabs + actual water; karan's ground
+# is olive, so a wide bare band just read as missing grass, not a sand beach).
+LAND_START = 0.11
+LAND_END = 0.17
 
 # Path polylines — winding sandy trail network through the island.
 #
@@ -90,7 +93,7 @@ LAND_END = 0.14
 PATH_HALFWIDTH = 9.0   # ≈ 4.4 m wide main tile corridor
 DETAIL_PATH_HALFWIDTH = 6.0  # sketched tile strokes stay readable
 PATH_PEAK = 1.0        # full clearance at path centre
-GRASS_STRENGTH = 0.52  # keep meadows lighter so the island is not a solid grass mat
+GRASS_STRENGTH = 0.85  # dense mat — grass should carpet ALL land (user feedback)
 
 # Grass-falloff radius extends just past the tile mask. Falloff peaks at 1
 # in path centres (grass G = 0 → no blades, no green tint, pure tile colour)
@@ -98,8 +101,14 @@ GRASS_STRENGTH = 0.52  # keep meadows lighter so the island is not a solid grass
 # is where Bruno's warm orange halo appears between grass and tile/water.
 #   main: tile reaches ~9 px, grass eases to 0 by ~12 px → ~0.7 m halo
 #   detail: tile reaches ~6 px, grass eases to 0 by ~8 px → ~0.5 m halo
-GRASS_FALLOFF_HALFWIDTH = 12.0
-DETAIL_GRASS_FALLOFF_HALFWIDTH = 8.0
+# Grass is cleared SOLID across the whole tile footprint (+ a hair) so no blade
+# grows on a slab, then feathers back to full grass just past the tile edge —
+# clears the slabs WITHOUT a wide bald olive halo. The tile mask (tiles.py) is a
+# sqrt falloff peaking at PATH_HALFWIDTH, so a solid clear to PATH_HALFWIDTH +
+# margin guarantees no grass over any visible tile. (Replaces the old soft sqrt
+# grass falloff, which let grass creep onto the tiles — see user feedback.)
+GRASS_CLEAR_MARGIN = 0.5   # px past the tile edge kept fully grass-free
+GRASS_CLEAR_EDGE = 2.0     # px feather over which grass ramps back to full
 OPEN_AREA_FALLOFF_PADDING = 2.0
 
 PATH_POLYLINES = [
@@ -184,16 +193,12 @@ DETAIL_PATH_POLYLINES = [
     [(285, 394), (330, 398), (378, 402), (430, 404), (482, 406)],
 ]
 
-OPEN_AREAS = [
-    # Spawn plaza: intentionally near the centre but not on the river or pond.
-    {"center": (255, 305), "radius": (30, 24), "angle": -0.18, "wobble": 0.13},
-    # Small pocket clearings break up the grass carpet and help paths feel
-    # like places rather than lines.
-    {"center": (118, 182), "radius": (18, 15), "angle": 0.35, "wobble": 0.16},
-    {"center": (380, 306), "radius": (22, 15), "angle": 0.08, "wobble": 0.14},
-    {"center": (210, 420), "radius": (24, 16), "angle": -0.42, "wobble": 0.12},
-    {"center": (356, 410), "radius": (22, 16), "angle": 0.22, "wobble": 0.14},
-]
+# Open grass clearings — DISABLED. These large bald carve-outs (spawn plaza +
+# pockets) read as big "missing grass" flats against karan's olive ground and
+# clash with the no-empty-space vision (user feedback). Grass now carpets these
+# areas; paths still cut through via the polylines above. Re-add entries here to
+# bring back deliberate clearings.
+OPEN_AREAS = []
 
 # Patches where the meadow lifts ABOVE the GRASS_STRENGTH baseline — taller,
 # denser-looking blades. Math is `meadow = max(GRASS_STRENGTH, lush)`, so
@@ -298,17 +303,23 @@ def build_lush_patches_mask(w, h):
 
 
 def build_grass_falloff_mask(w, h):
-    """Soft sqrt falloff around paths/areas — drives grass G smoothly to 0.
+    """Solid grass-clear over the full tile footprint + a short feather.
 
-    Wider than the tile mask so a partial-G band sits past the tile edge;
-    that band is where Bruno's warm orange halo shows through.
+    Grass is fully removed across every tile (no blade on a slab) and ramps back
+    to full just past the tile edge — no wide bald band.
     """
     falloff = np.zeros((h, w), dtype=np.float32)
     px, py = _build_pixel_grid(w, h)
     for poly in PATH_POLYLINES:
-        _stamp_polyline(falloff, px, py, poly, GRASS_FALLOFF_HALFWIDTH, PATH_PEAK)
+        _stamp_solid_polyline(
+            falloff, px, py, poly,
+            PATH_HALFWIDTH + GRASS_CLEAR_MARGIN + GRASS_CLEAR_EDGE,
+            GRASS_CLEAR_EDGE, PATH_PEAK)
     for poly in DETAIL_PATH_POLYLINES:
-        _stamp_polyline(falloff, px, py, poly, DETAIL_GRASS_FALLOFF_HALFWIDTH, PATH_PEAK)
+        _stamp_solid_polyline(
+            falloff, px, py, poly,
+            DETAIL_PATH_HALFWIDTH + GRASS_CLEAR_MARGIN + GRASS_CLEAR_EDGE,
+            GRASS_CLEAR_EDGE, PATH_PEAK)
     for area in OPEN_AREAS:
         padded_radius = (
             area["radius"][0] + OPEN_AREA_FALLOFF_PADDING,

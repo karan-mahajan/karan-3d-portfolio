@@ -52,9 +52,10 @@ export class GlbV3World {
     // a path. Mirrors the Blender terrain material: slabs datablock sampled by
     // world XZ × 0.2 (≈5 m repeat) into the path-mask blend. Loaded in load().
     this.tileTexture = null;
-    // Uniform exposed so day/night can tint the ground grass colour alongside
-    // the blades (TimeOfDay drives it through Grass.syncColor in Phase D).
-    this.groundGrassColor = uniform(color('#5f7a39'));
+    // Tint multiplier over the whole grass-ground colour chain — defaults to
+    // white (no-op) so the runtime matches the Blender material exactly; kept as
+    // a uniform so day/night can later dim the ground alongside the blades.
+    this.groundGrassColor = uniform(color('#ffffff'));
 
     this.terrain = {
       mesh: null,
@@ -274,6 +275,13 @@ export class GlbV3World {
     this.terrain.heights = heights;
     this.terrain.bboxMin = bboxMin;
 
+    // The grass grid (Plane.003) spans the SAME world extent as the terrain:
+    // a 192m GN grid × 0.651 object scale = 125m = the terrain's footprint. The
+    // exporter wrote grassGrid.bounds=96 (the UN-scaled GN half-size), so the
+    // runtime sampled the mask 1.5× too wide and grass landed mis-scaled all
+    // over. Derive the true half-extent from the baked terrain instead.
+    this.grassGrid.bounds = size / 2;
+
     this.terrain.heightAt = (x, z) => {
       const fu = ((x - bboxMin.x) / sizeX) * segments;
       const fw = ((z - bboxMin.z) / sizeZ) * segments;
@@ -297,27 +305,38 @@ export class GlbV3World {
   /**
    * Install the real terrain ground material (Phase D). The GLB material's
    * baseColorTexture is the red/black `terrainFurnitures` placement mask — not
-   * a colour. We replace the whole material with a Bruno-style node material
-   * that derives the ground colour from the grass mask: the G channel (grass
-   * density) blends a dirt base toward grass green, sampled by world XZ over the
-   * ±96 grass grid (`uv = worldXZ / (2*bounds) + 0.5`, matching the Blender GN
-   * + the runtime Grass field so blades and ground line up exactly).
+   * a colour. We replace the whole material with a node material that mirrors
+   * the Blender `terrain` material's grass-ground colour chain, driven by the
+   * grass mask G channel (sampled by world XZ over the ±96 grass grid,
+   * `uv = worldXZ / (2*bounds) + 0.5`, matching the Blender GN + runtime Grass
+   * field so blades and ground line up exactly).
+   *
+   * Blender chain (verified against world-v3-karan.blend, material "terrain"):
+   *   Mix     = mix(olive,        midGreen,  factor = terrainGrass.G)
+   *   Mix.003 = mix(Mix.Result,   darkGreen, factor = terrainGrass.G)
+   * The three colours are the RGB-node default_values (scene-linear), used here
+   * as linear node literals. Crucially there is **no brown dirt base**: at G→0
+   * the ground is light OLIVE (RGB.001), and G only tops out ~0.64 so it settles
+   * to a muted green at full grass — never pure dark green. This is why partial
+   * grass halos must read olive/light-green, not the old dirt→green brown.
    *
    * MeshLambertNodeMaterial keeps the sun/shadow/fog response, so the ground
-   * dims at night through the same light rig as everything else. Where the
-   * grass mask is 0 (water basins, paths) the ground stays dirt; the exported
-   * GLB's `terrainFurnitures` mask (the original baseColorTexture, R channel =
-   * path/slab overlay, sampled by the mesh's own UVs) then paints the painted
-   * tile texture (`tiles.png`, sampled by world XZ × 0.2 to match the Blender
-   * terrain material's slabs node) over the path zones so they read as real
-   * paving, not bare dirt. Falls back to a flat warm stone colour if the tile
-   * texture failed to load, and to flat dirt if the grass mask failed to load.
+   * dims at night through the same light rig as everything else. The exported
+   * GLB's `terrainFurnitures` mask (the original baseColorTexture, R channel,
+   * sampled by the mesh's own UVs) then paints the tile texture (`tiles.png`,
+   * sampled by world XZ × 0.2 to match the Blender slabs node's Geometry
+   * Position × 0.2) over the path zones — Blender's `Mix.004`. Falls back to a
+   * flat warm stone colour if the tile art failed to load, and to flat olive if
+   * the grass mask failed to load.
    */
   #applyTerrainGroundMaterial() {
     const mesh = this.terrain.mesh;
     if (!mesh) return;
 
-    const dirt = color('#8f7d54');
+    // Blender RGB-node default_values (scene-linear) from the terrain material.
+    const olive = vec3(0.5, 0.54, 0.05);     // RGB.001 — bare/partial grass
+    const midGreen = vec3(0.31, 0.39, 0.16); // RGB
+    const darkGreen = vec3(0.07, 0.14, 0.06); // RGB.004 — densest grass
     const stone = color('#b3a489'); // warm fallback if the tile art fails to load
     // Blender samples the slabs image off a Geometry Position × 0.2 vector under
     // FLAT projection (world X/Y). Blender Y → runtime -Z, so the runtime UV is
@@ -337,14 +356,17 @@ export class GlbV3World {
     if (this.grassMask) {
       const invSpan = 1 / (this.grassGrid.bounds * 2);
       mat.colorNode = Fn(() => {
-        const guv = vec2(positionWorld.x, positionWorld.z).mul(invSpan).add(0.5);
-        const g = texture(this.grassMask, guv).g;
+        // Mask is authored in Blender XY; Blender Y → runtime -Z, so negate Z
+        // (same as the slabs sampling below). Without this the grass mask reads
+        // Z-mirrored — grass/clears land on the opposite side from authoring.
+        const guv = vec2(positionWorld.x, positionWorld.z.negate()).mul(invSpan).add(0.5);
+        // Blender's Mix nodes have clamp_factor=True; clamp G to match. G is fed
+        // straight into both mix factors (no scaling) exactly as the .blend does.
+        const g = clamp(texture(this.grassMask, guv).g, 0, 1);
         if (globalThis.__grassMaskDebug) return vec3(g, g, g);
-        // Mask G tops out ~0.5 on full grass; lift so grassy land reads clearly
-        // green while paths/basins (G≈0) stay dirt.
-        const blend = clamp(g.mul(1.8), 0, 1);
-        const ground = mix(dirt, this.groundGrassColor, blend);
-        if (!furnMask) return ground;
+        const grassGround = mix(mix(olive, midGreen, g), darkGreen, g)
+          .mul(this.groundGrassColor);
+        if (!furnMask) return grassGround;
         // terrainFurnitures.R (mesh UVs): 1 at path centre → 0 at edge.
         const pathR = clamp(texture(furnMask, uv()).r, 0, 1);
         // Paint the real tile art over the path, sampled by world XZ (Blender
@@ -352,10 +374,10 @@ export class GlbV3World {
         const paving = this.tileTexture
           ? texture(this.tileTexture, vec2(positionWorld.x, positionWorld.z.negate()).mul(TILE_SCALE)).rgb
           : stone;
-        return mix(ground, paving, pathR);
+        return mix(grassGround, paving, pathR);
       })();
     } else {
-      mat.colorNode = dirt;
+      mat.colorNode = olive;
     }
     mesh.material = mat;
     mesh.receiveShadow = true;

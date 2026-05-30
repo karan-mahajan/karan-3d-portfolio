@@ -38,7 +38,12 @@ YAW = math.radians(135)
 BUST_YAW = YAW
 HEAD_HEIGHT = 0.78
 FOOTPRINT = (1.8, 1.8, 2.35)
-GRASS_CLEAR_HALF = (1.25, 1.25)
+# The visible pedestal+bust footprint is only ~0.5m square (base 0.495,
+# collider 0.551). Clear grass to a 0.35 half-extent (0.7m square) so blades
+# stop just outside the pedestal — small enough that grass reads right up to the
+# base, large enough that nothing pokes through it. clear_grass_under feathers a
+# further 0.65m, so G fully recovers ~1m out. (Was 1.25 → a 2.5m bald patch.)
+GRASS_CLEAR_HALF = (0.35, 0.35)
 
 COLORS = {
     "stone": (0.55, 0.52, 0.46, 1.0),

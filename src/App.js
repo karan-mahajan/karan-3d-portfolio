@@ -350,6 +350,7 @@ export class App extends EventTarget {
     this.timeOfDay.reapply();
     this.water.audio = this.audio;
     this.water.setPhysics(this.physics);
+    this.water.setReflectionTarget(this.player.group);
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
     // Blender-authored world.glb will eventually provide horizon mountain

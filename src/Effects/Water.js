@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import {
   Fn, attribute, uniform, varying,
   positionLocal, positionGeometry, positionWorld,
@@ -90,9 +91,9 @@ const NIGHT_PALETTE = Object.freeze({
 //   [dirX, dirZ (normalised), spatial frequency, height amp (m), speed, steepness]
 // Σ amp ≈ 0.10 < the 0.15 headroom under the water line, so peaks stay sub-zero.
 const WAVES = [
-  [0.80, 0.60, 0.150, 0.050, 0.85, 0.75],
-  [-0.55, 0.84, 0.260, 0.032, 1.15, 0.65],
-  [0.30, -0.95, 0.430, 0.020, 1.55, 0.55],
+  [0.80, 0.60, 0.150, 0.064, 0.85, 0.95],
+  [-0.55, 0.84, 0.260, 0.040, 1.15, 0.82],
+  [0.30, -0.95, 0.430, 0.025, 1.55, 0.70],
 ];
 
 // Fine ripple waves driving the animated normal ONLY (fragment-side, no
@@ -104,6 +105,8 @@ const RIPPLES = [
   [0.62, -0.78, 2.6, 0.022, 2.30],
   [-0.80, -0.60, 4.1, 0.014, 0.95],
 ];
+
+const RIPPLE_SOURCE_COUNT = 4;
 
 export class Water {
   /**
@@ -129,14 +132,21 @@ export class Water {
     this.foamColor = new THREE.Color(DAY_PALETTE.foam);
     this.skyColor = new THREE.Color(DAY_PALETTE.sky);
     this.sunPos = new THREE.Vector3(...DAY_PALETTE.sun);
+    this.entryDisturbance = { x: 0, z: 0, age: 99, strength: 0 };
 
     this.#buildHeightTexture();
+    this.#scanRippleSources();
     this.#buildSurface();
     this.#buildSplashSystem();
 
     this._splashTimer = 0;
     this._audioSplashTimer = 0;
     this._playerInWaterPrev = 0;
+    this._reflectionOpacity = 0;
+    this._reflectionTarget = null;
+    this._reflectionGroup = null;
+    this._reflectionMaterials = [];
+    this._reflectionPairs = [];
   }
 
   // ── Terrain depth grounding (half-float so it's linearly filterable) ────────
@@ -170,6 +180,39 @@ export class Water {
     this.terrainSpan = new THREE.Vector2(t.size, t.size);
   }
 
+  #scanRippleSources() {
+    const t = this.terrain;
+    const sources = [];
+    const verts = (t?.segments ?? 0) + 1;
+    if (t?.heights && verts > 1 && t?.bboxMin && t?.size) {
+      const candidates = [];
+      const step = Math.max(1, Math.floor(verts / 72));
+      for (let u = 0; u < verts; u += step) {
+        for (let w = 0; w < verts; w += step) {
+          const h = t.heights[u * verts + w];
+          const x = t.bboxMin.x + (u / t.segments) * t.size;
+          const z = t.bboxMin.z + (w / t.segments) * t.size;
+          if (Math.max(Math.abs(x), Math.abs(z)) > ISLAND_HALF - 14) continue;
+          if (h >= WATER_LEVEL_Y - 0.18) continue;
+          const centerBias = Math.hypot(x, z) * 0.002;
+          candidates.push({ x, z, h, score: h + centerBias });
+        }
+      }
+      candidates.sort((a, b) => a.score - b.score);
+      for (const c of candidates) {
+        const point = new THREE.Vector2(c.x, c.z);
+        if (sources.every((s) => s.distanceToSquared(point) > 28 * 28)) {
+          sources.push(point);
+          if (sources.length >= RIPPLE_SOURCE_COUNT) break;
+        }
+      }
+    }
+    while (sources.length < RIPPLE_SOURCE_COUNT) {
+      sources.push(new THREE.Vector2(0, 0));
+    }
+    this.rippleSources = sources;
+  }
+
   // ── Water surface ───────────────────────────────────────────────────────────
   #buildSurface() {
     this.uTime = uniform(0);
@@ -181,6 +224,13 @@ export class Water {
     this.uPlayerPos = uniform(vec2(0, 0));
     this.uPlayerInWater = uniform(0);
     this.uPlayerSpeed = uniform(0);
+    this.uEntryPos = uniform(vec2(0, 0));
+    this.uEntryAge = uniform(99);
+    this.uEntryStrength = uniform(0);
+    this.uRippleA = uniform(vec2(this.rippleSources[0].x, this.rippleSources[0].y));
+    this.uRippleB = uniform(vec2(this.rippleSources[1].x, this.rippleSources[1].y));
+    this.uRippleC = uniform(vec2(this.rippleSources[2].x, this.rippleSources[2].y));
+    this.uRippleD = uniform(vec2(this.rippleSources[3].x, this.rippleSources[3].y));
     this.uWaterLevel = uniform(WATER_LEVEL_Y);
     this.uIslandHalf = uniform(ISLAND_HALF);
     this.uTerrainMin = uniform(vec2(this.terrainMin.x, this.terrainMin.y));
@@ -218,6 +268,8 @@ export class Water {
       const distBeyond = max(max(abs(p.x), abs(p.z)).sub(this.uIslandHalf), 0.0);
       const depthCombined = depthTerrain.add(distBeyond.mul(0.06));
       const waveScale = smoothstep(0.12, 0.9, depthCombined).toVar();
+      const oceanMask = smoothstep(0.0, 8.0, distBeyond);
+      const inlandMask = oceanMask.oneMinus().mul(smoothstep(0.16, 0.55, depthTerrain));
       vDepthTerrain.assign(depthTerrain);
       vDepth.assign(depthCombined);
       vWaveScale.assign(waveScale);
@@ -239,13 +291,38 @@ export class Water {
       p.z.addAssign(dispZ.mul(waveScale));
       p.y.addAssign(dispY.mul(waveScale));
 
+      // Inland basins and river cuts get visible traveling rings so the water
+      // reads as alive even when the camera is looking almost straight down.
+      const sourceRipple = (src, freq, speed, amp) => {
+        const d = length(vec2(p.x, p.z).sub(src));
+        const phase = d.mul(freq).sub(t.mul(speed));
+        const crest = pow(sin(phase).mul(0.5).add(0.5), 7.0).mul(2.0).sub(0.55);
+        return crest.mul(amp).mul(smoothstep(34.0, 1.2, d));
+      };
+      const basinRipple = sourceRipple(this.uRippleA, 1.95, 2.70, 0.025)
+        .add(sourceRipple(this.uRippleB, 2.35, 3.15, 0.018))
+        .add(sourceRipple(this.uRippleC, 1.62, 2.35, 0.016))
+        .add(sourceRipple(this.uRippleD, 2.75, 3.65, 0.013));
+      const currentRipple = sin(p.x.mul(0.38).add(p.z.mul(1.15)).sub(t.mul(1.9))).mul(0.012)
+        .add(sin(p.x.mul(-0.72).add(p.z.mul(0.42)).add(t.mul(1.35))).mul(0.007))
+        .mul(0.45);
+      p.y.addAssign(basinRipple.add(currentRipple).mul(inlandMask));
+
       // Player wake — concentric rings expanding from the feet while wading.
       const d = length(vec2(p.x, p.z).sub(this.uPlayerPos));
-      const wake = sin(d.mul(6.0).sub(t.mul(4.0))).mul(0.020)
-        .mul(smoothstep(8.0, 0.5, d))
+      const wake = sin(d.mul(9.0).sub(t.mul(7.0))).mul(0.014)
+        .mul(smoothstep(5.0, 0.35, d))
         .mul(this.uPlayerInWater)
-        .mul(this.uPlayerSpeed.mul(0.7).add(0.3));
+        .mul(this.uPlayerSpeed.mul(0.85).add(0.15));
       p.y.addAssign(wake);
+      const bodyClear = smoothstep(0.95, 0.18, d).mul(this.uPlayerInWater);
+      p.y.subAssign(bodyClear.mul(0.034));
+
+      const entryD = length(vec2(p.x, p.z).sub(this.uEntryPos));
+      const entryClear = smoothstep(1.6, 0.15, entryD)
+        .mul(this.uEntryStrength)
+        .mul(sin(this.uEntryAge.mul(10.0)).mul(0.35).add(0.65));
+      p.y.subAssign(entryClear.mul(0.030));
 
       return p;
     })();
@@ -284,6 +361,9 @@ export class Water {
       // past 1.35 so it reads solid deep.
       const depthF = smoothstep(0.30, 1.35, vDepth);
       const col = mix(this.uShallow, this.uDeep, depthF).toVar();
+      const distBeyond = max(max(abs(p2.x), abs(p2.y)).sub(this.uIslandHalf), 0.0);
+      const oceanMask = smoothstep(0.0, 8.0, distBeyond);
+      const inlandMask = oceanMask.oneMinus().mul(smoothstep(0.16, 0.55, vDepthTerrain));
 
       // Fresnel — looking straight down shows the water body; at grazing angles
       // the surface turns reflective. Reflect a time-of-day sky tint, brighter
@@ -299,16 +379,54 @@ export class Water {
       const spec = pow(max(dot(specR, V), 0.0), 140.0).mul(0.9);
       col.addAssign(vec3(1.0, 0.96, 0.86).mul(spec));
 
+      const ringBand = (src, freq, speed, power) => {
+        const d = length(p2.sub(src));
+        return pow(sin(d.mul(freq).sub(t.mul(speed))).mul(0.5).add(0.5), power)
+          .mul(smoothstep(34.0, 1.0, d));
+      };
+      const basinBands = ringBand(this.uRippleA, 7.2, 5.1, 10.0)
+        .add(ringBand(this.uRippleB, 8.6, 5.8, 11.0))
+        .add(ringBand(this.uRippleC, 6.4, 4.5, 10.0))
+        .add(ringBand(this.uRippleD, 9.4, 6.4, 12.0))
+        .mul(inlandMask)
+        .mul(0.14);
+      const flowBands = pow(sin(p2.x.mul(0.9).add(p2.y.mul(2.2)).sub(t.mul(2.2))).mul(0.5).add(0.5), 5.0)
+        .mul(inlandMask)
+        .mul(0.025);
+      const oceanGlint = pow(sin(p2.x.mul(0.22).add(p2.y.mul(0.48)).sub(t.mul(1.15))).mul(0.5).add(0.5), 6.0)
+        .mul(oceanMask)
+        .mul(0.10);
+      const waveBands = pow(sin(p2.x.mul(0.46).add(p2.y.mul(0.24)).add(t.mul(1.05))).mul(0.5).add(0.5), 4.0)
+        .mul(0.070)
+        .add(pow(sin(p2.x.mul(-0.28).add(p2.y.mul(0.58)).sub(t.mul(0.85))).mul(0.5).add(0.5), 5.0).mul(0.045))
+        .mul(smoothstep(0.18, 0.85, vDepth));
+      col.addAssign(this.uSky.mul(waveBands));
+      col.addAssign(this.uShallow.mul(basinBands.add(flowBands)));
+      col.addAssign(this.uSky.mul(oceanGlint));
+
       // Shoreline foam band — bright line where the ground is just under water,
       // breathing in/out like a tide.
       const shoreWave = sin(this.uTime.mul(0.8)).mul(0.05);
       const foam = smoothstep(0.30, 0.05, vDepthTerrain.add(shoreWave)).mul(0.5);
       col.assign(mix(col, this.uFoam, foam));
 
-      // Player foam ring while wading.
+      // Player interaction: thin moving ripples, not the old white disk.
       const pd = length(p2.sub(this.uPlayerPos));
-      const playerFoam = smoothstep(2.0, 0.3, pd).mul(this.uPlayerInWater).mul(0.3);
-      col.assign(mix(col, this.uFoam, playerFoam));
+      const wakeLines = pow(sin(pd.mul(10.0).sub(t.mul(8.0))).mul(0.5).add(0.5), 9.0)
+        .mul(smoothstep(3.4, 0.35, pd))
+        .mul(this.uPlayerInWater)
+        .mul(this.uPlayerSpeed.mul(0.6).add(0.2))
+        .mul(0.10);
+      col.addAssign(this.uSky.mul(wakeLines));
+
+      const entryD = length(p2.sub(this.uEntryPos));
+      const entryClear = smoothstep(1.55, 0.18, entryD)
+        .mul(this.uEntryStrength)
+        .mul(0.18);
+      col.assign(mix(col, this.uSky.mul(1.2), entryClear));
+
+      const clearWater = smoothstep(1.15, 0.2, pd).mul(this.uPlayerInWater);
+      col.assign(mix(col, this.uSky.mul(1.15), clearWater.mul(0.22)));
 
       return col;
     })();
@@ -324,7 +442,9 @@ export class Water {
       const depthOp = mix(float(0.50), float(0.90), smoothstep(0.0, 2.0, vDepth));
       const op = mix(depthOp, float(0.97), grazing.mul(0.75));
       const edge = smoothstep(0.0, 0.06, vDepth);
-      return op.mul(edge);
+      const pd = length(vec2(positionWorld.x, positionWorld.z).sub(this.uPlayerPos));
+      const clearWater = smoothstep(1.10, 0.18, pd).mul(this.uPlayerInWater);
+      return op.mul(edge).mul(clearWater.mul(0.46).oneMinus());
     })();
 
     const geom = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE, PLANE_SEGMENTS, PLANE_SEGMENTS);
@@ -378,6 +498,40 @@ export class Water {
 
   setPhysics(physics) { this.physics = physics; }
 
+  setReflectionTarget(target) {
+    this.#clearReflection();
+    this._reflectionTarget = target;
+    if (!target) return;
+
+    const reflection = cloneSkeleton(target);
+    reflection.name = 'water-character-reflection';
+    reflection.visible = false;
+    reflection.userData.noTorchRaycast = true;
+    reflection.traverse((obj) => {
+      obj.userData.noTorchRaycast = true;
+      if (obj.isLight) {
+        obj.visible = false;
+        return;
+      }
+      if (!obj.isMesh && !obj.isSkinnedMesh) return;
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+      obj.frustumCulled = false;
+      obj.renderOrder = 4;
+      obj.material = this.#reflectionMaterial(obj.material);
+    });
+    this.scene.add(reflection);
+    this._reflectionGroup = reflection;
+    this._reflectionPairs = [];
+    const src = [];
+    const dst = [];
+    target.traverse((obj) => src.push(obj));
+    reflection.traverse((obj) => dst.push(obj));
+    for (let i = 1; i < Math.min(src.length, dst.length); i++) {
+      this._reflectionPairs.push([src[i], dst[i]]);
+    }
+  }
+
   // ── Per-frame ───────────────────────────────────────────────────────────────
   /**
    * @param {number} elapsed
@@ -393,6 +547,10 @@ export class Water {
     this.uFoam.value.set(this.foamColor.r, this.foamColor.g, this.foamColor.b);
     this.uSky.value.set(this.skyColor.r, this.skyColor.g, this.skyColor.b);
     this.uSunPos.value.set(this.sunPos.x, this.sunPos.y, this.sunPos.z);
+    if (this.entryDisturbance.strength > 0) this.entryDisturbance.age += delta;
+    this.uEntryPos.value.set(this.entryDisturbance.x, this.entryDisturbance.z);
+    this.uEntryAge.value = this.entryDisturbance.age;
+    this.uEntryStrength.value = this.entryDisturbance.strength;
 
     if (playerPos) {
       this.uPlayerPos.value.set(playerPos.x, playerPos.z);
@@ -400,10 +558,17 @@ export class Water {
       this.uPlayerInWater.value = inWater;
       const rawSpeed = sample && sample.moving ? sample.speed : 0;
       this.uPlayerSpeed.value = Math.min(1, rawSpeed / 8.0);
+      this.#updateReflection(playerPos, delta, inWater, sample);
 
       const justEntered = inWater > 0.5 && this._playerInWaterPrev < 0.5;
       this._playerInWaterPrev = inWater;
       if (justEntered) {
+        this.entryDisturbance.x = playerPos.x;
+        this.entryDisturbance.z = playerPos.z;
+        this.entryDisturbance.age = 0;
+        this.entryDisturbance.strength = 1;
+        gsap.killTweensOf(this.entryDisturbance);
+        gsap.to(this.entryDisturbance, { strength: 0, duration: 0.85, ease: 'sine.out' });
         this.#spawnSplashBurst(playerPos, 14);
         if (this.audio) this.audio.playSplash({ entry: true });
         this._audioSplashTimer = SPLASH_AUDIO_INTERVAL;
@@ -423,6 +588,7 @@ export class Water {
     } else {
       this.uPlayerInWater.value = 0;
       this.uPlayerSpeed.value = 0;
+      this.#updateReflection(null, delta, 0, sample);
     }
     this.#updateSplashes(delta);
   }
@@ -495,6 +661,59 @@ export class Water {
     this._splashGeom = geom;
   }
 
+  #reflectionMaterial(source) {
+    if (Array.isArray(source)) return source.map((m) => this.#reflectionMaterial(m));
+    const mat = source?.clone ? source.clone() : new THREE.MeshBasicMaterial({ color: '#bde8f2' });
+    mat.transparent = true;
+    mat.opacity = 0;
+    mat.depthWrite = false;
+    mat.side = THREE.DoubleSide;
+    if (mat.color) mat.color.lerp(new THREE.Color('#bde8f2'), 0.45);
+    this._reflectionMaterials.push(mat);
+    return mat;
+  }
+
+  #updateReflection(playerPos, delta, inWater, sample) {
+    if (!this._reflectionGroup || !this._reflectionTarget) return;
+    const targetOpacity = playerPos && inWater > 0.5 ? 0.24 : 0;
+    const lerp = 1 - Math.exp(-6 * delta);
+    this._reflectionOpacity += (targetOpacity - this._reflectionOpacity) * lerp;
+    this._reflectionGroup.visible = this._reflectionOpacity > 0.01;
+    for (const mat of this._reflectionMaterials) mat.opacity = this._reflectionOpacity;
+    if (!playerPos || !this._reflectionGroup.visible) return;
+
+    const speed = Math.min(1, (sample?.speed ?? 0) / 8);
+    for (const [src, dst] of this._reflectionPairs) {
+      dst.position.copy(src.position);
+      dst.quaternion.copy(src.quaternion);
+      dst.scale.copy(src.scale);
+      dst.visible = src.visible;
+    }
+    const wobbleX = Math.sin(this.uTime.value * 3.1) * (0.018 + speed * 0.018);
+    const wobbleZ = Math.cos(this.uTime.value * 2.4) * (0.014 + speed * 0.014);
+    this._reflectionGroup.position.set(
+      this._reflectionTarget.position.x + wobbleX,
+      WATER_LEVEL_Y * 2 - this._reflectionTarget.position.y - 0.03,
+      this._reflectionTarget.position.z + wobbleZ,
+    );
+    this._reflectionGroup.rotation.copy(this._reflectionTarget.rotation);
+    this._reflectionGroup.scale.set(1 + speed * 0.03, -1, 1 + Math.sin(this.uTime.value * 4.0) * 0.018);
+  }
+
+  #clearReflection() {
+    if (this._reflectionGroup) {
+      this.scene.remove(this._reflectionGroup);
+    }
+    for (const mat of this._reflectionMaterials ?? []) {
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose?.());
+      else mat.dispose?.();
+    }
+    this._reflectionGroup = null;
+    this._reflectionMaterials = [];
+    this._reflectionPairs = [];
+    this._reflectionOpacity = 0;
+  }
+
   #spawnSplashBurst(pos, count) {
     const s = this._splash;
     for (let i = 0; i < count; i++) {
@@ -541,6 +760,7 @@ export class Water {
   dispose() {
     this.scene.remove(this.mesh);
     this.scene.remove(this._splashMesh);
+    this.#clearReflection();
     this.mesh?.geometry?.dispose();
     this.material?.dispose();
     this.heightTex?.dispose();
