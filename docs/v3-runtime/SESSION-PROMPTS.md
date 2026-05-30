@@ -48,7 +48,11 @@ This is a standing rule, in addition to the per-prompt rules below.
 - `30d8090` — B-loader: **first WebGPU frame** (GlbV3World + TSL Sky; world loads +
   collides + renders, 9/9 headless checks). Effects still disabled (TSL port
   pending) + day forced. ✅
-- Next → **B0 effects port** (below), then Phase C.
+- `4895724` — **B0 effects port complete**: Fireflies/Rain/WindLines/Leaves/
+  stars/spotShaft + PostFX tilt-shift all GLSL→TSL; `_b0ForceDay`+`_tslReady`
+  crutches deleted; prewarm restored. 16/16 WebGPU night checks + 9/9 first-frame
+  + visual day/night non-blank. World fully styled day AND night. ✅
+- Next → **Phase C** (sections & interactions).
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
@@ -91,6 +95,63 @@ the learning wins — but re-verify from the actual file before relying on it.
 ### Process
 - WebGPU/TSL is locked (Bruno's stack) — chosen because WebGL was "less work," not
   "better." Don't reopen it without 99%-from-files evidence.
+
+### B0 effects port (this session — verified against the running WebGPU app)
+- **All six FX ported GLSL→TSL + crutches deleted.** `_b0ForceDay` and
+  `_tslReady` are GONE from App.js; the day/night prewarm is restored. Verified
+  16/16 on the **WebGPU backend** (`verify-v3-effects-night.mjs`): no page
+  errors on day boot OR night toggle, every FX mesh is a NodeMaterial, night
+  brings up fireflies (uIntensity 2.2) + stars (opacity 1) + spotlight. First
+  frame still 9/9 (`verify-v3-first-frame.mjs`); visual day+night non-blank on
+  the WebGL2 fallback (`verify-v3-effects-visual.mjs`).
+- **Port strategy = re-author the karan GLSL as TSL node graphs, NOT port
+  Bruno's effects.** Bruno's RainLines/WindLines/Leaves are compute-shader
+  systems hard-wired to his `Game` singleton / `MeshDefaultMaterial` /
+  `game.noises.perlin` / `game.terrain.terrainNode` — not portable. The CPU
+  simulation in each karan effect (offset/spin/settle/wrap arrays) is UNCHANGED;
+  only `ShaderMaterial` → node material + the vertex/fragment GLSL → vertex/color/
+  opacity nodes. Every public API (TimeOfDay `.uniforms.*.value`, toggles,
+  achievements, `fireflies.points`) is preserved so nothing downstream changed.
+- **WebGPU renders `THREE.Points` as 1px PointList** (verified
+  `WebGPUUtils.getPrimitiveTopology`: `if (object.isPoints) return PointList`) —
+  there is NO point-size path on that primitive. The GLSL `gl_PointSize` clouds
+  (Fireflies, TimeOfDay stars) were re-built as **instanced billboarded quads**:
+  one quad/instance, offset `positionGeometry.xy.mul(worldSize)` in VIEW space
+  inside `material.vertexNode` (constant world size → free perspective atten),
+  radial disc via `smoothstep(0.5,0,length(uv-0.5))`. `PointsNodeMaterial`+
+  `sizeNode` DOES exist and would also work, but the billboard-quad route reuses
+  the exact same instanced-attribute pattern as the ribbon/leaf effects.
+- **WebGPU caps a render pipeline at 8 vertex buffers.** Leaves had
+  position+uv + 7 instanced attrs = 9 → `"Vertex buffer count (9) exceeds the
+  maximum (8)"` at `createRenderPipeline` (fires during BOTH live render and the
+  prewarm `compileAsync`). Fix: **pack instanced attrs into vec4 buffers** —
+  Leaves now uses 3×vec4 (`aOffsetScale`,`aSpinAngle`,`aTintSettled`) + 1 scalar
+  (`aSettledYaw`) = 2 geometry + 4 instanced = 6 buffers, repacked from the sim
+  arrays by `#packBuffers()` each frame. Budget every instanced node mesh: keep
+  `2 + instancedBufferCount ≤ 8`. (Fireflies/WindLines/stars use ≤2 instanced
+  buffers, fine.)
+- **MeshLambertNodeMaterial** is the lights+fog+shadow replacement for the old
+  `UniformsLib.lights/fog` merge (which `three/webgpu` doesn't export). Set
+  `colorNode`/`opacityNode`/`normalNode`/`positionNode`; `alphaTest` works as a
+  property. The old magenta grass-shadow-tint was dropped (no grass in v3 yet).
+- **TSL building blocks confirmed in r184** (`three/tsl`): `attribute('name')`
+  auto-reads an `InstancedBufferAttribute` per-instance (no `instancedArray`/
+  compute needed for CPU-driven sims); `varying(float(0),'name')` carries
+  vertex→fragment; `cond.greaterThan(0.5).select(a,b)` is the branch;
+  `cameraViewMatrix`/`cameraProjectionMatrix`/`modelViewMatrix`/`cameraPosition`
+  are accessor nodes; `texture(tex, uv())` 2-arg sampling; `screenUV` for
+  full-screen UV. Mutable locals need `.toVar()` before `.addAssign`/`.assign`.
+- **PostFX tilt-shift** is a screen-UV TSL `Fn([tex, amount])` on the scene-pass
+  texture node: `strength = smoothstep(0.15,0.55,abs(screenUV.y-0.5)).mul(amount)`,
+  an 8-tap ring at radius `strength*0.012` rotated by `hash(screenUV…)` so it
+  reads as bokeh not banding; centerline radius→0 = crisp, no branch. Sample via
+  `tex.sample(uvc)` / `tex.sample(uvc.add(off))`. It runs on the SHARP scene and
+  `bloom` is added on top (`outputNode = tiltShift(scenePassColor,u).add(bloom)`)
+  so highlights stay clean. `outputColorTransform` stays default `true`.
+- **Cancelled-batch gotcha (process, not code):** one failed call in a parallel
+  tool batch cancels the WHOLE batch — all sibling Edits/Writes silently revert
+  to "failed" and DON'T apply. When touching many files, run the edits in their
+  own message (or sequentially) so one bad `cp`/grep can't wipe the batch.
 
 ### B0-finish / Phase B loader (this session — all verified against running app)
 - **Boot-blocker #1 (fixed):** `KTX2Loader.detectSupport(renderer)` calls
@@ -161,7 +222,12 @@ the learning wins — but re-verify from the actual file before relying on it.
 
 ---
 
-## NEXT — B0 effects port (finish the GLSL→TSL ports + un-force day)
+## DONE — B0 effects port (GLSL→TSL ports + un-force day) ✅
+Completed: all six FX ported, crutches deleted, prewarm restored, verified on
+WebGPU (16/16 night) + first-frame (9/9) + visual day/night. See the
+"B0 effects port" learnings group above. **Next session = Phase C below.**
+
+<details><summary>original B0 effects-port prompt (for reference)</summary>
 
 ```
 Continue the v3 runtime: finish B0 — port the disabled GLSL effects to TSL so
@@ -213,6 +279,8 @@ Rules: VERIFY from actual files, never guess; don't deviate from Bruno unless 99
 sure; do NOT touch tools/blender/ or static/world/; one commit per verified
 milestone after I approve; NO Co-Authored-By trailer.
 ```
+
+</details>
 
 ---
 

@@ -1,5 +1,11 @@
 import gsap from "gsap";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
+import { MeshBasicNodeMaterial } from "three/webgpu";
+import {
+  Fn, attribute, uniform, varying, vec3, vec4, float,
+  positionGeometry, positionLocal, uv, sin, cos, length, smoothstep, pow, max,
+  modelViewMatrix, cameraProjectionMatrix,
+} from "three/tsl";
 
 /**
  * Day / night cycle driver. Owns:
@@ -18,6 +24,10 @@ import * as THREE from "three";
 const TRANSITION_SECONDS = 2.0;
 const STAR_COUNT = 280;
 const STAR_DOME_RADIUS = 230;
+// World-size factor for the billboarded star quads (per-instance aSize is
+// multiplied by this). Replaces the old GLSL gl_PointSize since WebGPU points
+// render at 1px — see #buildStars.
+const STAR_QUAD_SIZE = 0.7;
 
 export const DAY_PALETTE = Object.freeze({
   sunColor: "#ffeedd",
@@ -354,38 +364,28 @@ export class TimeOfDay {
     // Radius 1.2 at the ground = tightly framed around the character; the
     // 2.5 base was too wide and read as a stadium floodlight.
     const shaftGeom = new THREE.ConeGeometry(1.2, 9, 24, 1, true);
-    this.spotShaftMat = new THREE.ShaderMaterial({
+    // B0/WebGPU: ported from the raw-GLSL ShaderMaterial to a
+    // MeshBasicNodeMaterial. The volumetric falloff is a TSL graph over the
+    // cone's object-space position (vUp = base→apex, vEdge = axis→silhouette).
+    const shaftColor = uniform(vec3(0.8, 0.8667, 1.0)); // #ccddff
+    const shaftOpacity = uniform(0);
+    this.spotShaftMat = new MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
       fog: false,
-      uniforms: {
-        uColor: { value: new THREE.Color("#ccddff") },
-        uOpacity: { value: 0 },
-      },
-      vertexShader: /* glsl */ `
-        varying float vUp;     // 0 at base, 1 at apex
-        varying float vEdge;   // 0 at the central axis, 1 at the silhouette
-        void main() {
-          // Cone is 9 tall, centered at origin → y in [-4.5, 4.5].
-          vUp = (position.y + 4.5) / 9.0;
-          vEdge = length(position.xz) / max(1.2 * (1.0 - vUp), 0.001);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uColor;
-        uniform float uOpacity;
-        varying float vUp;
-        varying float vEdge;
-        void main() {
-          // Apex hot core, base feathered out. Edge softer than center.
-          float fall = pow(vUp, 1.6) * (1.0 - vEdge * 0.4);
-          gl_FragColor = vec4(uColor, fall * uOpacity);
-        }
-      `,
     });
+    {
+      // Cone is 9 tall, centered at origin → y in [-4.5, 4.5].
+      const vUp = positionLocal.y.add(4.5).div(9.0);
+      const vEdge = length(positionLocal.xz).div(max(float(1.2).mul(vUp.oneMinus()), 0.001));
+      const fall = pow(vUp, 1.6).mul(float(1.0).sub(vEdge.mul(0.4)));
+      this.spotShaftMat.colorNode = shaftColor;
+      this.spotShaftMat.opacityNode = fall.mul(shaftOpacity);
+    }
+    // Legacy `.uniforms` shape so tick() can keep writing uOpacity.value.
+    this.spotShaftMat.uniforms = { uColor: shaftColor, uOpacity: shaftOpacity };
     this.spotShaft = new THREE.Mesh(shaftGeom, this.spotShaftMat);
     this.spotShaft.frustumCulled = false;
     this.spotShaft.renderOrder = 5;
@@ -393,7 +393,13 @@ export class TimeOfDay {
   }
 
   #buildStars() {
-    const positions = new Float32Array(STAR_COUNT * 3);
+    // B0/WebGPU: WebGPU renders THREE.Points as 1px PointList primitives (no
+    // point size), so the old GLSL star cloud can't survive the backend. Built
+    // as instanced billboarded quads (same technique as Fireflies): a tiny quad
+    // per star, billboarded in the vertex node by offsetting the corner in VIEW
+    // space, twinkle + radial disc as TSL node graphs. The `.uniforms` shape is
+    // preserved so #applyInstant / #transition / tick() drive it unchanged.
+    const bases = new Float32Array(STAR_COUNT * 3);
     const sizes = new Float32Array(STAR_COUNT);
     const phases = new Float32Array(STAR_COUNT);
     for (let i = 0; i < STAR_COUNT; i++) {
@@ -404,55 +410,61 @@ export class TimeOfDay {
       const theta = u * Math.PI * 2;
       const phi = Math.acos(v); // v in [0.15, 0.85] → phi in [~0.55, ~1.42]
       const r = STAR_DOME_RADIUS;
-      positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.cos(phi);
-      positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      bases[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+      bases[i * 3 + 1] = r * Math.cos(phi);
+      bases[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
       sizes[i] = 0.5 + Math.random() * 1.5;
       phases[i] = Math.random() * Math.PI * 2;
     }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geom.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-    geom.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
 
-    this.starMaterial = new THREE.ShaderMaterial({
+    const baseGeom = new THREE.BufferGeometry();
+    const quad = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]);
+    const quadUv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+    baseGeom.setAttribute("position", new THREE.BufferAttribute(quad, 3));
+    baseGeom.setAttribute("uv", new THREE.BufferAttribute(quadUv, 2));
+    baseGeom.setIndex([0, 1, 2, 0, 2, 3]);
+
+    const geom = new THREE.InstancedBufferGeometry();
+    geom.setAttribute("position", baseGeom.attributes.position);
+    geom.setAttribute("uv", baseGeom.attributes.uv);
+    geom.setIndex(baseGeom.index);
+    geom.instanceCount = STAR_COUNT;
+    geom.setAttribute("aBase", new THREE.InstancedBufferAttribute(bases, 3));
+    geom.setAttribute("aSize", new THREE.InstancedBufferAttribute(sizes, 1));
+    geom.setAttribute("aPhase", new THREE.InstancedBufferAttribute(phases, 1));
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+
+    const uTime = uniform(0);
+    const uOpacity = uniform(0);
+    const mat = new MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       fog: false,
-      uniforms: {
-        uTime: { value: 0 },
-        uOpacity: { value: 0 },
-      },
-      vertexShader: /* glsl */ `
-        uniform float uTime;
-        attribute float aSize;
-        attribute float aPhase;
-        varying float vTwinkle;
-        void main() {
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_Position = projectionMatrix * mv;
-          gl_PointSize = aSize * 3.5;
-          vTwinkle = 0.3 + 0.7 * (0.5 + 0.5 * sin(uTime * 1.6 + aPhase * 5.0));
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform float uOpacity;
-        varying float vTwinkle;
-        void main() {
-          vec2 c = gl_PointCoord - vec2(0.5);
-          float d = length(c);
-          if (d > 0.5) discard;
-          float core = smoothstep(0.5, 0.0, d);
-          gl_FragColor = vec4(vec3(1.0), core * vTwinkle * uOpacity);
-        }
-      `,
     });
+    const vTwinkle = varying(float(0), "vStarTwinkle");
+    mat.vertexNode = Fn(() => {
+      const base = attribute("aBase");
+      const size = attribute("aSize");
+      const phase = attribute("aPhase");
+      // 0.3 + 0.7 * (0.5 + 0.5 * sin(...))
+      vTwinkle.assign(
+        float(0.3).add(float(0.5).add(sin(uTime.mul(1.6).add(phase.mul(5.0))).mul(0.5)).mul(0.7)),
+      );
+      const view = modelViewMatrix.mul(vec4(base, 1.0)).toVar();
+      view.xy.addAssign(positionGeometry.xy.mul(size.mul(STAR_QUAD_SIZE)));
+      return cameraProjectionMatrix.mul(view);
+    })();
+    const core = smoothstep(0.5, 0.0, length(uv().sub(0.5)));
+    mat.colorNode = vec3(1.0, 1.0, 1.0);
+    mat.opacityNode = core.mul(vTwinkle).mul(uOpacity);
+    mat.uniforms = { uTime, uOpacity };
+    this.starMaterial = mat;
 
     this.starGroup = new THREE.Group();
-    const points = new THREE.Points(geom, this.starMaterial);
-    points.frustumCulled = false;
-    this.starGroup.add(points);
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.frustumCulled = false;
+    this.starGroup.add(mesh);
     this.starGroup.renderOrder = -1; // draw with the sky
     this.scene.add(this.starGroup);
   }
