@@ -39,14 +39,17 @@ import gsap from 'gsap';
  *   - mesh / islandRadius / level          → read by App + section disc mounts
  */
 
-// Surface a touch below the y=0 plains so the opaque land occludes it and the
-// wave crests never poke up through the grass (peak displacement ≈ +0.07).
-const WATER_LEVEL_Y = -0.08;
+// Water line matched to the Blender terrain material: displacement is R×-1.5m
+// and water colour starts at B=0.10 → depth 0.10×1.5 = 0.15 m below the y=0
+// plains. So the surface sits at -0.15 (and the 0…-0.15 band stays dry beach,
+// exactly like Blender's B<0.10 "no water tint" zone). Still well below the
+// grass lip so the opaque land occludes it and wave crests never poke through.
+const WATER_LEVEL_Y = -0.15;
 // Terrain half-extent (measured bbox ±62.5). Past this the plane is open ocean.
 const ISLAND_HALF = 62.5;
 // Plane reaches well past the island so the ocean fills to the fog horizon.
 const PLANE_SIZE = 340;
-const PLANE_SEGMENTS = 72;
+const PLANE_SEGMENTS = 144; // dense enough to resolve the Gerstner wave crests
 // Scalar shore radius handed to AudioManager.setOceanProximity — roughly where
 // the dry plains give way to the perimeter falloff.
 const AUDIO_SHORE_RADIUS = 52;
@@ -61,11 +64,14 @@ const SPLASH_LIFE = 0.45;
 const SPLASH_GRAVITY = -9.8;
 const SPLASH_AUDIO_INTERVAL = 0.55;
 
+// Shallow/deep matched to karan's authored terrain-material RGB nodes (the
+// blank-bruno colour overrides): RGB.002 shallow = (0.28,0.68,0.72) linear =
+// #90D7DD, RGB.003 deep = (0.015,0.12,0.25) linear = #216189.
 const DAY_PALETTE = Object.freeze({
-  shallow: '#3f9ab8',
-  deep:    '#0b3147',
+  shallow: '#90d7dd',
+  deep:    '#216189',
   foam:    '#e6f2f8',
-  sky:     '#a6c8df', // fresnel reflection tint
+  sky:     '#bfe0ea', // fresnel reflection tint (cyan-leaning to match the palette)
   sun:     [60, 55, 40],
 });
 const NIGHT_PALETTE = Object.freeze({
@@ -76,14 +82,27 @@ const NIGHT_PALETTE = Object.freeze({
   sun:     [-40, 45, -40],
 });
 
-// Fine ripple waves driving the animated normal (NOT geometry — fragment only,
-// so they shimmer without poking the surface above the y=0 grass lip). Each:
+// Coarse rolling waves — actual GEOMETRY displacement (Gerstner: vertices move
+// in a circular orbit so crests sharpen and curve, the classic ocean-swell
+// shape). Depth-damped (calm at the shoreline, rolling in the deep) so crests
+// never poke above the y=0 grass lip and ponds stay gentle. They also feed the
+// shading normal so the swell catches light. Each:
+//   [dirX, dirZ (normalised), spatial frequency, height amp (m), speed, steepness]
+// Σ amp ≈ 0.10 < the 0.15 headroom under the water line, so peaks stay sub-zero.
+const WAVES = [
+  [0.80, 0.60, 0.150, 0.050, 0.85, 0.75],
+  [-0.55, 0.84, 0.260, 0.032, 1.15, 0.65],
+  [0.30, -0.95, 0.430, 0.020, 1.55, 0.55],
+];
+
+// Fine ripple waves driving the animated normal ONLY (fragment-side, no
+// geometry) — the small surface texture/shimmer riding on top of the swell.
 // [dirX, dirZ (normalised), spatial frequency, slope amplitude, scroll speed].
 const RIPPLES = [
-  [0.95, 0.31, 0.9, 0.050, 1.15],
-  [-0.45, 0.89, 1.7, 0.032, 1.70],
-  [0.62, -0.78, 2.6, 0.020, 2.30],
-  [-0.80, -0.60, 4.1, 0.012, 0.95],
+  [0.95, 0.31, 0.9, 0.055, 1.15],
+  [-0.45, 0.89, 1.7, 0.036, 1.70],
+  [0.62, -0.78, 2.6, 0.022, 2.30],
+  [-0.80, -0.60, 4.1, 0.014, 0.95],
 ];
 
 export class Water {
@@ -173,6 +192,10 @@ export class Water {
     // the open-ocean distance term so the sea darkens outward.
     const vDepthTerrain = varying(float(0), 'vWaterDepthT');
     const vDepth = varying(float(0), 'vWaterDepth');
+    // Depth-based wave damping (0 at the shoreline → 1 in deep water/ocean),
+    // computed in the vertex and reused by the fragment normal so the swell
+    // shape and its shading agree.
+    const vWaveScale = varying(float(0), 'vWaterWaveScale');
 
     const mat = new MeshBasicNodeMaterial({
       transparent: true,
@@ -186,38 +209,59 @@ export class Water {
       const p = positionLocal.toVar();
       const t = this.uTime;
 
-      // Gentle low-frequency swell — small amplitude so crests stay below the
-      // y=0 grass lip (sum ≤ 0.05; the lively shimmer comes from the fragment
-      // ripple NORMAL, not from displacing the geometry).
-      const w1 = sin(p.x.mul(0.18).add(t.mul(0.70))).mul(0.022);
-      const w2 = sin(p.z.mul(0.25).add(t.mul(0.55))).mul(0.016);
-      const w3 = sin(p.x.add(p.z).mul(0.13).add(t.mul(0.90))).mul(0.012);
-      p.y.addAssign(w1.add(w2).add(w3));
-
-      // Player wake — concentric rings expanding from the feet while wading.
-      const d = length(vec2(p.x, p.z).sub(this.uPlayerPos));
-      const ripple = sin(d.mul(6.0).sub(t.mul(4.0))).mul(0.020)
-        .mul(smoothstep(8.0, 0.5, d))
-        .mul(this.uPlayerInWater)
-        .mul(this.uPlayerSpeed.mul(0.7).add(0.3));
-      p.y.addAssign(ripple);
-
       // Depth from the baked terrain height (clamped → ocean reads the slope
-      // edge value, which is already below the water line).
+      // edge value, which is already below the water line). Sampled on the
+      // ORIGINAL position so the wave damping is stable.
       const hUv = clamp(vec2(p.x, p.z).sub(this.uTerrainMin).div(this.uTerrainSpan), 0.0, 1.0);
       const terrH = this.heightTex ? texture(this.heightTex, hUv).r : float(-1.0);
       const depthTerrain = max(this.uWaterLevel.sub(terrH), 0.0);
       const distBeyond = max(max(abs(p.x), abs(p.z)).sub(this.uIslandHalf), 0.0);
+      const depthCombined = depthTerrain.add(distBeyond.mul(0.06));
+      const waveScale = smoothstep(0.12, 0.9, depthCombined).toVar();
       vDepthTerrain.assign(depthTerrain);
-      vDepth.assign(depthTerrain.add(distBeyond.mul(0.06)));
+      vDepth.assign(depthCombined);
+      vWaveScale.assign(waveScale);
+
+      // Rolling Gerstner swell — each wave orbits the vertex (vertical sin +
+      // horizontal cos along its direction) so crests sharpen into curved
+      // ridges. Damped by waveScale so the shoreline stays calm and crests
+      // never rise above the grass lip.
+      const dispX = float(0).toVar();
+      const dispZ = float(0).toVar();
+      const dispY = float(0).toVar();
+      for (const [dx, dz, freq, amp, speed, steep] of WAVES) {
+        const phase = p.x.mul(dx).add(p.z.mul(dz)).mul(freq).add(t.mul(speed));
+        dispY.addAssign(sin(phase).mul(amp));
+        dispX.addAssign(cos(phase).mul(amp * steep * dx));
+        dispZ.addAssign(cos(phase).mul(amp * steep * dz));
+      }
+      p.x.addAssign(dispX.mul(waveScale));
+      p.z.addAssign(dispZ.mul(waveScale));
+      p.y.addAssign(dispY.mul(waveScale));
+
+      // Player wake — concentric rings expanding from the feet while wading.
+      const d = length(vec2(p.x, p.z).sub(this.uPlayerPos));
+      const wake = sin(d.mul(6.0).sub(t.mul(4.0))).mul(0.020)
+        .mul(smoothstep(8.0, 0.5, d))
+        .mul(this.uPlayerInWater)
+        .mul(this.uPlayerSpeed.mul(0.7).add(0.3));
+      p.y.addAssign(wake);
+
       return p;
     })();
 
-    // Animated surface normal — sum of scrolling directional ripples, normal
-    // taken from the analytic slope (∂h/∂x, ∂h/∂z). Fragment-only, so it adds
-    // fine motion/shimmer without displacing geometry into the grass.
-    const rippleNormal = (p2, t) => {
+    // Animated surface normal — analytic slope of the coarse swell (scaled by
+    // the same depth damping) PLUS the fine scrolling ripples on top, so the
+    // rolling waves and the surface texture both catch light and shimmer.
+    const surfaceNormal = (p2, t, waveScale) => {
       const acc = vec2(0, 0).toVar();
+      // Coarse swell slope (∂(sin phase)/∂xz = cos·amp·freq·dir), depth-damped.
+      for (const [dx, dz, freq, amp, speed] of WAVES) {
+        const phase = p2.x.mul(dx).add(p2.y.mul(dz)).mul(freq).add(t.mul(speed));
+        const slope = cos(phase).mul(amp * freq).mul(waveScale);
+        acc.addAssign(vec2(slope.mul(dx), slope.mul(dz)));
+      }
+      // Fine ripple slope.
       for (const [dx, dz, freq, amp, speed] of RIPPLES) {
         const phase = p2.x.mul(dx).add(p2.y.mul(dz)).mul(freq).add(t.mul(speed));
         const slope = cos(phase).mul(amp * freq);
@@ -230,13 +274,15 @@ export class Water {
       const wp = positionWorld;
       const p2 = vec2(wp.x, wp.z);
       const t = this.uTime;
-      const N = rippleNormal(p2, t).toVar();
+      const N = surfaceNormal(p2, t, vWaveScale).toVar();
       const V = normalize(cameraPosition.sub(wp));
 
-      // Depth tint (shallow → deep). Basins only reach ~1.4 m, so the ramp
-      // tops out near 1.3 m for ponds to read their deep core; the open-ocean
-      // distance term in vDepth carries the sea the rest of the way to deep.
-      const depthF = smoothstep(0.0, 1.3, vDepth);
+      // Depth tint (shallow → deep), thresholds matched to the Blender terrain
+      // material: water colour starts shallow at the -0.15 line (B=0.10) and
+      // blends to deep over B 0.30→1.0, i.e. depth 0.45→1.5 below the plains =
+      // vDepth 0.30→1.35 here. The open-ocean distance term carries the far sea
+      // past 1.35 so it reads solid deep.
+      const depthF = smoothstep(0.30, 1.35, vDepth);
       const col = mix(this.uShallow, this.uDeep, depthF).toVar();
 
       // Fresnel — looking straight down shows the water body; at grazing angles

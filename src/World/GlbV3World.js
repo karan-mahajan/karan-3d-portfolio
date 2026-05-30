@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { MeshLambertNodeMaterial } from 'three/webgpu';
-import { Fn, positionWorld, texture, vec2, mix, color, uniform, clamp } from 'three/tsl';
+import { Fn, positionWorld, texture, uv, vec2, vec3, mix, color, uniform, clamp } from 'three/tsl';
 
 /**
  * v3 blend-driven world loader (Bruno-style, manifest-driven).
@@ -47,6 +47,11 @@ export class GlbV3World {
     // (Plane.003) → world UV = worldXZ / (2*bounds) + 0.5.
     this.grassMask = null;
     this.grassGrid = { bounds: 96 };
+    // Painted tile/slab art (Karan's resources/tiles.png, exported to
+    // static/world/). Blends over the terrain wherever terrainFurnitures.R marks
+    // a path. Mirrors the Blender terrain material: slabs datablock sampled by
+    // world XZ × 0.2 (≈5 m repeat) into the path-mask blend. Loaded in load().
+    this.tileTexture = null;
     // Uniform exposed so day/night can tint the ground grass colour alongside
     // the blades (TimeOfDay drives it through Grass.syncColor in Phase D).
     this.groundGrassColor = uniform(color('#5f7a39'));
@@ -69,11 +74,15 @@ export class GlbV3World {
       setPlayerUniforms: (_u) => {},
     };
 
-    // paths facade — v3 has no path ribbons (decorative-paths sub-project is
-    // deferred). Empty positions keep footstep-surface + grass-flatten happy.
+    // paths facade — packed [x,z,x,z,…] world-space centres of the path-forming
+    // bricks (pave + kerb), filled by #loadInstancedSystem. App's footstep
+    // surface + Footprints query these at radius 1.4 to read "stone" zones.
+    // Mutate the backing field, never reassign `this.paths` (World.paths aliases
+    // this object).
+    this._pathTilePositions = new Float32Array(0);
     this.paths = {
-      getTilePositions: () => new Float32Array(0),
-      getTileCount: () => 0,
+      getTilePositions: () => this._pathTilePositions,
+      getTileCount: () => this._pathTilePositions.length / 2,
     };
 
     // Interaction-layer stubs (Phase C swaps in real section interactables).
@@ -136,7 +145,25 @@ export class GlbV3World {
             console.warn('[GlbV3World] grass mask load failed:', err?.message || err);
           })
       : Promise.resolve();
-    await maskPromise;
+
+    // 0b. Tile/slab art for the painted paths. Sampled by world XZ in the
+    // terrain ground material; tolerate failure (paths fall back to flat stone).
+    const tileFile = manifest.tileTexture ?? 'tiles.png';
+    const tilePromise = this.loader
+      .loadTexture(GlbV3World.ASSET_BASE + tileFile)
+      .then((tex) => {
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+        tex.needsUpdate = true;
+        this.tileTexture = tex;
+      })
+      .catch((err) => {
+        console.warn('[GlbV3World] tile texture load failed:', err?.message || err);
+      });
+
+    await Promise.all([maskPromise, tilePromise]);
 
     // 1. Monolithic geometry — load all in parallel, add to the scene.
     const monolithic = manifest.monolithic ?? [];
@@ -171,6 +198,14 @@ export class GlbV3World {
           if (obj) this.refs.markers[markerName] = obj;
         }
       }
+    }
+
+    // 1b. Instanced bricks — the authored stone paving (pave/kerb/pile). Other
+    // instanced systems (rocks/flowers) stay deferred; only bricks are wired so
+    // the walkable path reads as paving + footsteps register stone zones.
+    const bricksEntry = (manifest.instanced ?? []).find((e) => e.system === 'bricks');
+    if (bricksEntry) {
+      this._pathTilePositions = await this.#loadInstancedSystem(bricksEntry);
     }
 
     // 2. Colliders — parse the proxy GLB, build Rapier shapes, discard meshes.
@@ -269,28 +304,55 @@ export class GlbV3World {
    * + the runtime Grass field so blades and ground line up exactly).
    *
    * MeshLambertNodeMaterial keeps the sun/shadow/fog response, so the ground
-   * dims at night through the same light rig as everything else. Where the mask
-   * is 0 (water basins, paths) the ground stays dirt — water + path slabs cover
-   * those zones in their own passes. Falls back to a flat dirt colour if the
-   * mask failed to load.
+   * dims at night through the same light rig as everything else. Where the
+   * grass mask is 0 (water basins, paths) the ground stays dirt; the exported
+   * GLB's `terrainFurnitures` mask (the original baseColorTexture, R channel =
+   * path/slab overlay, sampled by the mesh's own UVs) then paints the painted
+   * tile texture (`tiles.png`, sampled by world XZ × 0.2 to match the Blender
+   * terrain material's slabs node) over the path zones so they read as real
+   * paving, not bare dirt. Falls back to a flat warm stone colour if the tile
+   * texture failed to load, and to flat dirt if the grass mask failed to load.
    */
   #applyTerrainGroundMaterial() {
     const mesh = this.terrain.mesh;
     if (!mesh) return;
 
     const dirt = color('#8f7d54');
+    const stone = color('#b3a489'); // warm fallback if the tile art fails to load
+    // Blender samples the slabs image off a Geometry Position × 0.2 vector under
+    // FLAT projection (world X/Y). Blender Y → runtime -Z, so the runtime UV is
+    // (worldX, -worldZ) × 0.2 → ~5 m tile repeat, matching the .blend exactly.
+    const TILE_SCALE = 0.2;
+
+    // The exported terrain material's baseColorTexture IS the red/black
+    // `terrainFurnitures` path mask. Capture it before we swap the material and
+    // read it raw (R is a factor, not sRGB colour). Keep wrap/filter as baked.
+    const furnMask = mesh.material?.map ?? null;
+    if (furnMask) {
+      furnMask.colorSpace = THREE.NoColorSpace;
+      furnMask.needsUpdate = true;
+    }
 
     const mat = new MeshLambertNodeMaterial();
     if (this.grassMask) {
       const invSpan = 1 / (this.grassGrid.bounds * 2);
       mat.colorNode = Fn(() => {
-        const uv = vec2(positionWorld.x, positionWorld.z).mul(invSpan).add(0.5);
-        const g = texture(this.grassMask, uv).g;
+        const guv = vec2(positionWorld.x, positionWorld.z).mul(invSpan).add(0.5);
+        const g = texture(this.grassMask, guv).g;
         if (globalThis.__grassMaskDebug) return vec3(g, g, g);
         // Mask G tops out ~0.5 on full grass; lift so grassy land reads clearly
         // green while paths/basins (G≈0) stay dirt.
         const blend = clamp(g.mul(1.8), 0, 1);
-        return mix(dirt, this.groundGrassColor, blend);
+        const ground = mix(dirt, this.groundGrassColor, blend);
+        if (!furnMask) return ground;
+        // terrainFurnitures.R (mesh UVs): 1 at path centre → 0 at edge.
+        const pathR = clamp(texture(furnMask, uv()).r, 0, 1);
+        // Paint the real tile art over the path, sampled by world XZ (Blender
+        // parity). Fall back to the flat warm stone if the PNG didn't load.
+        const paving = this.tileTexture
+          ? texture(this.tileTexture, vec2(positionWorld.x, positionWorld.z.negate()).mul(TILE_SCALE)).rgb
+          : stone;
+        return mix(ground, paving, pathR);
       })();
     } else {
       mat.colorNode = dirt;
@@ -377,6 +439,81 @@ export class GlbV3World {
         else if (key === 'contact') this.signs.contactPosition = position;
       }
     });
+  }
+
+  // ── Instanced systems ─────────────────────────────────────────────────────
+
+  /**
+   * Load one `instanced` manifest entry into per-template InstancedMeshes.
+   *
+   * The split exporter writes a *visual* GLB (one mesh per template at identity,
+   * named e.g. `brickPaveMesh`) and a *references* GLB (one empty per placement,
+   * carrying a world-space transform + `userData.template` naming its mesh). We
+   * group the empties by template, then build one InstancedMesh per template
+   * reusing the visual mesh's geometry + baked material (the WebGPURenderer
+   * auto-converts it to a node material, exactly like the monolithic GLBs).
+   *
+   * Returns a packed Float32Array of `[x,z,x,z,…]` world centres for the
+   * path-forming bricks (pave + kerb; piles are decorative) so the paths facade
+   * can flag stone footstep/footprint zones. No colliders are added — the bricks
+   * are flat paving on the terrain heightfield (colliders.glb is authoritative).
+   */
+  async #loadInstancedSystem(entry) {
+    const [visual, refs] = await Promise.all([
+      this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.visual),
+      this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.references),
+    ]);
+
+    // Template meshes by name (brickPaveMesh / brickKerbMesh / brickPileMesh).
+    const templates = new Map();
+    visual.scene.traverse((obj) => {
+      if (obj.isMesh) templates.set(obj.name, obj);
+    });
+
+    // Reference empties grouped by their target template.
+    refs.scene.updateMatrixWorld(true);
+    const byTemplate = new Map();
+    refs.scene.traverse((obj) => {
+      if (obj.isMesh) return;
+      const tmpl = obj.userData?.template;
+      if (!tmpl) return;
+      if (!byTemplate.has(tmpl)) byTemplate.set(tmpl, []);
+      byTemplate.get(tmpl).push(obj);
+    });
+
+    const PATH_TEMPLATES = new Set(['brickPaveMesh', 'brickKerbMesh']);
+    const pathXZ = [];
+    let total = 0;
+
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    const m = new THREE.Matrix4();
+
+    for (const [tmpl, placements] of byTemplate) {
+      const proto = templates.get(tmpl);
+      if (!proto) {
+        console.warn(`[GlbV3World] ${entry.system}: no visual template "${tmpl}" — skipped`);
+        continue;
+      }
+      const inst = new THREE.InstancedMesh(proto.geometry, proto.material, placements.length);
+      inst.name = `${entry.system}_${tmpl}`;
+      inst.castShadow = true;
+      inst.receiveShadow = true;
+      const isPath = PATH_TEMPLATES.has(tmpl);
+      for (let i = 0; i < placements.length; i++) {
+        placements[i].matrixWorld.decompose(pos, quat, scl);
+        m.compose(pos, quat, scl);
+        inst.setMatrixAt(i, m);
+        if (isPath) pathXZ.push(pos.x, pos.z);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      this.root.add(inst);
+      total += placements.length;
+    }
+
+    console.log(`[GlbV3World] ${entry.system}: ${total} instances across ${byTemplate.size} templates`);
+    return new Float32Array(pathXZ);
   }
 
   // ── Boot invariants ───────────────────────────────────────────────────────
