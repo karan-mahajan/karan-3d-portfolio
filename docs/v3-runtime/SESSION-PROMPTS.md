@@ -45,7 +45,10 @@ This is a standing rule, in addition to the per-prompt rules below.
 ## Progress / commits
 - `26d3489` — Bruno-style split GLB export + `manifest.json` (Phase A + B-export). ✅
 - `049998f` — B0 WebGPU/TSL render core (build-green, app not yet rendering). ✅
-- Next → the prompts below, in order.
+- `30d8090` — B-loader: **first WebGPU frame** (GlbV3World + TSL Sky; world loads +
+  collides + renders, 9/9 headless checks). Effects still disabled (TSL port
+  pending) + day forced. ✅
+- Next → **B0 effects port** (below), then Phase C.
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
@@ -158,47 +161,57 @@ the learning wins — but re-verify from the actual file before relying on it.
 
 ---
 
-## NEXT — B0 finish → first WebGPU frame (Phase B loader + core materials)
+## NEXT — B0 effects port (finish the GLSL→TSL ports + un-force day)
 
 ```
-Continue the v3 runtime: B0 → first WebGPU frame, then finish the GLSL→TSL ports.
+Continue the v3 runtime: finish B0 — port the disabled GLSL effects to TSL so
+the world renders fully (incl. at night), then remove the day-mode crutch.
 
 FIRST read docs/v3-runtime/SESSION-PROMPTS.md → "Learnings log" (authoritative
-verified facts). BEFORE finishing this session: append every new verified fact/
-gotcha to that log, update the NEXT phase prompt with them, and bump the
-Progress/commits line.
+verified facts; the B0-finish/Phase-B group is the freshest). BEFORE finishing:
+append new learnings, update this prompt + the Phase D prompt, bump Progress/commits.
 
-Context is in memory (project_v3_runtime_phase_a, auto-loaded) and
-docs/v3-runtime/PHASE-A-audit-and-plan.md. Last commit: 049998f (B0 render
-core: three→three/webgpu, WebGPURenderer + setAnimationLoop, PostFX→WebGPU
-PostProcessing; `npm run build` passes but the app does NOT render a frame yet
-because raw-GLSL ShaderMaterials error on WebGPU and the v3 world is unloaded).
+Context: memory project_v3_runtime_phase_a (auto-loaded) + docs/v3-runtime/.
+Last commit 30d8090 — the v3 world LOADS + COLLIDES + RENDERS a first WebGPU
+frame (GlbV3World off manifest.json; Sky ported to TSL; build green; 9/9 headless
+checks via .verify/scripts/verify-v3-first-frame.mjs). But to get that frame the
+unported raw-GLSL effects are HIDDEN and the app is FORCED to day mode — see the
+B0-finish learnings for the exact guards. Your job is to remove those crutches by
+porting each effect to TSL.
 
-Goal this session — get the FIRST verifiable WebGPU frame, then port effects:
-1. Phase B loader: new GlbV3World that reads static/world/manifest.json — load
-   the monolithic GLBs into the scene, bake the terrain heightfield (terrain
-   node has scale 0.65 → world ±62.4) into Physics ground + terrain.heightAt,
-   build Rapier colliders from colliders.glb (tube_=cylinder, cuboid_=box,
-   *Footprint_=walkable pad; bbox→size) then hide them, collect references.glb
-   empties into a typed map. Rewire App.js/World.js off the obsolete v2
-   GlbWorld/SectionPositions. (rapier is 0.19.3 now — verify its collider API
-   vs the old 0.12 calls before using; don't guess.)
-2. Port the always-on materials to TSL so a frame renders: SmoothLitPaletteMaterial
-   (master, FIRST) + Sky. Temporarily DISABLE the peripheral effects (Fireflies,
-   Rain, WindLines, Leaves, Water, Foliage, Grass, Footprints) behind a guard so
-   they don't crash the WebGPU render.
-3. Verify: app boots to a first WebGPU frame — headless Chromium with a WebGPU
-   flag (or assert the WebGL fallback backend), screenshot under
-   .verify/shots/<YYYY-MM-DD>/ via .verify/scripts/ + _boot.mjs (see CLAUDE.md).
-4. Then re-enable + port the disabled effects to TSL one by one (Leaves also
-   needs a UniformsLib/UniformsUtils replacement — three/webgpu doesn't export
-   them) + the PostFX tilt-shift (TODO(B0) in PostFX.js), verifying each.
+Disabled today (each crashes the WebGPU backend as raw GLSL ShaderMaterial):
+- App.js `this._tslReady = {fireflies, rain, windLines, leaves}` — meshes hidden,
+  tick updates skipped. Port each → flip its flag true → re-show its mesh.
+  (rain: only `rain.drops` (GLSL streaks) is hidden; splashes are MeshBasic.)
+- TimeOfDay.js `starMaterial` (#buildStars) + `spotShaftMat` (#buildSpotlight) —
+  always-visible meshes with opacity-0 uniforms; they still COMPILE → crash.
+  Port both to TSL node materials.
+- App.js `this._b0ForceDay = true` forces day so the night-only GLSL above stays
+  hidden, AND gates the day/night shader prewarm (`#prewarmDayNightShaders` calls
+  compileAsync on the whole scene incl. hidden GLSL + snaps to night). After the
+  above are TSL, DELETE `_b0ForceDay` and restore the prewarm; verify night mode.
+- Not built at all in v3 yet (leave for Phase D/E/F, don't force here): Grass,
+  Foliage, Water — World.js no longer constructs them.
+- PostFX tilt-shift is still TODO(B0) in PostFX.js (bloom-only today). Port the
+  old GLSL TiltShiftShader to a screen-UV TSL Fn (jittered taps, strength =
+  smoothstep(0.15,0.55,abs(uv.y-0.5)), centerline crisp) on the scenePassColor.
 
-Rules: use subagents (their own contexts) for the parallel-independent shader
-ports to save context; VERIFY from actual files/datablocks, never guess; don't
-deviate from Bruno's approach unless 99% sure it's better; do NOT touch
-tools/blender/ or static/world/ (the split export is done + committed); one
-commit per verified milestone after I approve; NO Co-Authored-By trailer.
+How: port Bruno's folio-2025 equivalents to TSL where they exist
+(~/Documents/Projects/folio-2025/sources/Game/), else re-author the existing
+GLSL as TSL node graphs. three/webgpu does NOT export UniformsUtils/UniformsLib —
+Leaves' lights+fog merge must be redone as a node material (it's stubbed today).
+Use subagents (own contexts) for the parallel-independent shader ports.
+
+Verify EACH effect headless as you flip it on: WebGPU backend asserts state/
+drawcalls (verify-v3-first-frame.mjs pattern); for a VISUAL screenshot launch
+Chromium WITHOUT the WebGPU flags so WebGPURenderer falls back to WebGL2 (the
+only backend Playwright can screenshot — see learnings). Re-verify night mode
+once `_b0ForceDay` is gone. Then drop the disabled-effects table claims from any
+docs that say the world is "unstyled".
+
+Rules: VERIFY from actual files, never guess; don't deviate from Bruno unless 99%
+sure; do NOT touch tools/blender/ or static/world/; one commit per verified
+milestone after I approve; NO Co-Authored-By trailer.
 ```
 
 ---
