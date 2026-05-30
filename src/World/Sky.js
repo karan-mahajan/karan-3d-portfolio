@@ -1,45 +1,19 @@
 import * as THREE from 'three/webgpu';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { Fn, positionWorld, cameraPosition, uniform, mix, smoothstep, normalize, vec4 } from 'three/tsl';
 import { DUSK } from './Palette.js';
 
-const vert = /* glsl */ `
-  varying vec3 vWorldDir;
-  void main() {
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vWorldDir = normalize(wp.xyz - cameraPosition);
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-const frag = /* glsl */ `
-  varying vec3 vWorldDir;
-  uniform vec3 uTop;
-  uniform vec3 uMid;
-  uniform vec3 uHorizon;
-  uniform vec3 uGround;
-
-  void main() {
-    float h = vWorldDir.y;
-    vec3 color;
-    if (h > 0.0) {
-      // Three-stop gradient: horizon → mid → top. The horizon band is still
-      // sharp (the third-person camera pitches ~20° down and only sees a
-      // sliver of sky) but uMid lets day-mode read as blue once you look
-      // up, and lets night-mode have a deep mid-purple between horizon and
-      // a near-black zenith.
-      vec3 lower = mix(uHorizon, uMid, smoothstep(0.005, 0.08, h));
-      color = mix(lower, uTop, smoothstep(0.1, 0.5, h));
-    } else {
-      color = mix(uHorizon, uGround, smoothstep(0.0, -0.25, h));
-    }
-
-    gl_FragColor = vec4(color, 1.0);
-  }
-`;
-
 /**
- * Sunset sky: large inverted sphere with a top→horizon→ground gradient.
- * The visible sun disc + halo live in Sun.js — this shader only paints the
+ * Sunset sky: large inverted sphere with a top→mid→horizon→ground gradient.
+ * The visible sun disc + halo live in Sun.js — this material only paints the
  * gradient bands.
+ *
+ * B0: ported from the GLSL ShaderMaterial to a TSL MeshBasicNodeMaterial so it
+ * renders on WebGPU. The four gradient stops are exposed as TSL `uniform` nodes
+ * whose `.value` is a live THREE.Color; TimeOfDay mutates those colours in place
+ * (`.set()` / gsap tweens on `.r/.g/.b`) exactly as it did with the old GLSL
+ * uniforms — re-exposed via `this.material.uniforms.{uTop,uMid,uHorizon,uGround}`
+ * so no TimeOfDay change is needed.
  */
 export class Sky {
   constructor(scene) {
@@ -47,22 +21,42 @@ export class Sky {
     // whole sphere is clipped and the sky renders as black.
     const geom = new THREE.SphereGeometry(250, 32, 16);
 
-    this.material = new THREE.ShaderMaterial({
-      vertexShader: vert,
-      fragmentShader: frag,
+    const uTop = uniform(new THREE.Color(DUSK.skyTop));
+    // uMid sits between horizon and zenith; TimeOfDay overrides it on
+    // construction. The DUSK fallback collapses to the old two-stop look.
+    const uMid = uniform(new THREE.Color(DUSK.skyTop));
+    const uHorizon = uniform(new THREE.Color(DUSK.skyHorizon));
+    const uGround = uniform(new THREE.Color(DUSK.skyGround));
+
+    const colorNode = Fn(() => {
+      // View direction from the camera to this fragment's world position.
+      const dir = normalize(positionWorld.sub(cameraPosition));
+      const h = dir.y;
+
+      // Above horizon: horizon → mid → top three-stop gradient.
+      const lower = mix(uHorizon, uMid, smoothstep(0.005, 0.08, h));
+      const above = mix(lower, uTop, smoothstep(0.1, 0.5, h));
+      // Below horizon: horizon → ground.
+      const below = mix(uHorizon, uGround, smoothstep(0.0, -0.25, h));
+
+      const color = h.greaterThan(0.0).select(above, below);
+      return vec4(color, 1.0);
+    })();
+
+    this.material = new MeshBasicNodeMaterial({
       side: THREE.BackSide,
       depthWrite: false,
-      uniforms: {
-        uTop: { value: new THREE.Color(DUSK.skyTop) },
-        // uMid sits between horizon and zenith — TimeOfDay overrides this on
-        // construction; the DUSK fallback keeps the old single-mix behaviour
-        // if Sky is ever used standalone (interpolation collapses to the
-        // original two-stop look when uMid ≈ uTop).
-        uMid: { value: new THREE.Color(DUSK.skyTop) },
-        uHorizon: { value: new THREE.Color(DUSK.skyHorizon) },
-        uGround: { value: new THREE.Color(DUSK.skyGround) },
-      },
+      fog: false,
     });
+    this.material.colorNode = colorNode;
+    // Re-expose the live Color uniforms under the legacy `.uniforms` shape so
+    // TimeOfDay can keep mutating `.value` in place.
+    this.material.uniforms = {
+      uTop: uTop,
+      uMid: uMid,
+      uHorizon: uHorizon,
+      uGround: uGround,
+    };
 
     this.mesh = new THREE.Mesh(geom, this.material);
     this.mesh.renderOrder = -1;

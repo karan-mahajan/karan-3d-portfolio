@@ -280,16 +280,22 @@ export class Leaves {
     // Deep-merge built-in lights + fog uniforms (per-material clones), then
     // overwrite the wind/own uniforms by reference so the Wind module's
     // updates propagate live.
-    const uniforms = THREE.UniformsUtils.merge([
-      THREE.UniformsLib.lights,
-      THREE.UniformsLib.fog,
-      {
-        uLeafMask:          { value: tex },
-        uSize:              { value: LEAF_SIZE },
-        uShadowTint:        { value: new THREE.Color(DUSK.shadowTint) },
-        uShadowTintStrength:{ value: 0.6 },
-      },
-    ]);
+    // B0/WebGPU: `three/webgpu` does NOT export UniformsUtils / UniformsLib, so
+    // the lights+fog merge is unavailable here. This effect is disabled until
+    // it is re-authored as a TSL node material (effects phase) — until then,
+    // fall back to just the custom uniforms so construction doesn't throw. The
+    // mesh is hidden by App's B0 guard, so the (incomplete) material is never
+    // compiled/rendered. TODO(TSL): port to a node material; drop this fallback.
+    const baseUniforms = (THREE.UniformsUtils && THREE.UniformsLib)
+      ? THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog, {}])
+      : {};
+    const uniforms = {
+      ...baseUniforms,
+      uLeafMask:          { value: tex },
+      uSize:              { value: LEAF_SIZE },
+      uShadowTint:        { value: new THREE.Color(DUSK.shadowTint) },
+      uShadowTintStrength:{ value: 0.6 },
+    };
 
     this.material = new THREE.ShaderMaterial({
       vertexShader: vert,

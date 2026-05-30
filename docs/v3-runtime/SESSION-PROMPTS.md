@@ -89,6 +89,73 @@ the learning wins — but re-verify from the actual file before relying on it.
 - WebGPU/TSL is locked (Bruno's stack) — chosen because WebGL was "less work," not
   "better." Don't reopen it without 99%-from-files evidence.
 
+### B0-finish / Phase B loader (this session — all verified against running app)
+- **Boot-blocker #1 (fixed):** `KTX2Loader.detectSupport(renderer)` calls
+  `renderer.hasFeature()`, which THROWS on `WebGPURenderer` until `await
+  renderer.init()` completes. `Loader.attachRenderer()` MUST be called in
+  `boot()` after `init()`, NOT in the App constructor. (Was in `#initRenderer`.)
+- **Boot-blocker #2 (fixed):** `Leaves.js` called `THREE.UniformsUtils.merge([
+  UniformsLib.lights, UniformsLib.fog, …])` at construction; both are `undefined`
+  on `three/webgpu` → `"reading 'merge'"` TypeError killed the whole App ctor.
+  Guarded with a fallback (`{}`) until Leaves is ported to TSL.
+- **Boot-blocker #3 (fixed):** PostFX used `output(...)` as a function and
+  `outputColorTransform = false`. In r184 TSL, `output` is a **node object, not a
+  function**. Correct pattern (per `addons/tsl/display/BloomNode.js`):
+  `postProcessing.outputNode = scenePassColor.add(bloomPass)` with
+  `outputColorTransform` left at its **default `true`** (it applies ACES + sRGB).
+- `PostProcessing` is renamed `RenderPipeline` (deprecation warning, still works).
+  `renderAsync()` is deprecated → use `render()` (init() already ran). PostFX now
+  calls `postProcessing.render()`.
+- **Rapier 0.19.3 file rename gotcha:** 0.19 ships `rapier.mjs` (+`rapier.cjs`);
+  0.12 shipped `rapier.es.js`. A stale vite dep-optimize cache / browser `?v=`
+  graph after the upgrade 404s on `rapier.es.js` → "Failed to fetch dynamically
+  imported module" boot crash. Fix = `rm -rf node_modules/.vite` + restart dev
+  server + hard-reload. rapier IS in `optimizeDeps.exclude` (vite.config) — that
+  is correct, keep it. The 0.19 collider API (heightfield/cuboid/cylinder/
+  capsule/ball) MATCHES the v2 calls; `Physics.js` works unchanged. NOTE:
+  `Physics.clearanceFor`'s `world.castShape(...)` arg order is STALE for 0.19
+  (0.19 inserts `targetDistance` before `maxToi`) — not first-frame-critical
+  (backflip/cartwheel clearance only); fix in Phase G.
+- **Terrain GLB:** node `terrain` scale 0.651, local ±96 → world **±62.5**
+  (`size`=125, 129×129 verts = 128 segments). Heightfield baked in WORLD space
+  (apply matrixWorld). Its material's `baseColorTexture` is a **red/black mask
+  named `terrainFurnitures`** (512² 16-bit), NOT a colour — renders the ground
+  red. `GlbV3World.#neutralizeTerrainMask()` strips it to a flat placeholder
+  (`#6f7d52`) until Phase D installs the real grass/terrain shader. The dark
+  pond/river basins are just lower terrain; water surfaces are Phase F.
+- **Colliders.glb counts (verified at load):** 67 `tube_`→cylinder, 6
+  `cuboid_`→box, 10 `*Footprint_`→flat pad (built as thin cuboids). Proxy meshes
+  are parsed for bbox then discarded (never added to scene). `references.glb` =
+  30 empties (sectionRef_*, controlsRef, lavaRef_pool, titleRef, playstationRef,
+  refBonfire_*, refPoleLight_*, animal/airDancer pivots) — kept live under root.
+- **WebGPU render IS happening headless on macOS** with Chromium flags
+  `--enable-unsafe-webgpu --enable-features=Vulkan,WebGPU` (`renderer.backend
+  .isWebGPUBackend === true`, 150 draw calls / 159k tris). BUT **Playwright
+  `page.screenshot()` cannot capture the WebGPU swapchain** — the canvas reads
+  blank even though it renders. To get a VISUAL screenshot, launch Chromium
+  WITHOUT the WebGPU flags → `WebGPURenderer` falls back to the **WebGL2 backend**
+  (`isWebGLBackend`), which Playwright captures fine; same TSL/scene. Probe:
+  `.verify/scripts/verify-v3-first-frame.mjs` (asserts state + draw calls);
+  `/tmp/diag_webgl.mjs` pattern for the visual shot. Playwright ESM can't use
+  NODE_PATH — symlink `node_modules/playwright{,-core}` → `/tmp/node_modules/…`.
+- **B0 effect-disable mechanism (App.js):** unported GLSL effects crash WebGPU at
+  first render. They're hidden, not deleted: `this._tslReady = {fireflies, rain,
+  windLines, leaves}` flags → hide each effect's render mesh (`rain.drops` is the
+  GLSL streaks; splashes are MeshBasic & safe) + skip its tick update. Water +
+  Foliage are simply not built by `World` in v3 yet. Night-only GLSL FX (stars +
+  spotlight shaft live in `TimeOfDay`, always-visible meshes with opacity-0
+  uniforms that still COMPILE) are avoided by `this._b0ForceDay = true` (forces
+  day so TimeOfDay keeps `.visible=false`). The day/night shader prewarm is
+  SKIPPED under `_b0ForceDay` — `compileAsync(scene)` compiles every material
+  incl. hidden GLSL, and the prewarm snaps to night. **To finish B0:** port each
+  effect to TSL, flip its `_tslReady` flag (re-show mesh), port TimeOfDay
+  stars+spotShaft, then delete `_b0ForceDay` + restore prewarm.
+- **Facade stubs:** `GlbV3World` exposes `terrain/nature/paths/billboards/signs/
+  refs` matching the old GlbWorld surface so App.js + ActionPrompts + StreetLights
+  + Teleport boot unchanged. `billboards.items=[]`, `signs.{skills,contact}
+  Position` filled from `sectionRef_*`. `World.js` dropped PortfolioMounts/
+  ProjectShowcase/Foliage/SectionPositions (Phase C/E rebuild them).
+
 ---
 
 ## NEXT — B0 finish → first WebGPU frame (Phase B loader + core materials)

@@ -90,10 +90,20 @@ export class App extends EventTarget {
     // this.grass = new Grass(this.scene, this.loader, this.world.terrain, this.wind);
     this.grass = null;
 
+    // B0 TSL-port guard: the peripheral effects below are still raw-GLSL
+    // ShaderMaterials, which error on the WebGPU backend. Until each is ported
+    // to TSL (effects phase), hide its render mesh + skip its per-frame update.
+    // Flip a flag to `true` as that effect is ported. The night-only GLSL FX
+    // (stars, spotlight shaft, fireflies) are handled by forcing day mode at
+    // boot — see `this._b0ForceDay` below. Water + Foliage are simply not built
+    // by World in v3 yet (Phase E/F). See docs/v3-runtime/SESSION-PROMPTS.md.
+    this._tslReady = { fireflies: false, rain: false, windLines: false, leaves: false };
+
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets.
     this.fireflies = new Fireflies(this.scene, { count: this.quality.fireflyCount });
     if (this.fireflies.points) this.fireflies.points.userData.noTorchRaycast = true;
+    if (!this._tslReady.fireflies && this.fireflies.points) this.fireflies.points.visible = false;
     // Sky dome is created in World ctor — flag it so the torch beam can
     // never land on the inside of the sky sphere when the mouse points
     // above the horizon line.
@@ -107,13 +117,18 @@ export class App extends EventTarget {
       splashBudget: this.quality.rainSplashBudget,
     });
     if (this.rain.group) this.rain.group.userData.noTorchRaycast = true;
+    // B0: rain's `drops` is a GLSL ShaderMaterial (LineSegments); the splash
+    // pools are MeshBasic and safe. Hide just the GLSL streaks.
+    if (!this._tslReady.rain && this.rain.drops) this.rain.drops.visible = false;
     this.windLines = new WindLines(this.scene, this.wind, { count: this.quality.windLineCount });
     if (this.windLines.mesh) this.windLines.mesh.userData.noTorchRaycast = true;
+    if (!this._tslReady.windLines && this.windLines.mesh) this.windLines.mesh.visible = false;
     this.leaves = new Leaves(this.scene, this.wind, this.world.terrain, {
       count: this.quality.leafCount,
       maxSettled: this.quality.maxSettledLeaves,
     });
     if (this.leaves.mesh) this.leaves.mesh.userData.noTorchRaycast = true;
+    if (!this._tslReady.leaves && this.leaves.mesh) this.leaves.mesh.visible = false;
     // Footprints — persistent flat decals dropped on each footstep. Cadence
     // is driven by AudioManager.onStep (set up after boot) so visual prints
     // and audio steps stay aligned. Path tile positions are plumbed in
@@ -155,12 +170,25 @@ export class App extends EventTarget {
       sky: this.world.sky,
       sunMesh: this.sun,
       grass: this.grass,
-      fireflies: this.fireflies,
+      // B0: fireflies (GLSL) are disabled — don't let TimeOfDay drive/re-show them.
+      fireflies: null,
       // water is wired in boot() once world.loadAssets has created it.
       water: null,
       playerGroup: null, // wired after player loads in boot()
       character: null,   // wired after player loads in boot()
     });
+
+    // B0: night brings up unported GLSL FX (stars, spotlight shaft, fireflies)
+    // that crash the WebGPU backend. Force day mode so TimeOfDay keeps them
+    // hidden (it toggles their `.visible` by opacity). Remove this once those
+    // materials are ported to TSL. Also gates the shader prewarm (which would
+    // compileAsync the whole scene — including the hidden GLSL — and snap to
+    // night), see boot().
+    this._b0ForceDay = true;
+    if (this._b0ForceDay) {
+      this.timeOfDay.mode = 'day';
+      this.timeOfDay.reapply();
+    }
 
     // Achievements — persistent counter system + toast + side panel. Built
     // here so all modules already exist (Rain, Thunderstorm, TimeOfDay,
@@ -297,6 +325,10 @@ export class App extends EventTarget {
     // WebGPURenderer is constructed synchronously but must finish its async
     // device/adapter handshake before any render/compute runs.
     await this.renderer.init();
+    // KTX2 format detection needs the live backend (hasFeature) — safe only
+    // after init(). Detects which compressed formats this GPU supports so the
+    // transcoder picks the right path for any KTX2 textures.
+    this.loader.attachRenderer(this.renderer);
     await this.physics.init();
 
     // Phase 1 of World v2: the heightfield is now baked from world.glb so
@@ -512,9 +544,16 @@ export class App extends EventTarget {
     // can hitch briefly if the user flips before this completes. The
     // common case is the user spends 2-5 s reading the welcome overlay,
     // which is plenty of time for compileAsync to finish in the background.
-    this.shaderPrewarmPromise = this.#prewarmDayNightShaders().catch((err) => {
-      console.warn('[App] deferred prewarm failed:', err);
-    });
+    // B0: skip the day/night prewarm — compileAsync would compile every scene
+    // material (including the hidden unported GLSL FX) and the prewarm snaps to
+    // night, both of which crash on WebGPU. Re-enable once FX are TSL.
+    if (this._b0ForceDay) {
+      this.shaderPrewarmPromise = Promise.resolve();
+    } else {
+      this.shaderPrewarmPromise = this.#prewarmDayNightShaders().catch((err) => {
+        console.warn('[App] deferred prewarm failed:', err);
+      });
+    }
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
@@ -722,10 +761,9 @@ export class App extends EventTarget {
     // frame's water pre-render + every composer pass. #tick resets once at
     // frame start; the debug HUD reads the full per-frame totals.
     this.renderer.info.autoReset = false;
-    // KTX2 needs the live renderer to detect which compressed texture
-    // formats this GPU supports (BC, ASTC, ETC2, …) so it can pick the
-    // right transcoder path. Must run AFTER the renderer exists.
-    this.loader.attachRenderer(this.renderer);
+    // KTX2 format detection is deferred to boot() — on WebGPURenderer,
+    // detectSupport() calls renderer.hasFeature(), which throws until the
+    // backend finishes its async init(). See boot().
   }
 
   #initScene() {
@@ -851,12 +889,15 @@ export class App extends EventTarget {
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
-    this.fireflies.update(elapsed);
+    // B0: skip unported GLSL FX updates (their meshes are hidden). Rain's
+    // splashes are MeshBasic, so rain.update stays on; only the GLSL streaks
+    // are hidden. Thunderstorm is MeshBasic and safe.
+    if (this._tslReady.fireflies) this.fireflies.update(elapsed);
     if (this.water) this.water.update(elapsed, frameDelta, this.player.position, sample);
     this.rain.update(frameDelta);
     this.thunderstorm.update(frameDelta, this.player.position);
-    this.windLines.update(frameDelta, this.player.position);
-    this.leaves.update(frameDelta, this.player.position);
+    if (this._tslReady.windLines) this.windLines.update(frameDelta, this.player.position);
+    if (this._tslReady.leaves) this.leaves.update(frameDelta, this.player.position);
     const _grounded = this.player._grounded !== false;
     this.footprints.update(frameDelta);
     const px = this.player.position.x;

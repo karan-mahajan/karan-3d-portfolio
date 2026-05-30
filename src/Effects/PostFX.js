@@ -1,5 +1,5 @@
 import { PostProcessing } from 'three/webgpu';
-import { pass, output } from 'three/tsl';
+import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
 /**
@@ -27,10 +27,10 @@ export class PostFX {
     if (!this.enabled) return;
 
     this.postProcessing = new PostProcessing(renderer);
-    // The node graph (via `output`) owns tonemapping + colorspace conversion,
-    // matching the old OutputPass at the tail of the WebGL composer; turn off
-    // the renderer's implicit output transform so it isn't applied twice.
-    this.postProcessing.outputColorTransform = false;
+    // PostProcessing.outputColorTransform stays at its default (true): the
+    // pipeline applies ACESFilmic tonemapping + sRGB on the final outputNode,
+    // matching the old OutputPass at the tail of the WebGL composer. (Do NOT
+    // also use a RenderOutputNode or tonemapping is applied twice.)
 
     const scenePass = pass(scene, camera);
     const scenePassColor = scenePass.getTextureNode('output');
@@ -48,7 +48,7 @@ export class PostFX {
     this.#bloomPass = bloomPass;
     this.#tiltShiftAmount = quality.tiltShiftAmount ?? 1.0;
 
-    this.postProcessing.outputNode = output(scenePassColor.add(bloomPass));
+    this.postProcessing.outputNode = scenePassColor.add(bloomPass);
   }
 
   /** Live-tune tilt-shift intensity (default 1.0). No-op until the TSL port. */
@@ -68,10 +68,13 @@ export class PostFX {
   }
 
   render(delta) {
+    // renderer.init() already ran in App.boot(), so the sync render() path is
+    // safe (renderAsync() is deprecated in r184's RenderPipeline). render()
+    // still schedules WebGPU command submission internally.
     if (!this.enabled) {
-      this.renderer.renderAsync(this.scene, this.camera);
+      this.renderer.render(this.scene, this.camera);
       return;
     }
-    this.postProcessing.renderAsync();
+    this.postProcessing.render();
   }
 }
