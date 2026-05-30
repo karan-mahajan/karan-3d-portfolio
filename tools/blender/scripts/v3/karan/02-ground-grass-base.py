@@ -22,8 +22,20 @@ Per the keep-everything policy: mutates in-memory pixels of the existing
 deleted. Reload-from-file on the EXR + un-hide on the object restores
 Bruno's behavior.
 """
+import importlib
+import os
+import sys
+
 import bpy
 import numpy as np
+
+KARAN_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
+    else "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan"
+if KARAN_DIR not in sys.path:
+    sys.path.append(KARAN_DIR)
+
+import lava_common  # lava-pool basin: carved into the terrain like a water pond
+importlib.reload(lava_common)
 
 IMAGE_NAME = "terrainWater"
 GRASS_OBJECT = "Plane.003"
@@ -255,6 +267,11 @@ def _author_water_mask(w, h):
         _stamp_blob(r, px, py, points, feather, peak)
     for stream in STREAMS:
         _stamp_polyline(r, px, py, stream, STREAM_HALFWIDTH, STREAM_PEAK)
+    # Lava-pool basin: carved into R exactly like a water pond so the terrain
+    # genuinely sinks (~0.63 m). water.py later zeroes B here so it shows no
+    # teal water tint; 14-fx-lava.py drops the molten surface into the dip.
+    lava_basin = lava_common.basin_intensity(w, h)
+    np.maximum(r, lava_basin, out=r)
     return r
 
 

@@ -22,16 +22,61 @@ existing `terrainWater` datablock. Re-running `base.py` resets B to 0.
 ISOLATION (added 2026-05-29): Bruno's foundation loads `terrainWater` from
 `bruno/resources/textures/terrainWater.exr` — his pristine reference, which
 karan must NEVER overwrite (doing so once corrupted Bruno's world). After
-painting, this script repoints the datablock at karan's OWN copy and PACKS the
-painted pixels into `world-v3-karan.blend`, so the karan world is self-contained
-and Bruno's reference file stays untouched no matter what is saved.
+painting, this script replaces that external image with a generated packed
+datablock, so the authored pixels live inside `world-v3-karan.blend` without an
+EXR save/load round-trip changing the mask orientation.
 """
+import importlib
+import os
+import sys
+
 import bpy
 import numpy as np
 
+KARAN_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
+    else "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan"
+if KARAN_DIR not in sys.path:
+    sys.path.append(KARAN_DIR)
+
+import lava_common  # the lava basin must NOT get the teal/navy water tint
+importlib.reload(lava_common)
+
 IMAGE_NAME = "terrainWater"
 BLEND_PATH = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/world-v3-karan.blend"
-KARAN_TERRAINWATER = "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan/resources/textures/terrainWater.exr"
+
+
+def _replace_with_packed_image(img, pixels):
+    """Store authored pixels in a generated packed image and remap all users.
+
+    Blender's EXR file save/pack path reloads this mask with the row/column
+    orientation transposed. A generated packed image avoids that external
+    texture round-trip while keeping Bruno's source EXR untouched.
+    """
+    old_name = img.name
+    w, h = img.size
+    channels = img.channels
+    packed = bpy.data.images.new(
+        f"{old_name}.packedAuthored",
+        width=w,
+        height=h,
+        alpha=channels >= 4,
+        float_buffer=True,
+    )
+    try:
+        packed.colorspace_settings.name = img.colorspace_settings.name
+    except Exception:
+        pass
+    packed.pixels.foreach_set(pixels.ravel())
+    try:
+        packed.update()
+    except Exception:
+        pass
+    packed.pack()
+
+    img.user_remap(packed)
+    img.name = f"{old_name}.externalSource"
+    packed.name = old_name
+    return packed
 
 
 def run():
@@ -49,23 +94,14 @@ def run():
 
     r = pixels[:, :, 0]
     new_b = np.clip(r, 0.0, 1.0)
+    # The lava basin is carved into R (it's a depression) but must NOT read as
+    # water — zero B there so the terrain shader paints no teal/navy tint; the
+    # molten lava surface (14-fx-lava.py) covers the bare bed instead.
+    new_b[lava_common.basin_inside(w, h)] = 0.0
     pixels[:, :, 2] = new_b
 
-    img.pixels.foreach_set(pixels.ravel())
-    try:
-        img.update()
-    except Exception:
-        pass
-
-    # --- Isolation: keep karan's painted water on karan's own file + packed ---
-    # so Bruno's shared EXR is never written and the karan world is self-contained.
-    img.filepath = KARAN_TERRAINWATER
-    img.filepath_raw = KARAN_TERRAINWATER
-    try:
-        img.pack()
-        print(f"  packed terrainWater into .blend, repointed -> {KARAN_TERRAINWATER}")
-    except Exception as e:
-        print(f"  [WARN] pack failed: {e}")
+    img = _replace_with_packed_image(img, pixels)
+    print("  packed authored terrainWater pixels into generated .blend image")
 
     shallow = float(((new_b >= 0.10) & (new_b < 0.30)).mean()) * 100.0
     deep = float((new_b >= 0.30).mean()) * 100.0

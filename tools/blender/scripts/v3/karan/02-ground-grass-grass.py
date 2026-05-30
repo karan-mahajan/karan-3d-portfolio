@@ -43,9 +43,20 @@ Per keep-everything policy: mutates terrainGrass pixels in memory + toggles
 hide flags on Plane.003. Re-running blank-bruno.py zeros G again; re-running
 base.py re-hides Plane.003.
 """
+import importlib
+import os
+import sys
+
 import bpy
 import numpy as np
-import os
+
+KARAN_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
+    else "/Users/mahajankaran/Documents/Projects/karan-portfolio/tools/blender/scripts/v3/karan"
+if KARAN_DIR not in sys.path:
+    sys.path.append(KARAN_DIR)
+
+import lava_common  # lava basin is bare ground under an emissive surface, not grass
+importlib.reload(lava_common)
 
 GRASS_IMAGE = "terrainGrass"
 WATER_IMAGE = "terrainWater"
@@ -363,6 +374,7 @@ def run():
     water_r = water_pixels[:, :, 0]
 
     grass_g = _author_grass_mask(w, h, water_r)
+    grass_g[lava_common.basin_inside(w, h)] = 0.0
 
     grass_pixels = np.asarray(img_g.pixels[:], dtype=np.float32).reshape((h, w, channels_g))
     grass_pixels[:, :, 1] = grass_g  # G — drives scatter scale + ground tint
