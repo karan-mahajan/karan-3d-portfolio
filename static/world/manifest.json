@@ -1,0 +1,167 @@
+{
+  "monolithic": [
+    {
+      "system": "terrain",
+      "file": "terrain/terrain.glb",
+      "kind": "monolithic",
+      "objects": 2,
+      "heightfield": true
+    },
+    {
+      "system": "structures",
+      "file": "structures/structures.glb",
+      "kind": "monolithic",
+      "objects": 81
+    },
+    {
+      "system": "scenery",
+      "file": "scenery/scenery.glb",
+      "kind": "monolithic",
+      "objects": 12
+    },
+    {
+      "system": "statue",
+      "file": "statue/statue.glb",
+      "kind": "monolithic",
+      "objects": 4
+    },
+    {
+      "system": "lava",
+      "file": "lava/lava.glb",
+      "kind": "monolithic",
+      "objects": 20
+    },
+    {
+      "system": "miscFx",
+      "file": "miscFx/miscFx.glb",
+      "kind": "monolithic",
+      "objects": 97
+    },
+    {
+      "system": "birchTrees",
+      "file": "vegetation/birchTrees.glb",
+      "kind": "monolithic",
+      "objects": 25
+    },
+    {
+      "system": "cherryTrees",
+      "file": "vegetation/cherryTrees.glb",
+      "kind": "monolithic",
+      "objects": 29
+    },
+    {
+      "system": "oakTrees",
+      "file": "vegetation/oakTrees.glb",
+      "kind": "monolithic",
+      "objects": 19
+    },
+    {
+      "system": "fences",
+      "file": "fences/fences.glb",
+      "kind": "monolithic",
+      "objects": 5
+    },
+    {
+      "system": "benches",
+      "file": "benches/benches.glb",
+      "kind": "monolithic",
+      "objects": 6
+    },
+    {
+      "system": "lanterns",
+      "file": "lanterns/lanterns.glb",
+      "kind": "monolithic",
+      "objects": 11
+    },
+    {
+      "system": "poleLights",
+      "file": "poleLights/poleLights.glb",
+      "kind": "monolithic",
+      "objects": 37
+    },
+    {
+      "system": "areas",
+      "file": "areas/areas.glb",
+      "kind": "monolithic",
+      "objects": 225,
+      "markers": [
+        "projectsHut",
+        "skillsSphere",
+        "contactBoard"
+      ]
+    }
+  ],
+  "instanced": [
+    {
+      "system": "rocks",
+      "kind": "instanced",
+      "visual": "rocks/rocksVisual.glb",
+      "references": "rocks/rocksReferences.glb",
+      "templates": [
+        "rockStyle_boulderCluster",
+        "rockStyle_volcanicShards"
+      ],
+      "count": 204
+    },
+    {
+      "system": "bricks",
+      "kind": "instanced",
+      "visual": "bricks/bricksVisual.glb",
+      "references": "bricks/bricksReferences.glb",
+      "templates": [
+        "brickKerbMesh",
+        "brickPaveMesh",
+        "brickPileMesh"
+      ],
+      "count": 80
+    },
+    {
+      "system": "flowers",
+      "kind": "instanced",
+      "visual": "flowers/flowersVisual.glb",
+      "references": "flowers/flowersReferences.glb",
+      "templates": [
+        "contact",
+        "experience",
+        "meadow0",
+        "meadow1",
+        "meadow2",
+        "meadow3",
+        "projects",
+        "skills"
+      ],
+      "count": 36
+    }
+  ],
+  "foliage": [
+    {
+      "system": "bushes",
+      "kind": "foliage",
+      "references": "bushes/bushesReferences.glb",
+      "count": 45
+    },
+    {
+      "system": "treeLeaves",
+      "kind": "foliage",
+      "references": "treeLeaves/treeLeavesReferences.glb",
+      "count": 575,
+      "bySpecies": [
+        "birch",
+        "cherry"
+      ]
+    }
+  ],
+  "colliders": {
+    "file": "colliders/colliders.glb",
+    "count": 83
+  },
+  "references": {
+    "file": "references.glb",
+    "count": 30
+  },
+  "grassMask": "terrainGrass.exr",
+  "grassGrid": {
+    "bounds": 96.0,
+    "gridObject": "Plane.003"
+  }
+}
