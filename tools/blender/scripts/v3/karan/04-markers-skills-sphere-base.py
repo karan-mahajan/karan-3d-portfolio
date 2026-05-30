@@ -40,13 +40,27 @@ SPHERE_RADIUS = 8.4
 SPHERE_CENTER_HEIGHT = 9.10
 FOOTPRINT = (17.0, 17.0, 13.0)
 
+# Pond anchoring + dressing. No flat water plane exists in this build — water is
+# a terrain shader tint (see 02-ground-grass-water.py) — so the waterline is
+# sampled at runtime: fill the depression to just under its lowest containing
+# lip on a ring at the pond edge. Tune these two if the surface reads off.
+WATERLINE_RING_R = 8.0
+WATERLINE_DROP = 0.10
+
 MATERIALS = {
     "skill_base_dark_stone": (0.20, 0.23, 0.20, 1.0),
     "skill_base_edge_stone": (0.42, 0.45, 0.39, 1.0),
     "skill_base_warm_wood": (0.40, 0.20, 0.08, 1.0),
     "skill_base_green_inlay": (0.10, 0.58, 0.34, 1.0),
     "skill_base_ring_glow": (0.34, 0.92, 0.62, 0.55),
-    "skill_base_core_glow": (0.40, 1.00, 0.70, 0.82),
+    "skill_base_core_glow": (0.40, 1.00, 0.70, 1.0),
+    "skill_base_shell_glow": (0.34, 0.92, 0.62, 0.08),
+    "skill_base_halo_glow": (0.40, 1.00, 0.70, 0.12),
+    "skill_base_column_glow": (0.34, 0.92, 0.62, 0.50),
+    "skill_base_waterline_glow": (0.34, 0.92, 0.62, 0.60),
+    "skill_base_subsurface_glow": (0.30, 0.85, 0.60, 0.18),
+    "skill_base_reed": (0.16, 0.42, 0.20, 1.0),
+    "skill_base_lilypad": (0.10, 0.45, 0.22, 1.0),
     "skill_base_footprint": (0.14, 0.22, 0.16, 0.20),
 }
 
@@ -68,6 +82,28 @@ def _height_at(x, z):
     return (terr.matrix_world @ location).z
 
 
+def _waterline_z(x, z, water_bed):
+    """Rim-fill waterline for the pond, sampled from real terrain.
+
+    No flat water plane exists in this build (water is a shader tint on the
+    depression), so fill the bowl to just under its lowest containing lip on a
+    ring at the pond edge. Degrades to a shallow level if the ring degenerates
+    (e.g. flat terrain or a river outflow that drags the minimum to the bed).
+    """
+    lips = []
+    for i in range(24):
+        a = 2.0 * math.pi * i / 24.0
+        h = _height_at(x + math.cos(a) * WATERLINE_RING_R, z + math.sin(a) * WATERLINE_RING_R)
+        if h is not None:
+            lips.append(h)
+    if not lips:
+        return water_bed + 0.6
+    lowest_lip = min(lips)
+    if lowest_lip <= water_bed + 0.05:
+        return water_bed + 0.6
+    return lowest_lip - WATERLINE_DROP
+
+
 def _material(name):
     color = MATERIALS[name]
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
@@ -79,7 +115,23 @@ def _material(name):
         bsdf.inputs["Roughness"].default_value = 0.72
         if "glow" in name:
             bsdf.inputs["Emission Color"].default_value = color
-            bsdf.inputs["Emission Strength"].default_value = 0.9 if "ring" in name else 1.6
+            if "ring" in name:
+                strength = 0.9
+            elif "shell" in name:
+                strength = 0.55
+            elif "halo" in name:
+                strength = 0.85
+            elif "column" in name:
+                strength = 1.0
+            elif "core" in name:
+                strength = 2.2
+            elif "waterline" in name:
+                strength = 1.1
+            elif "subsurface" in name:
+                strength = 0.5
+            else:
+                strength = 1.6
+            bsdf.inputs["Emission Strength"].default_value = strength
         if len(color) == 4 and color[3] < 1.0:
             bsdf.inputs["Alpha"].default_value = color[3]
             mat.blend_method = "BLEND"
@@ -164,10 +216,10 @@ def _torus(name, major_radius, minor_radius, location, rotation, material):
     return _place(obj)
 
 
-def _sphere(name, radius, location, material):
+def _sphere(name, radius, location, material, segments=32, ring_count=16):
     bpy.ops.mesh.primitive_uv_sphere_add(
-        segments=32,
-        ring_count=16,
+        segments=segments,
+        ring_count=ring_count,
         radius=radius,
         location=location,
     )
@@ -240,6 +292,7 @@ def run():
         print(f"  [ABORT] invalid terrain at ({x:.1f},{z:.1f}) height=None")
         return
     ground = water_bed + FLOAT_CLEARANCE
+    waterline = _waterline_z(x, z, water_bed)
 
     _cleanup()
 
@@ -249,6 +302,13 @@ def run():
     green = _material("skill_base_green_inlay")
     ring_glow = _material("skill_base_ring_glow")
     core_glow = _material("skill_base_core_glow")
+    shell_glow = _material("skill_base_shell_glow")
+    halo_glow = _material("skill_base_halo_glow")
+    column_glow = _material("skill_base_column_glow")
+    waterline_glow = _material("skill_base_waterline_glow")
+    subsurface_glow = _material("skill_base_subsurface_glow")
+    reed_mat = _material("skill_base_reed")
+    lilypad_mat = _material("skill_base_lilypad")
     footprint_mat = _material("skill_base_footprint")
 
     # Floating layered plinth: high enough to leave visible air over the pond,
@@ -257,16 +317,39 @@ def run():
     _cylinder("skillSphere_plinth_upper", 4.28, 0.26, (x, z, ground + 0.45), edge_stone, vertices=96, scale=(1.01, 0.95, 1.0))
     _cylinder("skillSphere_inlay_disc", 3.42, 0.06, (x, z, ground + 0.625), green, vertices=96, scale=(1.00, 0.92, 1.0))
     _cylinder("skillSphere_core_pedestal", 1.06, 1.16, (x, z, ground + 1.24), warm_wood, vertices=18, scale=(1.0, 1.0, 1.0))
-    _sphere("skillSphere_core_preview", 0.56, (x, z, ground + SPHERE_CENTER_HEIGHT), core_glow)
 
-    # Five preview orbit rings echo the Three.js runtime globe. They are
-    # static Blender geometry; Three.js will animate live skill labels later.
     center = (x, z, ground + SPHERE_CENTER_HEIGHT)
-    _torus("skillSphere_orbit_ring_equator", SPHERE_RADIUS, 0.032, center, (0.0, 0.0, 0.0), ring_glow)
-    _torus("skillSphere_orbit_ring_meridian_a", SPHERE_RADIUS, 0.028, center, (math.radians(90.0), 0.0, math.radians(0.0)), ring_glow)
-    _torus("skillSphere_orbit_ring_meridian_b", SPHERE_RADIUS, 0.026, center, (math.radians(90.0), 0.0, math.radians(45.0)), ring_glow)
-    _torus("skillSphere_orbit_ring_meridian_c", SPHERE_RADIUS, 0.024, center, (math.radians(90.0), 0.0, math.radians(90.0)), ring_glow)
-    _torus("skillSphere_orbit_ring_meridian_d", SPHERE_RADIUS, 0.022, center, (math.radians(90.0), 0.0, math.radians(135.0)), ring_glow)
+    cz = ground + SPHERE_CENTER_HEIGHT
+
+    # Layered glowing nucleus: bright inner orb + soft halo + rising energy
+    # column. Each part is a separate centred object so Three.js can fetch it by
+    # name and pulse/rotate it independently of the orbit cage.
+    _sphere("skillSphere_core_inner", 0.8, center, core_glow)
+    _sphere("skillSphere_core_halo", 2.0, center, halo_glow, segments=48, ring_count=24)
+    # Column spans pedestal top (ground+1.82) to core centre (ground+9.10):
+    # length 7.28, centred at ground+5.46.
+    _cylinder("skillSphere_energy_column", 0.08, 7.28, (x, z, ground + 5.46), column_glow, vertices=12)
+
+    # Orbit cage: thickened equator + 4 meridians read as a visible globe frame.
+    # Origins sit at the sphere centre so Three.js spins them about the core.
+    _torus("skillSphere_orbit_ring_equator", SPHERE_RADIUS, 0.08, center, (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_ring_meridian_a", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(0.0)), ring_glow)
+    _torus("skillSphere_orbit_ring_meridian_b", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(45.0)), ring_glow)
+    _torus("skillSphere_orbit_ring_meridian_c", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(90.0)), ring_glow)
+    _torus("skillSphere_orbit_ring_meridian_d", SPHERE_RADIUS, 0.08, center, (math.radians(90.0), 0.0, math.radians(135.0)), ring_glow)
+
+    # Horizontal latitude rings (rotation 0) above/below the equator so the cage
+    # reads as a globe, not a meridian fan. r = sqrt(R^2 - h^2) per height.
+    lat_mid_r = math.sqrt(SPHERE_RADIUS**2 - 4.2**2)   # ~7.27
+    lat_high_r = math.sqrt(SPHERE_RADIUS**2 - 6.3**2)  # ~5.56
+    _torus("skillSphere_orbit_lat_north_mid", lat_mid_r, 0.08, (x, z, cz + 4.2), (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_lat_south_mid", lat_mid_r, 0.08, (x, z, cz - 4.2), (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_lat_north_high", lat_high_r, 0.06, (x, z, cz + 6.3), (0.0, 0.0, 0.0), ring_glow)
+    _torus("skillSphere_orbit_lat_south_high", lat_high_r, 0.06, (x, z, cz - 6.3), (0.0, 0.0, 0.0), ring_glow)
+
+    # Faint emissive shell membrane gives the cage a glowing globe surface
+    # without a solid ball (low alpha + BLEND via the _material helper).
+    _sphere("skillSphere_orb_shell", SPHERE_RADIUS, center, shell_glow, segments=48, ring_count=24)
 
     # Four slim posts visually cradle the runtime sphere without boxing it in.
     for i, angle in enumerate((45, 135, 225, 315)):
@@ -281,6 +364,97 @@ def run():
         cap = _sphere(f"skillSphere_support_cap_{i:02d}", 0.28, (px, pz, ground + 4.98), ring_glow)
         cap.scale = (1.0, 1.0, 0.72)
 
+    # === 1. Waterline anchor — tie the floating orb to the pond surface. ===
+    # `waterline` is the rim-fill level sampled above. Ring sits just outside the
+    # plinth; the broad disc glows faintly just under the surface.
+    _torus("skillSphere_waterline_ring", 5.7, 0.10, (x, z, waterline), (0.0, 0.0, 0.0), waterline_glow)
+    _cylinder("skillSphere_waterline_disc", 6.5, 0.05, (x, z, waterline - 0.08), subsurface_glow, vertices=72)
+
+    # Approach corridor: pond center → world origin (island interior, ~NE).
+    # Reeds/rocks/pads skip a wedge around it so the walk-in path stays clear.
+    approach_angle = math.atan2(-z, -x)
+
+    def _near_approach(angle, half_wedge=math.radians(26.0)):
+        d = abs((angle - approach_angle + math.pi) % (2.0 * math.pi) - math.pi)
+        return d < half_wedge
+
+    # === 2a. Reeds — clusters of slim blades emerging from the water. ===
+    reed_idx = 0
+    for ci, deg in enumerate((15, 70, 120, 165, 210, 255, 300, 340)):
+        base_a = math.radians(deg)
+        if _near_approach(base_a):
+            continue
+        cluster_r = 6.2 + (ci % 3) * 0.9
+        cx = x + math.cos(base_a) * cluster_r
+        cy = z + math.sin(base_a) * cluster_r
+        for b in range(3 + (ci % 3)):
+            spread = 0.18 + 0.09 * b
+            bx = cx + math.cos(base_a + b * 1.7) * spread
+            by = cy + math.sin(base_a + b * 1.7) * spread
+            bed = _height_at(bx, by)
+            if bed is None:
+                continue
+            tip_above = 0.55 + 0.30 * ((ci + b) % 3)
+            height = min(max(bed, waterline) + tip_above - bed, 1.9)
+            reed = _cylinder(f"skillSphere_reed_{reed_idx:02d}", 0.04, height, (bx, by, bed + height * 0.5), reed_mat, vertices=6)
+            lean = math.radians(6.0 + 2.0 * (b % 3))
+            reed.rotation_euler = (lean * math.cos(base_a), lean * math.sin(base_a), 0.0)
+            reed_idx += 1
+
+    # === 2b. Lily pads — flat oval discs floating at the surface. ===
+    pad_idx = 0
+    for pi, deg in enumerate((40, 95, 150, 230, 285, 320)):
+        a = math.radians(deg)
+        if _near_approach(a):
+            continue
+        pad_r = 6.0 + (pi % 4) * 0.7
+        pad = _cylinder(
+            f"skillSphere_lilypad_{pad_idx:02d}",
+            0.38 + 0.06 * (pi % 4), 0.03,
+            (x + math.cos(a) * pad_r, z + math.sin(a) * pad_r, waterline + 0.015),
+            lilypad_mat, vertices=20,
+        )
+        pad.scale = (1.0, 0.82, 1.0)
+        pad_idx += 1
+
+    # === 2c. Rocks — squashed boulders embedded at the pond rim. ===
+    rock_idx = 0
+    for ri, deg in enumerate((25, 80, 135, 190, 245, 300, 350)):
+        a = math.radians(deg)
+        if _near_approach(a):
+            continue
+        rock_r = 6.5 + (ri % 3) * 0.8
+        rx = x + math.cos(a) * rock_r
+        ry = z + math.sin(a) * rock_r
+        bed = _height_at(rx, ry)
+        if bed is None:
+            continue
+        size = 0.45 + 0.12 * (ri % 4)
+        rock = _sphere(f"skillSphere_rock_{rock_idx:02d}", size, (rx, ry, max(bed, waterline) - 0.10), edge_stone if ri % 2 == 0 else dark_stone)
+        rock.scale = (1.0 + 0.12 * (ri % 3), 0.9, 0.6 + 0.08 * (ri % 2))
+        rock_idx += 1
+
+    # === 3. Stepping stones — a walkable run from the shore to the plinth. ===
+    # March outward along the approach until terrain rises above the waterline.
+    step_dir = (math.cos(approach_angle), math.sin(approach_angle))
+    step_idx = 0
+    shore = None
+    for s in range(6):
+        sr = 5.6 + s * 1.5
+        sx = x + step_dir[0] * sr
+        sy = z + step_dir[1] * sr
+        bed = _height_at(sx, sy)
+        if bed is None:
+            break
+        top_z = max(bed, waterline) + 0.06
+        _cylinder(f"skillSphere_steppingstone_{step_idx:02d}", 0.78 - 0.04 * s, 0.25, (sx, sy, top_z - 0.125), edge_stone, vertices=20)
+        step_idx += 1
+        if bed > waterline + 0.05:
+            shore = (sx, sy, bed)
+            break
+    if shore is not None:
+        _cylinder("skillSphere_approach_pad", 1.9, 0.08, (shore[0], shore[1], shore[2] + 0.04), green, vertices=48)
+
     _add_ref(x, z, ground)
     _add_footprint(x, z, water_bed, footprint_mat)
 
@@ -291,7 +465,9 @@ def run():
         print(f"  [WARN] save failed: {e}")
     print(
         f"  built floating skill sphere at ({x:.1f},{z:.1f}) "
-        f"water_bed={water_bed:.3f} base={ground:.3f} radius={SPHERE_RADIUS:.1f}"
+        f"water_bed={water_bed:.3f} waterline={waterline:.3f} base={ground:.3f} "
+        f"radius={SPHERE_RADIUS:.1f} | reeds={reed_idx} pads={pad_idx} "
+        f"rocks={rock_idx} steps={step_idx}"
     )
 
 
