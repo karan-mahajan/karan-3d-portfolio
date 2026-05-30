@@ -48,7 +48,7 @@ This is a standing rule, in addition to the per-prompt rules below.
 - `30d8090` — B-loader: **first WebGPU frame** (GlbV3World + TSL Sky; world loads +
   collides + renders, 9/9 headless checks). Effects still disabled (TSL port
   pending) + day forced. ✅
-- `4895724` — **B0 effects port complete**: Fireflies/Rain/WindLines/Leaves/
+- `fe81906` — **B0 effects port complete**: Fireflies/Rain/WindLines/Leaves/
   stars/spotShaft + PostFX tilt-shift all GLSL→TSL; `_b0ForceDay`+`_tslReady`
   crutches deleted; prewarm restored. 16/16 WebGPU night checks + 9/9 first-frame
   + visual day/night non-blank. World fully styled day AND night. ✅
@@ -214,6 +214,30 @@ the learning wins — but re-verify from the actual file before relying on it.
   incl. hidden GLSL, and the prewarm snaps to night. **To finish B0:** port each
   effect to TSL, flip its `_tslReady` flag (re-show mesh), port TimeOfDay
   stars+spotShaft, then delete `_b0ForceDay` + restore prewarm.
+- **Grass mask (`static/world/terrainGrass.exr`) — decoded as FLOAT, 512², verified:**
+  RGBA 32-bit, `colorInteropID="data"` (non-colour). **GREEN = grass density,
+  range 0→0.64** (mean 0.178; 41% of pixels >0.1, 26% >0.5). **RED, BLUE = all
+  zero. ALPHA = 1.** ⇒ (a) green max is **0.64 not 1.0**, so Bruno's
+  `step(g-0.4,0.1)` hide + direct `g` height/width scaling must be **remapped**
+  for karan (e.g. normalise by ~0.64, threshold ~0.12–0.15). (b) **NO water
+  channel** — Bruno drives water + the sand/teal/blue terrain gradient off `.b`;
+  karan's `.b` is empty, so **water/ocean CANNOT be mask-driven** here — it must
+  come from the terrain pond/river basin geometry or a separate authored source.
+  Decode trick: `three`'s `EXRLoader().setDataType(FloatType).parse(arrayBuffer)`
+  runs headless in Node (no DOM); `magick`/`oiiotool` can't read this EXR.
+  Grid: Plane.003 ±96 (192 wide) ⇒ mask UV = `(worldXZ + 96)/192` (== Bruno's
+  `pos/128/1.5+0.5`); orientation vs world UNVERIFIED — confirm visually (memory
+  reference_terrain_mask_screen_axes warns of an axis swap).
+- **Bruno grass algorithm (folio-2025, three/webgpu TSL, verified):** 280×280
+  blade grid (one triangle each), camera-following via modulo wrap
+  (`loop = mod(pos-center+size/2, size)-size/2`), each blade billboarded to camera
+  (`atan2(camZ-z, camX-x) - π/2`, rotate xz). Per blade: sample mask `.g`; height
+  = `bladeHeight(0.6) * (0.6*rand+0.4) * (perlin(pos*0.0321)+0.5) * g`; width =
+  `bladeWidth(0.1) * shape * g`; tip-only wind = `wind(pos.xz)*tipness*height*2`
+  (two-octave Perlin, dir `π*0.6`); hidden blades pushed `y += step(g-0.4,0.1)*100`.
+  Material = `MeshLambertNodeMaterial`, `normal=(0,1,0)`, `shadow=(1-tipness)*g`.
+  Terrain colour (Bruno Terrain.js) = `mix(gradient(.b), grassColor #b8b62e, .g)`
+  — for karan drop the `.b` gradient (empty); use `mix(dirtColor, grassColor, g)`.
 - **Facade stubs:** `GlbV3World` exposes `terrain/nature/paths/billboards/signs/
   refs` matching the old GlbWorld surface so App.js + ActionPrompts + StreetLights
   + Teleport boot unchanged. `billboards.items=[]`, `signs.{skills,contact}
@@ -308,20 +332,61 @@ Verify each interaction headless. One commit after I approve. No Claude trailer.
 
 ---
 
-## Phase D — Grass + wind (Bruno grass → WebGL-free TSL)
+## Phase D — Grass + terrain colour (Bruno grass → TSL)  ← DO THIS NEXT (user priority)
 
 ```
-v3 runtime Phase D: grass + wind. Read memory + docs/v3-runtime/ (FIRST the
-SESSION-PROMPTS.md "Learnings log"; before finishing, append learnings + update
-the next prompt + bump Progress/commits). Renderer is WebGPU/TSL, so port Bruno's folio-2025 Grass.js (sources at
-~/Documents/Projects/folio-2025/sources/Game/World/Grass.js) DIRECTLY as TSL
-(no GLSL backport needed now): 280×280 = 78,400-blade camera-following grid,
-wrapped by modulo, density+colour from the terrain grass mask
-(static/world/terrainGrass.exr green channel), driven by the shared Wind uniform.
-Grid bounds from manifest.grassGrid (±96). Verify the mask channels first.
+v3 runtime Phase D: grass + terrain colour. Make the world look real — replace the
+flat placeholder ground (GlbV3World.#neutralizeTerrainMask) with a mask-driven
+grass field + terrain colour. Renderer is WebGPU/TSL.
 
-Verify headless (grass visible, follows camera). One commit after approval. No
-Claude trailer.
+FIRST read docs/v3-runtime/SESSION-PROMPTS.md "Learnings log" — the grass-mask +
+Bruno-grass-algorithm entries are ALREADY VERIFIED there (mask decoded, Bruno algo
+extracted); don't re-investigate. Before finishing: append learnings + update this
+prompt + Progress/commits. Context: memory project_v3_runtime_phase_a + docs.
+Last commit chain ends at the first-frame loader (30d8090). World data is in
+static/world/ — do NOT edit it or tools/blender/.
+
+VERIFIED FACTS (from the Learnings log — trust these):
+- Mask static/world/terrainGrass.exr, RGBA float 512². GREEN = grass density,
+  range 0→0.64 (mean 0.178). RED/BLUE empty, ALPHA=1. So: NORMALISE/REMAP green
+  (it never reaches 1.0) — don't copy Bruno's raw step(g-0.4,0.1)/direct-g scaling
+  or you'll stunt/hide most blades. Suggested: gN = clamp(g/0.6,0,1); show where
+  g>~0.12; height/width ∝ smoothstep(0.12, 0.5, g).
+- NO water/blue channel — terrain colour can't use Bruno's .b sand/teal/blue
+  gradient. Use mix(dirtColor, grassColor #b8b62e, gN). Water/ocean is a SEPARATE
+  later step (basin geometry, not this mask).
+- Grid: Plane.003 ±96 (192 wide). Mask UV = (worldXZ+96)/192. Load EXR with
+  EXRLoader (three/examples/jsm/loaders/EXRLoader.js; add an EXR path to
+  Utils/Loader.js — it only has PNG today; set NearestFilter, flipY=false,
+  colorSpace=NoColorSpace, type per decode). ORIENTATION vs world is UNVERIFIED —
+  sample, screenshot, and flip/swap UV axes if grass lands wrong (memory
+  reference_terrain_mask_screen_axes warns of an axis swap).
+- Bruno algorithm is in the Learnings log (280×280 billboard blades, modulo-wrap
+  camera grid, tip-weighted two-octave Perlin wind, MeshLambertNodeMaterial).
+  Source to mirror: ~/Documents/Projects/folio-2025/sources/Game/World/Grass.js +
+  Terrain.js + Wind.js (three/webgpu TSL — near drop-in).
+
+BUILD:
+1. New src/World/Grass.js (TSL, three/webgpu). Port Bruno's grass with the karan
+   remap above. Feed it the shared src/World/Wind.js uniform (already constructed
+   in App). Add to scene; update center=playerXZ each tick. A perlin noise texture
+   is needed (Bruno Noises.js generates one) — generate a small repeating perlin
+   DataTexture or reuse Wind's noise.
+2. Terrain colour: replace/repurpose GlbV3World.#neutralizeTerrainMask — give the
+   terrain a TSL MeshLambertNodeMaterial colourNode = mix(dirt, grass, gN) sampling
+   the same mask. (Keep it cheap; full Bruno Terrain.js parity optional.)
+3. Re-enable wind in App if needed (Wind is renderer-agnostic; verify it's TSL-safe
+   — it built a DataTexture in v2; on WebGPU sample via texture()).
+
+VERIFY: grass renders in the right places + follows the camera + sways. WebGPU
+asserts via the verify-v3-first-frame.mjs pattern (drawcalls jump); VISUAL
+screenshot by launching Chromium WITHOUT WebGPU flags (WebGL2 fallback — the only
+backend Playwright captures; symlink node_modules/playwright{,-core} → /tmp). Shots
+under .verify/shots/<date>/. Iterate the remap/orientation until it reads as grass.
+
+Rules: VERIFY from files, never guess; don't deviate from Bruno unless 99% sure;
+do NOT touch tools/blender/ or static/world/; one commit after I approve; NO
+Co-Authored-By trailer.
 ```
 
 ---
