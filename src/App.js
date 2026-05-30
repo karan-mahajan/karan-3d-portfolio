@@ -82,12 +82,12 @@ export class App extends EventTarget {
     this.teleport = null;
     this.transitionFx = null;
 
-    // Shared wind source — drives the grass field today; future leaves /
-    // water ripples / particle systems will read the same uniforms.
+    // Shared wind source — drives the grass field + wind lines today; future
+    // leaves / water ripples read the same uniforms (GLSL) / nodes (TSL).
     this.wind = new Wind();
-    // Grass disabled — green blade tufts read poorly on the v2 baked terrain.
-    // Re-enable by un-commenting this and the load() call in boot().
-    // this.grass = new Grass(this.scene, this.loader, this.world.terrain, this.wind);
+    // Grass is a v3 runtime TSL blade field driven by the Blender grass mask +
+    // terrain heightfield — both only exist after world.loadAssets(), so it's
+    // constructed in boot() (and wired into TimeOfDay) once the world is loaded.
     this.grass = null;
 
     // Atmospheric effects — added during construction so they exist on first
@@ -318,6 +318,19 @@ export class App extends EventTarget {
 
     const worldResult = await worldLoadPromise;
     this.physics.addStaticGround(this.world.terrain);
+
+    // Grass — v3 runtime TSL blade field. Built now that the terrain
+    // heightfield + Blender grass mask exist. Blade count scales with the
+    // quality tier (√multiplier keeps the per-blade area roughly constant).
+    const grassSub = Math.max(64, Math.round(820 * Math.sqrt(this.quality.grassMultiplier ?? 1)));
+    this.grass = new Grass(this.scene, this.world.terrain, this.wind, this.world.glb.grassMask, {
+      subdivisions: grassSub,
+      gridBounds: this.world.grassGrid?.bounds ?? 96,
+    });
+    // Wire grass into the day/night cycle (it was null at TimeOfDay
+    // construction) and snap it to the current mode's grass tint via reapply().
+    this.timeOfDay.grass = this.grass;
+    this.timeOfDay.reapply();
 
     this.player = new Player(
       this.scene,

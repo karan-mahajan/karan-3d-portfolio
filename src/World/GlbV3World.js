@@ -1,4 +1,6 @@
 import * as THREE from 'three/webgpu';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import { Fn, positionWorld, texture, vec2, mix, color, uniform, clamp } from 'three/tsl';
 
 /**
  * v3 blend-driven world loader (Bruno-style, manifest-driven).
@@ -38,6 +40,16 @@ export class GlbV3World {
     this.scene.add(this.root);
 
     this.manifest = null;
+
+    // Terrain grass mask (terrainGrass.exr). Channel G = grass density / ground
+    // tint (verified: R/B empty, A=1). Loaded in load(); consumed by the
+    // terrain ground material here and by the runtime Grass field. ±96 grid
+    // (Plane.003) → world UV = worldXZ / (2*bounds) + 0.5.
+    this.grassMask = null;
+    this.grassGrid = { bounds: 96 };
+    // Uniform exposed so day/night can tint the ground grass colour alongside
+    // the blades (TimeOfDay drives it through Grass.syncColor in Phase D).
+    this.groundGrassColor = uniform(color('#5f7a39'));
 
     this.terrain = {
       mesh: null,
@@ -101,6 +113,31 @@ export class GlbV3World {
     });
     this.manifest = manifest;
 
+    if (manifest.grassGrid?.bounds) this.grassGrid.bounds = manifest.grassGrid.bounds;
+
+    // 0. Grass mask (EXR) — needed by the terrain ground material below + the
+    // runtime Grass field. Load in parallel with geometry; tolerate failure
+    // (falls back to a flat placeholder ground colour).
+    const maskPromise = manifest.grassMask
+      ? this.loader
+          .loadEXR(GlbV3World.ASSET_BASE + manifest.grassMask)
+          .then((tex) => {
+            tex.wrapS = THREE.ClampToEdgeWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.generateMipmaps = false;
+            tex.colorSpace = THREE.NoColorSpace;
+            tex.flipY = false; // EXR data is bottom-up already; match GN authoring
+            tex.needsUpdate = true;
+            this.grassMask = tex;
+          })
+          .catch((err) => {
+            console.warn('[GlbV3World] grass mask load failed:', err?.message || err);
+          })
+      : Promise.resolve();
+    await maskPromise;
+
     // 1. Monolithic geometry — load all in parallel, add to the scene.
     const monolithic = manifest.monolithic ?? [];
     const loaded = await Promise.all(
@@ -125,7 +162,7 @@ export class GlbV3World {
       if (entry.heightfield) {
         this.#findTerrainMesh(group);
         this.#bakeHeightfield();
-        this.#neutralizeTerrainMask();
+        this.#applyTerrainGroundMaterial();
       }
       if (entry.markers) {
         for (const markerName of entry.markers) {
@@ -223,25 +260,43 @@ export class GlbV3World {
   }
 
   /**
-   * The terrain's GLB material carries a red/black placement-MASK texture
-   * (`terrainFurnitures`) as its baseColorTexture, which renders the ground as
-   * a red mask. The real terrain colour comes from the Bruno grass-mask shader
-   * in Phase D. Until then, strip the mask and apply a neutral ground colour so
-   * the milestone reads as "unstyled ground", not "broken". Removed when the
-   * Phase D terrain/grass shader installs the proper material.
+   * Install the real terrain ground material (Phase D). The GLB material's
+   * baseColorTexture is the red/black `terrainFurnitures` placement mask — not
+   * a colour. We replace the whole material with a Bruno-style node material
+   * that derives the ground colour from the grass mask: the G channel (grass
+   * density) blends a dirt base toward grass green, sampled by world XZ over the
+   * ±96 grass grid (`uv = worldXZ / (2*bounds) + 0.5`, matching the Blender GN
+   * + the runtime Grass field so blades and ground line up exactly).
+   *
+   * MeshLambertNodeMaterial keeps the sun/shadow/fog response, so the ground
+   * dims at night through the same light rig as everything else. Where the mask
+   * is 0 (water basins, paths) the ground stays dirt — water + path slabs cover
+   * those zones in their own passes. Falls back to a flat dirt colour if the
+   * mask failed to load.
    */
-  #neutralizeTerrainMask() {
+  #applyTerrainGroundMaterial() {
     const mesh = this.terrain.mesh;
     if (!mesh) return;
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const mat of mats) {
-      if (!mat) continue;
-      if (mat.map) { mat.map = null; }
-      if (mat.color) mat.color.set('#6f7d52'); // muted grass-dirt placeholder
-      if ('metalness' in mat) mat.metalness = 0;
-      if ('roughness' in mat) mat.roughness = 1;
-      mat.needsUpdate = true;
+
+    const dirt = color('#8f7d54');
+
+    const mat = new MeshLambertNodeMaterial();
+    if (this.grassMask) {
+      const invSpan = 1 / (this.grassGrid.bounds * 2);
+      mat.colorNode = Fn(() => {
+        const uv = vec2(positionWorld.x, positionWorld.z).mul(invSpan).add(0.5);
+        const g = texture(this.grassMask, uv).g;
+        if (globalThis.__grassMaskDebug) return vec3(g, g, g);
+        // Mask G tops out ~0.5 on full grass; lift so grassy land reads clearly
+        // green while paths/basins (G≈0) stay dirt.
+        const blend = clamp(g.mul(1.8), 0, 1);
+        return mix(dirt, this.groundGrassColor, blend);
+      })();
+    } else {
+      mat.colorNode = dirt;
     }
+    mesh.material = mat;
+    mesh.receiveShadow = true;
   }
 
   // ── Colliders ─────────────────────────────────────────────────────────────

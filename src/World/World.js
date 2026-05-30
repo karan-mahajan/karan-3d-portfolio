@@ -29,10 +29,15 @@ export class World {
     this.signs = this.glb.signs;
     this.foliage = null;
     this.water = null;
+    // Grass mask (terrainGrass.exr) — populated by GlbV3World.load(); the
+    // runtime Grass field samples it. Null until loadAssets() resolves.
+    this.grassMask = null;
+    this.grassGrid = this.glb.grassGrid;
   }
 
   async loadAssets(loader, physics = null, _opts = {}) {
     await this.glb.load(physics);
+    this.grassMask = this.glb.grassMask;
 
     return {
       sections: Object.keys(this.glb.refs.sections).length,

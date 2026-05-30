@@ -1,16 +1,18 @@
 import * as THREE from 'three/webgpu';
+import { uniform, texture, vec2 } from 'three/tsl';
 
 /**
  * Global wind source. Owns shared uniforms (time, direction, strength) and a
- * generated low-frequency noise DataTexture. Any ShaderMaterial that needs to
- * sway with the world wind can:
+ * generated low-frequency noise DataTexture.
  *
- *   1. spread `wind.uniforms` into its own `uniforms` block, and
- *   2. paste `Wind.windOffsetGLSL` into its vertex shader, then call
- *      `vec2 windOffset(vec2 worldXZ)` wherever it wants to bend geometry.
- *
- * Future leaves/water/particle systems will share the same time + direction,
- * so motion across the scene reads as one wind, not many.
+ * Two consumer paths share the SAME live values so the whole scene reads as
+ * one wind, not many:
+ *   - GLSL (legacy): spread `wind.uniforms` into a ShaderMaterial + paste
+ *     `Wind.windOffsetGLSL` into its vertex shader.
+ *   - TSL (WebGPU): call `wind.offsetNode(worldXZ)` inside a node material's
+ *     positionNode — returns a vec2 sway offset in world XZ, sampling the same
+ *     noise texture and driven by the same time/direction/strength, exposed as
+ *     TSL `uniform` nodes (`this.nodes`) synced from `uniforms` each frame.
  */
 export class Wind {
   /**
@@ -19,12 +21,41 @@ export class Wind {
    * @param {number} [opts.strength] - Sway magnitude in world units (0..~1).
    */
   constructor({ direction = [1, 0.35], strength = 0.35 } = {}) {
+    const dir = new THREE.Vector2(direction[0], direction[1]).normalize();
+    const noise = this.#createNoiseTexture(64);
     this.uniforms = {
       uWindTime: { value: 0 },
-      uWindDir: { value: new THREE.Vector2(direction[0], direction[1]).normalize() },
+      uWindDir: { value: dir },
       uWindStrength: { value: strength },
-      uWindNoise: { value: this.#createNoiseTexture(64) },
+      uWindNoise: { value: noise },
     };
+
+    // TSL mirror of the same values for WebGPU node-material consumers
+    // (grass, …). Synced from `uniforms` in update() so GLSL + TSL paths read
+    // one identical wind. `texNode` samples the shared noise DataTexture.
+    this.nodes = {
+      time: uniform(0),
+      dir: uniform(vec2(dir.x, dir.y)),
+      strength: uniform(strength),
+    };
+    this._noiseTex = noise;
+  }
+
+  /**
+   * TSL equivalent of `windOffset(vec2)` — returns a vec2 world-XZ sway offset
+   * for a node material's positionNode. Mirrors the GLSL two-octave sample
+   * (low-frequency drift + faster gust) so TSL grass sways in lockstep with any
+   * legacy GLSL consumer. Pass the blade's world XZ as a TSL node.
+   */
+  offsetNode(worldXZ) {
+    const dir = this.nodes.dir;
+    const t = this.nodes.time;
+    const uvA = worldXZ.mul(0.03).add(dir.mul(t).mul(0.04));
+    const nA = texture(this._noiseTex, uvA).r.sub(0.5);
+    const uvB = worldXZ.mul(0.11).add(dir.mul(t).mul(0.22));
+    const nB = texture(this._noiseTex, uvB).r.sub(0.5);
+    const sway = nA.mul(2.0).add(nB.mul(0.8));
+    return dir.mul(sway).mul(this.nodes.strength);
   }
 
   /**
@@ -56,6 +87,11 @@ export class Wind {
   /** Advances wind time. Call once per frame from the app tick. */
   update(delta) {
     this.uniforms.uWindTime.value += delta;
+    // Mirror live values into the TSL nodes (one wind across GLSL + TSL).
+    this.nodes.time.value = this.uniforms.uWindTime.value;
+    const d = this.uniforms.uWindDir.value;
+    this.nodes.dir.value.set(d.x, d.y);
+    this.nodes.strength.value = this.uniforms.uWindStrength.value;
   }
 
   /**

@@ -1,296 +1,305 @@
 import * as THREE from 'three/webgpu';
-import { patchShadowTint } from './Palette.js';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import {
+  Fn, attribute, uniform, varying, positionGeometry,
+  vec2, vec3, float, color, texture, step, mod, clamp, mix, sin, cos,
+} from 'three/tsl';
 
 /**
- * Quaternius GLB grass field.
+ * Runtime grass field — karan's authored curved-blade grass ("myGrass") ported
+ * to a TSL instanced field for the WebGPU backend.
  *
- * InstancedMesh per grass type. Placement is deterministic (seeded RNG)
- * and filtered against paths, water surfaces, and tree trunks at load
- * time — no per-frame work.
+ * Unlike Bruno's flat camera-billboarded triangle, each blade is the real
+ * 9-vertex arched blade authored in Blender (`Plane.012`): a 4-segment stem
+ * that tapers from a 0.030 m base to a single tip and curves forward, with a
+ * per-vertex `blade_height` [0,1] driving a 6-stop colour ramp (dark olive base
+ * → soft dry-yellow tip), plus a ~10% "dry" variant whose upper stops go brown.
+ * Blades get a random yaw + small ±20° lean (rooted at the base) and a
+ * continuous size multiplier — exactly the GN scatter the blend bakes, but
+ * instanced at runtime instead of the 3.15 M static mesh.
  *
- * Per-type counts (post-exclusion):
- *   grass.glb        — short base tufts
- *   grass-wispy-1/2  — wispy fans for variation
- *   tall-grass.glb   — taller clumps, ring 20–50 only (forest edge / water)
- *
- * Wind: each material's onBeforeCompile injects a tip-bend vertex
- * displacement keyed to the shared `uWindTime` from the Wind class.
- *
- * Day/night cycle: TimeOfDay calls `setColor(hex)` (instant) or tweens
- * `baseColor` and calls `syncColor()` per onUpdate to propagate to materials.
+ * Runtime feasibility (Bruno's technique, kept): a fixed N×N instance grid is
+ * generated once and, each frame, modulo-wrapped into a window centred on the
+ * player inside the vertex node — the same ~N² blades always surround the
+ * player (one draw call, culling off). Density/size fade and water/path
+ * cut-outs come from the terrain grass mask (G channel, ±gridBounds grid,
+ * `uv = worldXZ/(2*bounds)+0.5`); blade base Y is sampled from a height texture
+ * baked off the terrain heightfield so blades sit on the real ground; the tip
+ * bends with the shared Wind module (one wind across the scene).
  */
 
-// Capped at 40 so grass tufts stop before the sandy shore band (r ≈ 40–45)
-// and never spawn on the beach or in the surf.
-const FIELD_RADIUS = 40;
-// Each Quaternius tuft is ~260 triangles (a tuft = several blade meshes).
-// The prompt's 3500+600+600+300 = 5000 totals ≈ 1.3M tris just for grass —
-// 66% of the scene budget at the time, dragging real-GPU FPS to 40-50.
-// These reduced counts keep coverage dense-looking without busting that
-// budget: ~1700 instances ≈ 440k tris (~3× the trees, manageable).
-const SHORT_COUNT  = 1200;
-const WISPY1_COUNT = 220;
-const WISPY2_COUNT = 220;
-const TALL_COUNT   = 100;
-// Tall grass only spawns in the outer ring — keeps it away from the spawn
-// plaza and reads as "forest edge" rather than ankle-deep clutter at spawn.
-const TALL_RING_INNER = 20;
-const TALL_RING_OUTER = FIELD_RADIUS;
-const TREE_EXCLUSION_R = 1.5;
-const GROUND_LIFT = 0.01;
+// 9-vert curved blade authored on Plane.012. Blender uses Z-up / +Y-forward;
+// remapped here to three's Y-up: three(x, y, z) = blender(x_width, z_up, y_fwd).
+const BLADE_HEIGHT_MAX = 0.55;
+const BLENDER_VERTS = [
+  [-0.030, 0.000, 0.000], [0.030, 0.000, 0.000],   // base
+  [-0.026, 0.025, 0.165], [0.026, 0.025, 0.165],   // seg 1
+  [-0.020, 0.065, 0.310], [0.020, 0.065, 0.310],   // seg 2
+  [-0.013, 0.120, 0.450], [0.013, 0.120, 0.450],   // seg 3
+  [0.000, 0.170, 0.550],                           // tip
+];
+const BLADE_FACES = [0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4, 4, 5, 7, 4, 7, 6, 6, 7, 8];
 
-const GRASS_DAY = '#5aa033';
+// Random rotation envelope per blade (radians). Small lean + full spin.
+const TILT_X = 0.35;
+const TILT_Y = 0.35;
+// Continuous per-blade size multiplier (× the mask), authored range.
+const SIZE_MIN_FACTOR = 0.35;
+const SIZE_MAX_FACTOR = 1.50;
+const DRY_FRACTION = 0.10;
 
-function makeRng(seed) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Blade colour ramp (sRGB hex; three converts → linear, matching Blender).
+const PALETTE_GREEN = [
+  [0.00, '#4F6429'], [0.30, '#617707'], [0.55, '#80890C'],
+  [0.75, '#90A110'], [0.90, '#A8AD36'], [1.00, '#B8B868'],
+];
+const PALETTE_DRY = [
+  [0.00, '#4F6429'], [0.30, '#617707'], [0.55, '#80890C'],
+  [0.75, '#6B4A30'], [0.90, '#8A6A55'], [1.00, '#9B6B75'],
+];
+// Day grass tint reference — TimeOfDay's day grassColor. setColor() normalises
+// against this so day reads neutral (palette intact) and night darkens/cools.
+const DAY_GRASS_REF = '#5aa033';
 
 export class Grass {
   /**
    * @param {THREE.Scene} scene
-   * @param {import('../Utils/Loader.js').Loader} loader
-   * @param {import('./Terrain.js').Terrain}      terrain
-   * @param {import('./Wind.js').Wind}            wind
+   * @param {{heights:Float32Array, segments:number, size:number, bboxMin:THREE.Vector3}} terrain
+   * @param {import('./Wind.js').Wind} wind
+   * @param {THREE.Texture|null} mask  terrainGrass.exr (G = density). May be null.
+   * @param {object} [opts]
+   * @param {number} [opts.radius]       visible half-extent around the player (m)
+   * @param {number} [opts.subdivisions] blades per axis (N → N² blades)
+   * @param {number} [opts.gridBounds]   mask grid half-extent (manifest grassGrid.bounds)
    */
-  constructor(scene, loader, terrain, wind) {
+  constructor(scene, terrain, wind, mask, opts = {}) {
     this.scene = scene;
-    this.loader = loader;
     this.terrain = terrain;
     this.wind = wind;
-    this.rng = makeRng(0xfeedface);
-    this.materials = [];
-    this.instancedMeshes = [];
-    /** Shared base colour — TimeOfDay tweens this; syncColor() pushes to materials. */
-    this.baseColor = new THREE.Color(GRASS_DAY);
-    // Shared player-bend uniforms — every grass material's onBeforeCompile
-    // assigns these into shader.uniforms by reference, so updates from
-    // setPlayerPos() propagate to all layers without iterating materials.
-    // uPlayerBendRadius: blades closer than this lean away from the player.
-    // uPlayerBendStrength: meters of horizontal displacement at the tip.
-    this.playerUniforms = {
-      uPlayerPos:           { value: new THREE.Vector2(1e6, 1e6) },
-      uPlayerBendRadius:    { value: 1.4 },
-      uPlayerBendStrength:  { value: 0.35 },
-    };
+    this.mask = mask;
+
+    this.radius = opts.radius ?? 38;
+    this.subdivisions = Math.max(16, Math.floor(opts.subdivisions ?? 820));
+    this.gridBounds = opts.gridBounds ?? 96;
+    this.size = this.radius * 2;
+    this.count = this.subdivisions * this.subdivisions;
+    this.fragmentSize = this.size / this.subdivisions;
+
+    this.baseColor = new THREE.Color(DAY_GRASS_REF);
+    this._dayRef = new THREE.Color(DAY_GRASS_REF);
+
+    this.#buildHeightTexture();
+    this.#setGeometry();
+    this.#setMaterial();
+    this.#setMesh();
   }
 
-  /**
-   * Load grass GLBs and place all instances. Must run AFTER paths, water,
-   * and Nature have loaded so exclusion lists are populated.
-   *
-   * @param {object} opts
-   * @param {Float32Array} [opts.pathPositions]   packed [x0,z0,x1,z1,…]
-   * @param {number}       [opts.pathCount]
-   * @param {number}       [opts.pathRadius=1.4]
-   * @param {Array<{x:number,z:number}>}          [opts.treePositions]
-   * @param {Array<{x:number,z:number,r:number}>} [opts.exclusionCircles]
-   */
-  async load({
-    pathPositions = new Float32Array(0),
-    pathCount = 0,
-    pathRadius = 1.4,
-    treePositions = [],
-    exclusionCircles = [],
-    multiplier = 1,
-  } = {}) {
-    const layers = [
-      { url: '/models/nature/quaternius/grass.glb',         count: SHORT_COUNT,  scale: [0.7, 1.1],   ring: [3, FIELD_RADIUS] },
-      { url: '/models/nature/quaternius/grass-wispy-1.glb', count: WISPY1_COUNT, scale: [0.7, 1.2],   ring: [3, FIELD_RADIUS] },
-      { url: '/models/nature/quaternius/grass-wispy-2.glb', count: WISPY2_COUNT, scale: [0.7, 1.2],   ring: [3, FIELD_RADIUS] },
-      { url: '/models/nature/quaternius/tall-grass.glb',    count: TALL_COUNT,   scale: [0.75, 1.15], ring: [TALL_RING_INNER, TALL_RING_OUTER] },
-    ];
-    multiplier = Math.max(0.05, Math.min(1, multiplier));
-    const tunedLayers = layers.map((cfg) => ({
-      ...cfg,
-      count: Math.max(1, Math.round(cfg.count * multiplier)),
-    }));
-
-    const ex = { pathPositions, pathCount, pathRadius, treePositions, exclusionCircles };
-    const results = await Promise.allSettled(tunedLayers.map((cfg) => this.#buildLayer(cfg, ex)));
-
-    let placed = 0;
-    let failed = 0;
-    for (const r of results) {
-      if (r.status === 'fulfilled') placed += r.value;
-      else { failed += 1; console.warn('[Grass] layer failed', r.reason); }
+  // ── Terrain height grounding (half-float so it's linearly filterable) ───────
+  #buildHeightTexture() {
+    const t = this.terrain;
+    const verts = (t?.segments ?? 0) + 1;
+    if (!t?.heights || verts < 2) {
+      this.heightTex = null;
+      this.terrainMin = new THREE.Vector2(-62.5, -62.5);
+      this.terrainSpan = new THREE.Vector2(125, 125);
+      return;
     }
-    return { placed, failed };
-  }
-
-  async #buildLayer(cfg, ex) {
-    const gltf = await this.loader.loadGLTF(cfg.url);
-    const root = gltf.scene;
-    root.updateMatrixWorld(true);
-
-    const protos = [];
-    root.traverse((child) => { if (child.isMesh) protos.push(child); });
-    if (protos.length === 0) return 0;
-
-    // Build placement transforms once; all sub-meshes of this GLB reuse them.
-    const transforms = [];
-    const dummy = new THREE.Object3D();
-    const [minR, maxR] = cfg.ring;
-    // Worst case the filter rejects every sample; cap retries so a fully-
-    // blocked layer doesn't spin forever. 6× target is generous given the
-    // typical exclusion area is < 20% of the disc.
-    const ATTEMPT_CAP = cfg.count * 6;
-    let attempts = 0;
-    while (transforms.length < cfg.count && attempts < ATTEMPT_CAP) {
-      attempts++;
-      const angle = this.rng() * Math.PI * 2;
-      const r = Math.sqrt(this.rng() * (maxR * maxR - minR * minR) + minR * minR);
-      const x = Math.cos(angle) * r;
-      const z = Math.sin(angle) * r;
-      if (this.#isExcluded(x, z, ex)) continue;
-      const y = this.terrain ? this.terrain.heightAt(x, z) : 0;
-      const scale = cfg.scale[0] + this.rng() * (cfg.scale[1] - cfg.scale[0]);
-
-      dummy.position.set(x, y + GROUND_LIFT, z);
-      dummy.rotation.y = this.rng() * Math.PI * 2;
-      dummy.scale.setScalar(scale);
-      dummy.updateMatrix();
-      transforms.push(dummy.matrix.clone());
-    }
-
-    if (transforms.length === 0) return 0;
-
-    const finalMatrix = new THREE.Matrix4();
-    let total = 0;
-
-    for (const proto of protos) {
-      const src = Array.isArray(proto.material) ? proto.material[0] : proto.material;
-      const material = src.clone();
-      material.metalness = 0;
-      if (material.roughness !== undefined) material.roughness = Math.max(material.roughness, 0.9);
-      // Override Quaternius's painted green so the day/night cycle can drive
-      // colour from a single uniform. Per-instance jitter (instanceColor)
-      // multiplies this — keep base at GRASS_DAY so day mode reads correctly
-      // without any tween having run.
-      material.color.copy(this.baseColor);
-
-      this.#applyWindHook(material);
-      if (material.isMeshStandardMaterial) patchShadowTint(material);
-
-      const inst = new THREE.InstancedMesh(proto.geometry, material, transforms.length);
-      inst.castShadow = false;
-      inst.receiveShadow = true;
-      inst.name = `grass:${cfg.url.split('/').pop()}:${proto.name || 'mesh'}`;
-
-      for (let i = 0; i < transforms.length; i++) {
-        finalMatrix.multiplyMatrices(transforms[i], proto.matrixWorld);
-        inst.setMatrixAt(i, finalMatrix);
+    const src = t.heights; // src[u*verts + w]  (u = X index, w = Z index)
+    const data = new Uint16Array(verts * verts);
+    for (let u = 0; u < verts; u++) {
+      for (let w = 0; w < verts; w++) {
+        data[w * verts + u] = THREE.DataUtils.toHalfFloat(src[u * verts + w]);
       }
-      inst.instanceMatrix.needsUpdate = true;
+    }
+    const tex = new THREE.DataTexture(data, verts, verts, THREE.RedFormat, THREE.HalfFloatType);
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    this.heightTex = tex;
+    this.terrainMin = new THREE.Vector2(t.bboxMin.x, t.bboxMin.z);
+    this.terrainSpan = new THREE.Vector2(t.size, t.size);
+  }
 
-      // Per-instance brightness jitter (±10% multiplier on RGB).
-      const tmpColor = new THREE.Color();
-      for (let i = 0; i < transforms.length; i++) {
-        const j = 0.9 + this.rng() * 0.2;
-        tmpColor.setRGB(j, j, j);
-        inst.setColorAt(i, tmpColor);
+  // ── Geometry: one curved blade, N² instances ───────────────────────────────
+  #setGeometry() {
+    const base = new THREE.BufferGeometry();
+    const verts = new Float32Array(BLENDER_VERTS.length * 3);
+    const bladeHeight = new Float32Array(BLENDER_VERTS.length);
+    for (let i = 0; i < BLENDER_VERTS.length; i++) {
+      const [bx, by, bz] = BLENDER_VERTS[i];
+      verts[i * 3] = bx;          // width   → x
+      verts[i * 3 + 1] = bz;      // up       → y
+      verts[i * 3 + 2] = by;      // forward  → z
+      bladeHeight[i] = bz / BLADE_HEIGHT_MAX;
+    }
+    base.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    base.setAttribute('blade_height', new THREE.Float32BufferAttribute(bladeHeight, 1));
+    base.setIndex(BLADE_FACES);
+
+    const geom = new THREE.InstancedBufferGeometry();
+    geom.index = base.index;
+    geom.attributes.position = base.attributes.position;
+    geom.attributes.blade_height = base.attributes.blade_height;
+    geom.instanceCount = this.count;
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+
+    // Per-instance attributes (built once; CPU never touches them again).
+    const offset = new Float32Array(this.count * 2);   // pre-wrap grid XZ
+    const yaw = new Float32Array(this.count);
+    const tilt = new Float32Array(this.count * 2);      // lean X, Z
+    const sizeRand = new Float32Array(this.count);      // [SIZE_MIN, SIZE_MAX]
+    const drySeed = new Float32Array(this.count);
+
+    const sub = this.subdivisions;
+    for (let iX = 0; iX < sub; iX++) {
+      const fx = (iX / sub - 0.5) * this.size + this.fragmentSize * 0.5;
+      for (let iZ = 0; iZ < sub; iZ++) {
+        const fz = (iZ / sub - 0.5) * this.size + this.fragmentSize * 0.5;
+        const i = iX * sub + iZ;
+        offset[i * 2] = fx + (Math.random() - 0.5) * this.fragmentSize;
+        offset[i * 2 + 1] = fz + (Math.random() - 0.5) * this.fragmentSize;
+        yaw[i] = Math.random() * Math.PI * 2;
+        tilt[i * 2] = (Math.random() * 2 - 1) * TILT_X;
+        tilt[i * 2 + 1] = (Math.random() * 2 - 1) * TILT_Y;
+        sizeRand[i] = SIZE_MIN_FACTOR + Math.random() * (SIZE_MAX_FACTOR - SIZE_MIN_FACTOR);
+        drySeed[i] = Math.random();
       }
-      if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-
-      this.scene.add(inst);
-      this.instancedMeshes.push(inst);
-      this.materials.push(material);
-      total += transforms.length;
     }
-    return total;
+    geom.setAttribute('aOffset', new THREE.InstancedBufferAttribute(offset, 2));
+    geom.setAttribute('aYaw', new THREE.InstancedBufferAttribute(yaw, 1));
+    geom.setAttribute('aTilt', new THREE.InstancedBufferAttribute(tilt, 2));
+    geom.setAttribute('aSize', new THREE.InstancedBufferAttribute(sizeRand, 1));
+    geom.setAttribute('aDry', new THREE.InstancedBufferAttribute(drySeed, 1));
+
+    this.geometry = geom;
   }
 
-  /**
-   * Vertex displacement that bends the tip of each tuft using the shared
-   * uWindTime. Anchored bases stay put — `windFactor = smoothstep(0, 0.5,
-   * position.y)` only opens up above ~0.5m of mesh height. Per-instance
-   * phase comes from instanceMatrix[3].xz so adjacent tufts sway out of
-   * sync (no monolithic wave).
-   *
-   * Hook chains BEFORE patchShadowTint, which wraps prevHook itself.
-   */
-  #applyWindHook(material) {
-    const windUniforms = this.wind?.uniforms;
-    const playerUniforms = this.playerUniforms;
-    material.onBeforeCompile = (shader) => {
-      if (windUniforms) Object.assign(shader.uniforms, windUniforms);
-      Object.assign(shader.uniforms, playerUniforms);
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           uniform float uWindTime;
-           uniform vec2 uPlayerPos;
-           uniform float uPlayerBendRadius;
-           uniform float uPlayerBendStrength;`,
-        )
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           float windFactor = smoothstep(0.0, 0.5, position.y);
-           transformed.x += sin(uWindTime * 1.5 + position.x * 0.5 + instanceMatrix[3][0] * 0.3) * 0.08 * windFactor;
-           transformed.z += cos(uWindTime * 1.2 + position.z * 0.5 + instanceMatrix[3][2] * 0.3) * 0.05 * windFactor;
-           // Player bend — push the tip of each blade away from the player.
-           // Per-instance world XZ comes from instanceMatrix[3].xz; only the
-           // upper half of each blade bends (windFactor already gates by Y).
-           vec2 instWorldXZ = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
-           vec2 fromPlayer = instWorldXZ - uPlayerPos;
-           float distToPlayer = length(fromPlayer);
-           float bendFalloff = 1.0 - smoothstep(0.0, uPlayerBendRadius, distToPlayer);
-           if (bendFalloff > 0.0) {
-             vec2 bendDir = (distToPlayer > 0.0001) ? fromPlayer / distToPlayer : vec2(0.0);
-             float bendAmt = uPlayerBendStrength * bendFalloff * windFactor;
-             transformed.x += bendDir.x * bendAmt;
-             transformed.z += bendDir.y * bendAmt;
-           }`,
-        );
+  // ── Material ────────────────────────────────────────────────────────────────
+  #setMaterial() {
+    this.center = uniform(vec2(0, 0));
+    this.sizeUniform = uniform(this.size);
+    this.uTerrainMin = uniform(vec2(this.terrainMin.x, this.terrainMin.y));
+    this.uTerrainSpan = uniform(vec2(this.terrainSpan.x, this.terrainSpan.y));
+    this.tint = uniform(vec3(1, 1, 1));
+
+    const invSpan = 1 / (this.gridBounds * 2);
+
+    const vBladeH = varying(float(0), 'vBladeH');
+    const vDry = varying(float(0), 'vDry');
+
+    // Rotation helpers — build node graphs (pivot at the blade base / origin).
+    const rotX = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x, p.y.mul(c).sub(p.z.mul(s)), p.y.mul(s).add(p.z.mul(c))); };
+    const rotZ = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c)), p.z); };
+    const rotY = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).add(p.z.mul(s)), p.y, p.z.mul(c).sub(p.x.mul(s))); };
+
+    const mat = new MeshLambertNodeMaterial({ side: THREE.DoubleSide });
+
+    mat.positionNode = Fn(() => {
+      const local = positionGeometry;                 // blade vertex (m)
+      const hb = attribute('blade_height');           // 0 base → 1 tip
+      const off = attribute('aOffset');
+      const yaw = attribute('aYaw');
+      const tilt = attribute('aTilt');
+      const sizeR = attribute('aSize');
+      const dry = attribute('aDry');
+
+      // Wrap the blade into the player-centred window.
+      const half = this.sizeUniform.mul(0.5);
+      const loop = off.sub(this.center).toVar();
+      loop.x.assign(mod(loop.x.add(half), this.sizeUniform).sub(half));
+      loop.y.assign(mod(loop.y.add(half), this.sizeUniform).sub(half));
+      const worldXZ = loop.add(this.center);
+
+      // Mask → density/size fade + hard cut over water/paths.
+      const maskG = this.mask
+        ? texture(this.mask, worldXZ.mul(invSpan).add(0.5)).g
+        : float(0.5);
+      const grassFactor = clamp(maskG.mul(1.8), 0, 1);
+      const size = sizeR.mul(grassFactor);
+
+      // Blade local → scaled → leaned → spun (all rooted at the base).
+      let p = local.mul(size);
+      p = rotX(p, tilt.x);
+      p = rotZ(p, tilt.y);
+      p = rotY(p, yaw);
+
+      // Ground Y from the baked height texture.
+      const hUv = worldXZ.sub(this.uTerrainMin).div(this.uTerrainSpan);
+      const baseY = this.heightTex ? texture(this.heightTex, hUv).r : float(0);
+
+      const world = vec3(worldXZ.x.add(p.x), baseY.add(p.y), worldXZ.y.add(p.z)).toVar();
+
+      // Wind — bend more toward the tip (blade_height weighted).
+      const wind = this.wind.offsetNode(worldXZ).mul(hb).mul(0.6);
+      world.x.addAssign(wind.x);
+      world.z.addAssign(wind.y);
+
+      // Hide blades with ~no grass by lifting them out of view.
+      world.y.addAssign(step(maskG, 0.06).mul(100.0));
+
+      vBladeH.assign(hb);
+      vDry.assign(dry);
+      return world;
+    })();
+
+    mat.normalNode = vec3(0, 1, 0);
+
+    // Colour ramp lookup — piecewise-linear over the palette stops.
+    const ramp = (t, stops) => {
+      let c = color(stops[0][1]);
+      for (let i = 1; i < stops.length; i++) {
+        const f = clamp(t.sub(stops[i - 1][0]).div(stops[i][0] - stops[i - 1][0]), 0, 1);
+        c = mix(c, color(stops[i][1]), f);
+      }
+      return c;
     };
+    const green = ramp(vBladeH, PALETTE_GREEN);
+    const dryCol = ramp(vBladeH, PALETTE_DRY);
+    const isDry = step(vDry, DRY_FRACTION);          // 1 when this blade is dry
+    mat.colorNode = mix(green, dryCol, isDry).mul(this.tint);
+
+    this.material = mat;
   }
 
-  #isExcluded(x, z, ex) {
-    for (let i = 0; i < ex.pathCount; i++) {
-      const dx = x - ex.pathPositions[i * 2 + 0];
-      const dz = z - ex.pathPositions[i * 2 + 1];
-      if (dx * dx + dz * dz < ex.pathRadius * ex.pathRadius) return true;
-    }
-    for (const t of ex.treePositions) {
-      const dx = x - t.x;
-      const dz = z - t.z;
-      if (dx * dx + dz * dz < TREE_EXCLUSION_R * TREE_EXCLUSION_R) return true;
-    }
-    for (const e of ex.exclusionCircles) {
-      const dx = x - e.x;
-      const dz = z - e.z;
-      if (dx * dx + dz * dz < e.r * e.r) return true;
-    }
-    return false;
+  #setMesh() {
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.name = 'grass-field';
+    this.mesh.frustumCulled = false;
+    this.mesh.receiveShadow = true;
+    this.mesh.castShadow = false;
+    this.mesh.userData.noTorchRaycast = true;
+    this.scene.add(this.mesh);
   }
 
-  /**
-   * Update the shared player-bend uniform. Cheap: it's a single Vector2
-   * already shared across every grass material via onBeforeCompile.
-   */
-  setPlayerPos(playerPos) {
-    this.playerUniforms.uPlayerPos.value.set(playerPos.x, playerPos.z);
+  // ── Public API (matches the surface TimeOfDay / App expect) ─────────────────
+
+  /** Recentre the grid on the player each frame. */
+  setPlayerPos(pos) {
+    if (!pos) return;
+    this.center.value.set(pos.x, pos.z);
   }
 
-  /** Hard-set the base colour. Called by TimeOfDay on instant mode apply. */
+  /** Day/night tint (TimeOfDay.applyInstant) — normalised against the day ref. */
   setColor(hex) {
     this.baseColor.set(hex);
     this.syncColor();
   }
 
-  /**
-   * Push the current baseColor onto every material. Used as a GSAP onUpdate
-   * during day/night transitions — the tween mutates `this.baseColor` and
-   * this method propagates to per-layer materials.
-   */
+  /** Push the live tint (baseColor / dayRef) into the GPU uniform. */
   syncColor() {
-    for (const m of this.materials) m.color.copy(this.baseColor);
+    const r = THREE.MathUtils.clamp(this.baseColor.r / Math.max(this._dayRef.r, 1e-3), 0, 1.5);
+    const g = THREE.MathUtils.clamp(this.baseColor.g / Math.max(this._dayRef.g, 1e-3), 0, 1.5);
+    const b = THREE.MathUtils.clamp(this.baseColor.b / Math.max(this._dayRef.b, 1e-3), 0, 1.5);
+    this.tint.value.set(r, g, b);
+  }
+
+  dispose() {
+    this.scene.remove(this.mesh);
+    this.geometry?.dispose();
+    this.material?.dispose();
+    this.heightTex?.dispose();
   }
 }

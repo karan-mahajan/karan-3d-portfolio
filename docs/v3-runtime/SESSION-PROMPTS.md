@@ -244,6 +244,65 @@ the learning wins — but re-verify from the actual file before relying on it.
   Position` filled from `sectionRef_*`. `World.js` dropped PortfolioMounts/
   ProjectShowcase/Foliage/SectionPositions (Phase C/E rebuild them).
 
+### Phase D grass (this session — verified WebGPU 9/9 + WebGL2 11/11, user-approved)
+- **USE karan's curved blade ("myGrass"), NOT Bruno's flat triangle.** User
+  corrected mid-build: "use myGrass, not the bruno's grass — not this triangle
+  thing." The blade is authored in `tools/blender/.../02-ground-grass-blades.py`
+  = a 9-vert curved arched blade (`Plane.012`): 4-segment stem, base 0.030 m →
+  single tip, forward arch, per-vertex `blade_height` [0,1] → 6-stop OLIVE ramp
+  (`#4F6429`→`#B8B868`) + ~10% brown dry-tip variant (`aDry < 0.10`), random yaw
+  + ±20° lean (rooted at base), size 0.35–1.5×. So the Phase D prompt's "port
+  Bruno's Grass.js directly" was WRONG — only Bruno's *runtime-window* technique
+  is kept, the blade/look is karan's. See memory
+  [[project_v3_grass_is_my_curved_blade]].
+- **Mask channels (re-verified live in-app, matches the prior FLOAT decode):**
+  `terrainGrass.exr` loaded via `Loader.loadEXR` (added; `EXRLoader`, HalfFloat,
+  `colorSpace=NoColorSpace`, `flipY=false`, ClampToEdge+Linear). G = density,
+  range 0→0.64, R/B = 0, A = 1. UV = `worldXZ/(2*96)+0.5` (Bruno mapping); the
+  **orientation is CORRECT as-is** — grass visibly avoids the carved basins/paths
+  and rings the island, no V-flip needed. Density remap used: `clamp(g*1.8,0,1)`
+  for height/width fade; hide at `step(g,0.06)*+100`.
+- **Real-blade runtime = instanced geometry, NOT billboarded.** One curved-blade
+  `InstancedBufferGeometry` (9 verts + `blade_height` attr + 7-tri index) with
+  per-instance attrs `aOffset(vec2) aYaw aTilt(vec2) aSize aDry`. Bruno's
+  camera-window kept: a fixed N×N instance grid, modulo-wrapped to the player in
+  `positionNode` each frame (`center` uniform = player XZ). Rotations built inline
+  in TSL (`sin`/`cos` rotX/rotZ/rotY); colour ramp = piecewise `mix` over stops.
+- **Blade grounding needs a height texture.** karan's terrain is NOT flat (ponds/
+  river/beach, Y −1.5..0), so blades can't sit at y=0 like Bruno's. Built a
+  half-float `RedFormat` `DataTexture` (`DataUtils.toHalfFloat`) off
+  `terrain.heights` (transpose `[u*verts+w]`→`[w*verts+u]`; U=X, V=Z over the
+  terrain bbox); sample blade base Y in the vertex node. **r16float is filterable
+  on WebGPU; r32float is NOT** — use HalfFloat for any in-shader-sampled height/
+  data texture, or it falls back to nearest (stepped) / errors.
+- **Terrain ground material (replaces `#neutralizeTerrainMask`).** The terrain
+  GLB's baseColorTexture is the red `terrainFurnitures` mask — replaced the whole
+  material with a `MeshLambertNodeMaterial` whose `colorNode = mix(dirt #8f7d54,
+  grassGreen #5f7a39, clamp(maskG*1.8))` sampled by `positionWorld.xz`. Lambert
+  keeps sun/shadow/fog so the ground dims at night through the light rig. A
+  `globalThis.__grassMaskDebug` flag (set via Playwright `addInitScript` BEFORE
+  load, since the `if` runs at graph-build time) makes terrain output raw G — the
+  fastest way to ground-truth mask sampling/orientation.
+- **Wind TSL bridge:** added `Wind.offsetNode(worldXZ)` + `Wind.nodes` (TSL
+  `uniform`s synced from `uniforms` in `update()`), mirroring the GLSL
+  `windOffset` two-octave sample so TSL grass sways with the same one wind. GLSL
+  path left intact (unused now).
+- **Density is the camera-window tradeoff.** Blender bakes the FULL ~3.15M-blade
+  field (~425/m², 12.8M tris, deliberately NOT exported). Runtime can't — it's a
+  windowed grid: default `subdivisions=820` over `radius=38` ⇒ **672,400 blades
+  (~116/m², ~4.7M tris)**, scaled by `√grassMultiplier` per tier. User compared
+  counts vs Blender; 820 reads "much better". Local blade LOOK matches Blender;
+  total count differs by design.
+- **OLIVE palette breaks naive green-detection.** Pixels are olive/yellow-green
+  (G≈R, e.g. `#B8B868`), so a verify metric of `g>r` finds nothing. Use
+  `g >= r-12 && g > b+22 && g>55` (dirt tan has r>g, excluded). Cost me one false
+  FAIL before I looked at the actual screenshot.
+- **Process: `npm install --no-save <pkg>` in `/tmp` PRUNES `/tmp/node_modules`**
+  (no package.json there) → wiped playwright. Install ALL needed pkgs in ONE
+  command (`npm install --no-save playwright pngjs`). `pngjs` (for PNG pixel
+  decode in verify) needs a `node_modules/pngjs` symlink like playwright — ESM
+  ignores NODE_PATH.
+
 ---
 
 ## DONE — B0 effects port (GLSL→TSL ports + un-force day) ✅
