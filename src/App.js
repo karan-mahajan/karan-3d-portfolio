@@ -17,8 +17,7 @@ import { Interaction } from './Portfolio/Interaction.js';
 import { ActionPrompts } from './Portfolio/ActionPrompts.js';
 import { Interactables, INTERACTABLE_PROP_EXCLUSIONS } from './Portfolio/Interactables.js';
 import { Fireflies } from './Effects/Fireflies.js';
-// Water is constructed inside World.loadAssets so its exclusions reach
-// Nature before scatter; App.js just grabs `this.world.water` in boot().
+import { Water } from './Effects/Water.js';
 import { Rain } from './Effects/Rain.js';
 import { Thunderstorm } from './Effects/Thunderstorm.js';
 import { WindLines } from './Effects/WindLines.js';
@@ -343,19 +342,16 @@ export class App extends EventTarget {
 
     const characterResult = await this.player.loadCharacter();
 
-    // Water is built inside world.loadAssets so its exclusions feed Nature.
-    // Hook it up to the rain (pond ripple footprint) and TimeOfDay (day/
-    // night tint). The grass field consumes its exclusion list below in the
-    // grass.load() call.
-    this.water = this.world.water;
-    if (this.water) {
-      this.timeOfDay.water = this.water;
-      this.timeOfDay.reapply();
-      // Give Water a handle on AudioManager so wading triggers WAV splashes
-      // (entry one-shot + per-step variant). See Water.update.
-      this.water.audio = this.audio;
-      if (this.water.mesh) this.water.mesh.userData.noTorchRaycast = true;
-    }
+    // Water — v3 runtime TSL surface covering the Blender-carved basins (ponds /
+    // river) AND the ocean ring beyond the island. Built here (like grass) now
+    // that the terrain heightfield exists; its depth/visibility derive from it.
+    // Hook it into TimeOfDay (day/night tint) and AudioManager (wade splashes).
+    this.water = new Water(this.scene, this.world.terrain);
+    this.world.water = this.water;
+    this.timeOfDay.water = this.water;
+    this.timeOfDay.reapply();
+    this.water.audio = this.audio;
+    this.water.setPhysics(this.physics);
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
     // Blender-authored world.glb will eventually provide horizon mountain

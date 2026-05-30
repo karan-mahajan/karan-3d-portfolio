@@ -52,7 +52,20 @@ This is a standing rule, in addition to the per-prompt rules below.
   stars/spotShaft + PostFX tilt-shift all GLSL→TSL; `_b0ForceDay`+`_tslReady`
   crutches deleted; prewarm restored. 16/16 WebGPU night checks + 9/9 first-frame
   + visual day/night non-blank. World fully styled day AND night. ✅
-- Next → **Phase C** (sections & interactions).
+- `be7ab0a` — **Phase D grass** (pulled forward): karan's curved-blade ("myGrass")
+  TSL instanced field (672k blades, camera-window + mask density + height-grounded)
+  + mask-driven terrain ground material + `Wind.offsetNode` + `Loader.loadEXR`.
+  WebGPU 9/9 + WebGL2 grass 11/11, user-approved density. ✅
+- `5cf0492` — **Phase F water** (pulled forward): TSL `Water.js` rewrite (was v2
+  GLSL `ShaderMaterial`, WebGL-only). One translucent plane at y=-0.08 covers
+  BOTH the carved basins AND the ocean ring; opaque y=0 land occludes it via the
+  depth buffer (no fragment discard for visibility); depth/colour/foam from a
+  baked half-float terrain-height texture; animated ripple normals + Fresnel +
+  sky reflection + moving specular for a lit-water look; splash particles ported
+  GLSL-Points→instanced TSL billboards. Wired in App.boot() (was
+  `this.world.water`, null in v3). WebGPU first-frame clean + WebGL2 water 14/14
+  (pond pool + ocean ring + night palette verified visually), user-approved. ✅
+- Next → **Phase C** (sections & interactions). Effects FX/lights = Phase E/F-rest.
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
@@ -302,6 +315,50 @@ the learning wins — but re-verify from the actual file before relying on it.
   command (`npm install --no-save playwright pngjs`). `pngjs` (for PNG pixel
   decode in verify) needs a `node_modules/pngjs` symlink like playwright — ESM
   ignores NODE_PATH.
+
+### Phase F water (this session — verified WebGPU first-frame clean + WebGL2 14/14)
+- **Measured terrain first, didn't guess.** Probe (`probe-v3-terrain-basins.mjs`):
+  bbox **±62.5** (size 125, 129 verts / 128 seg), height range **exactly −1.5 →
+  0.0**. The walkable plains are FLAT at y=0 (7601 verts at 0.0); ponds/river dip
+  to −1.5; the **entire perimeter ring slopes below 0** into the beach falloff. So
+  the earlier "beach peak +1.0" idea was mask-space, NOT world Y — there is no
+  land above 0. Deepest reachable basin found at ~(35,−27), h=−1.5.
+- **One plane covers basins AND ocean, no discard.** A single translucent
+  `MeshBasicNodeMaterial` plane (±170, 72 seg) at **y=−0.08** (just below the
+  plains). The OPAQUE y=0 land occludes it through the depth buffer over dry
+  ground, so water only shows where the terrain drops below the surface: the
+  basins, the shore falloff, and everything past the island edge (open ocean).
+  No fragment discard needed for visibility — the v2 GLSL Water needed one only
+  because its island was a simple disc; here the carved heightfield does it.
+- **Depth/colour from a baked height texture (same recipe as grass).** Half-float
+  `RedFormat` `DataTexture` off `terrain.heights` (transpose `[u*v+w]→[w*v+u]`),
+  sampled in the **vertex** node; `depthTerrain = max(waterLevel − h, 0)` +
+  `distBeyond·0.06` (ocean darkens outward) varied to the fragment for the
+  shallow→deep `mix` + shoreline foam + the soft waterline opacity fade
+  (`opacity = mix(.55,.92,smoothstep(depth)) · smoothstep(0,.06,depth)`). Waves
+  kept tiny (amp ≤ 0.07) so crests never poke above the y=0 grass lip.
+- **`playerOverWater(x,z)` now = `terrain.heightAt(x,z) < −0.08`** (was a v2
+  radius test). Accurate to the actual basins: dry plains (0,0) → false, pond →
+  true. App's footstep-surface + `audio.setOceanProximity(hypot, islandRadius=52)`
+  bind unchanged.
+- **Day/night via the SAME `applyTimeOfDay(mode,opts)` API.** gsap tweens plain
+  `THREE.Color`/`Vector3` state (`shallow/deep/foam/sunPos`); `update()` pushes
+  them into `uniform(vec3())` GPU uniforms each frame via `.value.set(r,g,b)` —
+  the proven Grass pattern (keeps gsap off node internals; THREE.Color is already
+  linear with ColorManagement on, so feed `.r/.g/.b` straight to a `vec3`).
+- **Splashes ported GLSL-Points → instanced TSL billboards.** The v2 splash used a
+  raw GLSL `ShaderMaterial` + `gl_PointSize` (WebGL-only → breaks on WebGPU). Now
+  an `InstancedBufferGeometry` quad billboarded in `vertexNode` (cross/normalize
+  vs `cameraPosition`, like WindLines); dead particles carry `age≥life` so
+  `pow(1−t,1.4)=0` with **no branch**. CPU ring-buffer + `needsUpdate` unchanged.
+- **v3 has NO `loadShoreDecor`.** Dropped the v2 lily/rock/reed GLB scatter — shore
+  decor is authored in the Blender world now ("everything comes from the blender
+  files"). Water no longer needs the `loader`; constructor is `(scene, terrain)`,
+  built in `App.boot()` (was `World.loadAssets` → `this.world.water`, null in v3).
+- **Construct in App.boot(), not World.** Like grass, water needs the baked
+  terrain heightfield, which only exists after `world.loadAssets()`. Replaced the
+  `this.water = this.world.water` grab with `new Water(scene, terrain)` + set
+  `world.water`, `timeOfDay.water`, `water.audio`, `water.setPhysics`.
 
 ---
 
