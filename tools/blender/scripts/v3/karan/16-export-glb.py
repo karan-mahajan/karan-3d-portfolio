@@ -23,6 +23,9 @@ load/instance each independently. Three output kinds:
                   terrain, structures, areas (3 section markers, NOT experience),
                   scenery (bridges+slabs), statue, lava, miscFx, the three tree-
                   trunk collections, fences, benches, lanterns, poleLights.
+                  bonfires is monolithic too: each fire is a custom authored
+                  mesh with per-face material slots, not an instanced Kenney
+                  campfire prop.
 
   INSTANCED   — systems whose objects SHARE a mesh datablock (verified: pure
                 transforms of a template, no per-object modifiers). Emitted as a
@@ -138,6 +141,7 @@ MONOLITHIC = [
     ("benches",     "benches/benches.glb",          ["benches"]),
     ("lanterns",    "lanterns/lanterns.glb",        ["lanterns"]),
     ("poleLights",  "poleLights/poleLights.glb",    ["pole_lights"]),
+    ("bonfires",    "bonfires/bonfires.glb",        ["bonfire"]),
 ]
 
 # AREAS is special: the 3 section-marker subcollections only (NOT the inert

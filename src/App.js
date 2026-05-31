@@ -41,6 +41,7 @@ import { Loader } from "./Utils/Loader.js";
 import { detectQuality } from "./Utils/Quality.js";
 import { Sizes } from "./Utils/Sizes.js";
 import { AnimatedProps } from "./World/AnimatedProps.js";
+import { Bonfires } from "./World/Bonfires.js";
 import { Flowers } from "./World/Flowers.js";
 import { Foliage } from "./World/Foliage.js";
 import { Grass } from "./World/Grass.js";
@@ -98,6 +99,7 @@ export class App extends EventTarget {
     // terrain heightfield — both only exist after world.loadAssets(), so it's
     // constructed in boot() (and wired into TimeOfDay) once the world is loaded.
     this.grass = null;
+    this.bonfires = null;
 
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets. All ported to TSL node
@@ -305,6 +307,8 @@ export class App extends EventTarget {
     if (typeof this.renderer.compileAsync !== "function") return; // r152+
     const original = this.timeOfDay.mode;
     const playerPos = this.player?.position ?? { x: 0, y: 0, z: 0 };
+    const prewarmGroup = this.#createShaderPrewarmGroup();
+    if (prewarmGroup) this.scene.add(prewarmGroup);
 
     // Hard-snap via reapply() (which calls #applyInstant) instead of
     // setMode(). setMode would kick off GSAP tweens that may not flush
@@ -323,8 +327,77 @@ export class App extends EventTarget {
       await this.renderer.compileAsync(this.scene, this.camera);
     } catch (err) {
       console.warn("[App] shader prewarm failed:", err);
-      applyAndSettle(original); // always restore original mode
+    } finally {
+      applyAndSettle(original);
+      if (prewarmGroup) {
+        this.scene.remove(prewarmGroup);
+        const geometries = new Set();
+        prewarmGroup.traverse((obj) => {
+          if (obj.geometry) geometries.add(obj.geometry);
+        });
+        for (const geometry of geometries) geometry.dispose();
+      }
     }
+  }
+
+  #createShaderPrewarmGroup() {
+    const materials = this.world?.glb?.getShaderPrewarmMaterials?.() ?? [];
+    if (!materials.length) return null;
+
+    const group = new THREE.Group();
+    group.name = "shader-prewarm-proxies";
+    const makeGeometry = () => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(
+          [-0.05, 0, 0, 0.05, 0, 0, 0, 0.1, 0],
+          3,
+        ),
+      );
+      geometry.setAttribute(
+        "normal",
+        new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3),
+      );
+      geometry.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(
+          [1, 1, 1, 1, 1, 0.7, 0.4, 0.6, 0.4, 1, 0.7, 1],
+          4,
+        ),
+      );
+      geometry.setAttribute(
+        "worldEmissive",
+        new THREE.Float32BufferAttribute(
+          [0, 0, 0, 0.2, 0.1, 0, 0, 0.2, 0.1],
+          3,
+        ),
+      );
+      geometry.setAttribute(
+        "worldRoughness",
+        new THREE.Float32BufferAttribute([0.35, 0.7, 0.9], 1),
+      );
+      geometry.computeBoundingSphere();
+      return geometry;
+    };
+
+    materials.forEach((material, index) => {
+      const mesh = new THREE.Mesh(makeGeometry(), material);
+      mesh.name = `shader-prewarm:${material.name}:mesh`;
+      mesh.frustumCulled = false;
+      mesh.position.set(index * 0.01, -999, 0);
+      group.add(mesh);
+
+      const inst = new THREE.InstancedMesh(makeGeometry(), material, 1);
+      inst.name = `shader-prewarm:${material.name}:instanced`;
+      inst.frustumCulled = false;
+      inst.position.set(index * 0.01, -999.2, 0);
+      inst.setMatrixAt(0, new THREE.Matrix4());
+      inst.instanceMatrix.needsUpdate = true;
+      group.add(inst);
+    });
+
+    return group;
   }
 
   /** Loads characters / models; resolves to a summary the loader UI can use. */
@@ -469,13 +542,17 @@ export class App extends EventTarget {
       this.world.flowers = this.flowers;
     }
 
-    // Phase F — point lights, lava glow, and animated props from the Blender
-    // reference anchors (refPoleLight_*/refBonfire_* lights, lavaRef_pool glow,
-    // animalPivot_*/airDancerPivot_* motion). The geometry already loaded with
-    // the monolithic GLBs; these classes light / animate it in place.
+    // Phase F — point lights, bonfire visuals, lava glow, and animated props
+    // from Blender reference anchors (refPoleLight_*/refBonfire_* lights,
+    // lavaRef_pool glow, animalPivot_*/airDancerPivot_* motion).
     const v3refs = this.world.glb?.refs;
     if (v3refs) {
       this.worldLights = new Lights(this.scene, v3refs);
+      this.bonfires = await new Bonfires(
+        this.scene,
+        v3refs,
+        this.wind,
+      ).load();
       this.lava = new Lava(this.scene, this.wind, v3refs);
       this.animatedProps = new AnimatedProps(
         this.scene,
@@ -637,19 +714,14 @@ export class App extends EventTarget {
     // the right intensity (TimeOfDay was built before they existed).
     this.timeOfDay.reapply();
 
-    // Shader prewarm is moved off the critical path. boot() now resolves
-    // ~the cost of one compileAsync earlier; the first day/night toggle
-    // can hitch briefly if the user flips before this completes. The
-    // common case is the user spends 2-5 s reading the welcome overlay,
-    // which is plenty of time for compileAsync to finish in the background.
+    // Keep shader compilation behind the loading screen; otherwise the first
+    // walk into a far section can still pay a driver compile on the visible frame.
     this.shaderPrewarmPromise = this.#prewarmDayNightShaders()
       .catch((err) => {
         console.warn("[App] deferred prewarm failed:", err);
-      })
-      .finally(() => {
-        // Toggle is safe to flip without an on-screen compile from here on.
-        this._shaderReady = true;
       });
+    await this.shaderPrewarmPromise;
+    this._shaderReady = true;
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
@@ -1101,6 +1173,13 @@ export class App extends EventTarget {
     // Phase F — day/night lamp + bonfire intensity, lava glow, animated props.
     if (this.worldLights)
       this.worldLights.update(frameDelta, this.timeOfDay.mode, elapsed);
+    if (this.bonfires)
+      this.bonfires.update(
+        elapsed,
+        frameDelta,
+        this.player.position,
+        this.timeOfDay.mode,
+      );
     if (this.lava) this.lava.update(elapsed);
     if (this.animatedProps) {
       this.animatedProps.setPlayerPos(this.player.position);

@@ -1,4 +1,5 @@
 import {
+  attribute,
   clamp,
   color,
   Fn,
@@ -7,11 +8,16 @@ import {
   texture,
   uniform,
   uv,
+  vertexColor,
   vec2,
   vec3,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
-import { MeshLambertNodeMaterial } from "three/webgpu";
+import {
+  MeshLambertNodeMaterial,
+  MeshStandardNodeMaterial,
+} from "three/webgpu";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 // Tree GLB systems that ship a solid low-poly GREEN canopy primitive (material
 // `*_canopy_*`) alongside their trunk → foliage species key. ONLY oak does:
@@ -39,6 +45,61 @@ const TRUNK_RADIUS_MAX = 0.7;
 const TRUNK_RADIUS_SHRINK = 0.85; // visible bark sits a touch inside bbox
 const DYNAMIC_BRICK_SCALE = 0.5;
 const DYNAMIC_BRICK_TEMPLATES = new Set(["brickKerbMesh", "brickPileMesh"]);
+const MATERIAL_CONSOLIDATION_SKIP_SYSTEMS = new Set(["terrain", "bonfires"]);
+const MATERIAL_CONSOLIDATION_SKIP_MATERIAL_RE = /^(bonfire_|skill_base_)/i;
+const MATERIAL_CONSOLIDATION_SKIP_OBJECT_RE = /^skillSphere_/i;
+const WORLD_EMISSIVE_ATTR = "worldEmissive";
+const WORLD_ROUGHNESS_ATTR = "worldRoughness";
+
+// Spatial-chunk geometry merge (runs after material consolidation). Static
+// decorative props that already carry a shared world material are bucketed by
+// (coarse world grid cell × material) and merged into one mesh per bucket → one
+// draw call. Bucketing by a grid (rather than a blanket per-system merge) keeps
+// each merged mesh's AABB bounded, so per-mesh frustum culling still skips
+// off-screen chunks. ALLOW-LIST ONLY: systems with no runtime name lookup, no
+// animation, and no later re-materialisation. Deliberately OUT: trees
+// (push/foliage-sensitive), lava (re-materialised by name), areas (section
+// markers looked up by name), miscFx (animated air dancers/animals + dynamic
+// title letters), bonfires (styled at runtime).
+//
+// Trees ARE included: v3 has no procedural push spots (nature.pushSpots is empty
+// — see ctor), oak's green canopy is already stripped into foliage anchors
+// before this runs (#extractTreeFoliage), birch/cherry leaves come from the
+// separate instanced treeLeaves system, and trunk colliders are built earlier in
+// load(). So only static trunk/branch geometry survives to merge here, and
+// nothing looks it up by name.
+const MERGE_SAFE_SYSTEMS = new Set([
+  "structures",
+  "scenery",
+  "fences",
+  "benches",
+  "lanterns",
+  "poleLights",
+  "statue",
+  "birchTrees",
+  "cherryTrees",
+  "oakTrees",
+  "areas",
+]);
+// `areas` is the interactive portfolio core, so it's the one system that needs a
+// name guard on top of the shared-material check. Auto-excluded already:
+// `skillSphere_*` (skipped from consolidation → no shared material → never
+// merged), which covers the animated orbit rings + core that SkillSphere.js
+// spins/recolours by name. This regex additionally protects content/decal/
+// animatable surfaces the half-wired portfolio layer mounts onto (PortfolioMounts
+// reads `contact_inscription_plinth`; signs/board-face/mailbox are likely future
+// mount or motion targets). Everything else in `areas` — projectHut_* shells,
+// contactBoard_* structure — is inert decoration referenced nowhere in src/.
+const AREAS_MERGE_EXCLUDE_RE =
+  /(inscription|_sign|mailbox|board_face|board_text|artifact)/i;
+const MERGE_CHUNK_SIZE = 28; // m — grid cell for the spatial bucket
+const MERGE_KEEP_ATTRS = [
+  "position",
+  "normal",
+  "color",
+  WORLD_EMISSIVE_ATTR,
+  WORLD_ROUGHNESS_ATTR,
+];
 
 // Instanced systems whose templates are SOLID props the player must not walk
 // through → one static box per instance, sized to the visible world AABB
@@ -138,6 +199,8 @@ export class GlbV3World {
     this.groundGrassColor = uniform(color("#ffffff"));
     this.dynamicBrickPiles = [];
     this.dynamicTitleLetters = [];
+    this.materialConsolidation = null;
+    this._sharedWorldMaterials = new Map();
     // Flower template geometry + colours + baked placements, collected during
     // load(); App.boot builds the swaying/player-parting Flowers field from these.
     this.flowerGroups = [];
@@ -371,6 +434,8 @@ export class GlbV3World {
       );
     }
 
+    this.#consolidateBakedWorldMaterials();
+    this.#mergeStaticWorldChunks();
     this.#assertBootInvariants();
     return this;
   }
@@ -758,6 +823,374 @@ export class GlbV3World {
       if (!obj.isMesh || !SHADOW_RECEIVER_RE.test(obj.name || "")) return;
       obj.receiveShadow = true;
     });
+  }
+
+  getShaderPrewarmMaterials() {
+    return [...this._sharedWorldMaterials.values()];
+  }
+
+  #consolidateBakedWorldMaterials() {
+    const stats = {
+      meshes: 0,
+      sourceMaterials: new Set(),
+      skippedTexture: 0,
+      skippedMixed: 0,
+      skippedUnsupported: 0,
+    };
+
+    this.root.traverse((mesh) => {
+      if (!mesh.isMesh) return;
+      if (this.#shouldSkipMaterialConsolidation(mesh)) return;
+
+      const materials = this.#meshMaterials(mesh);
+      if (!materials.length) return;
+      for (const mat of materials) stats.sourceMaterials.add(mat.uuid);
+
+      if (materials.some((mat) => this.#materialHasTexture(mat))) {
+        stats.skippedTexture++;
+        return;
+      }
+      if (materials.some((mat) => !this.#canConsolidateMaterial(mat))) {
+        stats.skippedUnsupported++;
+        return;
+      }
+
+      const transparent = materials.map((mat) =>
+        this.#isTransparentMaterial(mat),
+      );
+      if (transparent.some(Boolean) && transparent.some((value) => !value)) {
+        stats.skippedMixed++;
+        return;
+      }
+
+      const side = materials[0].side ?? THREE.FrontSide;
+      if (materials.some((mat) => (mat.side ?? THREE.FrontSide) !== side)) {
+        stats.skippedMixed++;
+        return;
+      }
+
+      if (!this.#bakeWorldMaterialAttributes(mesh.geometry, mesh.material)) {
+        stats.skippedUnsupported++;
+        return;
+      }
+
+      mesh.material = this.#sharedWorldMaterial(
+        transparent[0] ? "transparent" : "opaque",
+        side,
+      );
+      stats.meshes++;
+    });
+
+    this.materialConsolidation = {
+      meshes: stats.meshes,
+      sourceMaterials: stats.sourceMaterials.size,
+      sharedMaterials: this._sharedWorldMaterials.size,
+      skippedTexture: stats.skippedTexture,
+      skippedMixed: stats.skippedMixed,
+      skippedUnsupported: stats.skippedUnsupported,
+    };
+
+    if (stats.meshes > 0) {
+      console.log(
+        `[GlbV3World] material consolidation: ${stats.sourceMaterials.size} baked materials on ${stats.meshes} meshes -> ${this._sharedWorldMaterials.size} shared materials`,
+      );
+    }
+  }
+
+  #shouldSkipMaterialConsolidation(mesh) {
+    const system = this.#systemNameForObject(mesh);
+    if (MATERIAL_CONSOLIDATION_SKIP_SYSTEMS.has(system)) return true;
+    if ((mesh.name || "").startsWith("dynamic_titleLetter_")) return true;
+    if (this.#hasAncestorMatching(mesh, MATERIAL_CONSOLIDATION_SKIP_OBJECT_RE))
+      return true;
+    return this.#meshMaterials(mesh).some((mat) => {
+      if (!mat) return true;
+      if (mat.userData?.worldSharedMaterial) return true;
+      if (mat.isNodeMaterial) return true;
+      return MATERIAL_CONSOLIDATION_SKIP_MATERIAL_RE.test(mat.name || "");
+    });
+  }
+
+  #systemNameForObject(object) {
+    let node = object;
+    while (node) {
+      const name = node.name || "";
+      if (name.startsWith("system:")) return name.slice("system:".length);
+      node = node.parent;
+    }
+    return "";
+  }
+
+  #hasAncestorMatching(object, re) {
+    let node = object;
+    while (node) {
+      if (re.test(node.name || "")) return true;
+      node = node.parent;
+    }
+    return false;
+  }
+
+  #meshMaterials(mesh) {
+    if (!mesh.material) return [];
+    return Array.isArray(mesh.material)
+      ? mesh.material.filter(Boolean)
+      : [mesh.material];
+  }
+
+  #materialHasTexture(material) {
+    return !!(
+      material.map ||
+      material.alphaMap ||
+      material.aoMap ||
+      material.bumpMap ||
+      material.displacementMap ||
+      material.emissiveMap ||
+      material.lightMap ||
+      material.metalnessMap ||
+      material.normalMap ||
+      material.roughnessMap
+    );
+  }
+
+  #canConsolidateMaterial(material) {
+    if (!material?.isMaterial) return false;
+    if (!material.color?.isColor) return false;
+    if (material.alphaTest && material.alphaTest > 0) return false;
+    if (
+      material.blending !== undefined &&
+      material.blending !== THREE.NormalBlending
+    )
+      return false;
+    return true;
+  }
+
+  #isTransparentMaterial(material) {
+    return material.transparent === true || (material.opacity ?? 1) < 0.999;
+  }
+
+  #bakeWorldMaterialAttributes(geometry, material) {
+    const pos = geometry?.attributes?.position;
+    if (!pos) return false;
+
+    const count = pos.count;
+    const colors = new Float32Array(count * 4);
+    const emissive = new Float32Array(count * 3);
+    const roughness = new Float32Array(count);
+
+    if (Array.isArray(material)) {
+      const groups = geometry.groups ?? [];
+      if (!groups.length) return false;
+      for (const group of groups) {
+        const mat = material[group.materialIndex ?? 0];
+        if (!mat) return false;
+        this.#writeWorldMaterialRange(
+          geometry,
+          group.start,
+          group.count,
+          mat,
+          colors,
+          emissive,
+          roughness,
+        );
+      }
+    } else {
+      const rangeCount = geometry.index?.count ?? count;
+      this.#writeWorldMaterialRange(
+        geometry,
+        0,
+        rangeCount,
+        material,
+        colors,
+        emissive,
+        roughness,
+      );
+    }
+
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 4));
+    geometry.setAttribute(
+      WORLD_EMISSIVE_ATTR,
+      new THREE.Float32BufferAttribute(emissive, 3),
+    );
+    geometry.setAttribute(
+      WORLD_ROUGHNESS_ATTR,
+      new THREE.Float32BufferAttribute(roughness, 1),
+    );
+    return true;
+  }
+
+  #writeWorldMaterialRange(
+    geometry,
+    start,
+    count,
+    material,
+    colors,
+    emissive,
+    roughness,
+  ) {
+    const index = geometry.index;
+    const c = material.color ?? new THREE.Color(0xffffff);
+    const opacity = material.opacity ?? 1;
+    const e = material.emissive ?? null;
+    const emissiveIntensity = material.emissiveIntensity ?? 1;
+    const r = material.roughness ?? 1;
+    const end = start + count;
+
+    for (let i = start; i < end; i++) {
+      const vi = index ? index.getX(i) : i;
+      colors[vi * 4] = c.r;
+      colors[vi * 4 + 1] = c.g;
+      colors[vi * 4 + 2] = c.b;
+      colors[vi * 4 + 3] = opacity;
+      emissive[vi * 3] = (e?.r ?? 0) * emissiveIntensity;
+      emissive[vi * 3 + 1] = (e?.g ?? 0) * emissiveIntensity;
+      emissive[vi * 3 + 2] = (e?.b ?? 0) * emissiveIntensity;
+      roughness[vi] = r;
+    }
+  }
+
+  #sharedWorldMaterial(kind, side) {
+    const key = `${kind}:${side}`;
+    const existing = this._sharedWorldMaterials.get(key);
+    if (existing) return existing;
+
+    const transparent = kind === "transparent";
+    const mat = new MeshStandardNodeMaterial({
+      side,
+      transparent,
+      depthWrite: !transparent,
+      roughness: 1,
+      metalness: 0,
+      opacity: 1,
+    });
+    mat.name = `worldShared:${kind}:${this.#sideName(side)}`;
+    mat.colorNode = vertexColor();
+    mat.emissiveNode = attribute(WORLD_EMISSIVE_ATTR, "vec3");
+    mat.roughnessNode = attribute(WORLD_ROUGHNESS_ATTR, "float");
+    mat.userData.worldSharedMaterial = true;
+    this._sharedWorldMaterials.set(key, mat);
+    return mat;
+  }
+
+  #sideName(side) {
+    if (side === THREE.DoubleSide) return "double";
+    if (side === THREE.BackSide) return "back";
+    return "front";
+  }
+
+  /**
+   * Spatial-chunk merge of the consolidated static props. Buckets allow-listed
+   * meshes by (world grid cell × shared material) and merges each bucket into a
+   * single mesh → one draw call, with a bounded per-chunk AABB so frustum
+   * culling still skips off-screen chunks. Safe to run here: it follows
+   * #consolidateBakedWorldMaterials (meshes already carry the shared material +
+   * baked color/emissive/roughness) and all collider building (colliders are
+   * independent Rapier shapes), and the allow-list excludes anything looked up
+   * by name, animated, or re-materialised later.
+   */
+  #mergeStaticWorldChunks() {
+    this.root.updateMatrixWorld(true);
+    const rootInverse = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
+
+    const buckets = new Map();
+    const center = new THREE.Vector3();
+    this.root.traverse((mesh) => {
+      if (!mesh.isMesh || mesh.isInstancedMesh) return;
+      const system = this.#systemNameForObject(mesh);
+      if (!MERGE_SAFE_SYSTEMS.has(system)) return;
+      // Within the portfolio-core `areas` system, keep mount/motion targets
+      // individually addressable (skillSphere_* is already material-excluded).
+      if (system === "areas" && this.#hasAncestorMatching(mesh, AREAS_MERGE_EXCLUDE_RE))
+        return;
+      const mat = mesh.material;
+      if (Array.isArray(mat) || !mat?.userData?.worldSharedMaterial) return;
+      if (!mesh.geometry?.attributes?.position) return;
+
+      mesh.getWorldPosition(center);
+      const cx = Math.floor(center.x / MERGE_CHUNK_SIZE);
+      const cz = Math.floor(center.z / MERGE_CHUNK_SIZE);
+      const key = `${cx}|${cz}|${mat.uuid}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { material: mat, meshes: [] };
+        buckets.set(key, bucket);
+      }
+      bucket.meshes.push(mesh);
+    });
+
+    let mergedCount = 0;
+    let removedCount = 0;
+    const rel = new THREE.Matrix4();
+    for (const { material, meshes } of buckets.values()) {
+      if (meshes.length < 2) continue; // a lone mesh is already one draw call
+
+      const geometries = [];
+      const contributing = [];
+      let castShadow = false;
+      let receiveShadow = false;
+      for (const mesh of meshes) {
+        mesh.updateWorldMatrix(true, false);
+        const geometry = this.#prepareMergeGeometry(mesh.geometry);
+        if (!geometry) continue; // missing an attribute → leave this mesh alone
+        // Bake into root-local space so re-parenting under root doesn't double
+        // the root transform.
+        rel.multiplyMatrices(rootInverse, mesh.matrixWorld);
+        geometry.applyMatrix4(rel);
+        geometries.push(geometry);
+        contributing.push(mesh);
+        castShadow ||= mesh.castShadow;
+        receiveShadow ||= mesh.receiveShadow;
+      }
+      if (geometries.length < 2) {
+        geometries.forEach((g) => g.dispose());
+        continue;
+      }
+
+      const merged = mergeGeometries(geometries, false);
+      geometries.forEach((g) => g.dispose());
+      if (!merged) continue;
+      merged.computeBoundingBox();
+      merged.computeBoundingSphere();
+
+      const mergedMesh = new THREE.Mesh(merged, material);
+      mergedMesh.name = `merged:${this.#systemNameForObject(contributing[0])}`;
+      mergedMesh.castShadow = castShadow;
+      mergedMesh.receiveShadow = receiveShadow;
+      this.root.add(mergedMesh);
+
+      for (const mesh of contributing) {
+        mesh.removeFromParent();
+        mesh.geometry.dispose();
+        removedCount++;
+      }
+      mergedCount++;
+    }
+
+    if (mergedCount > 0) {
+      console.log(
+        `[GlbV3World] static chunk merge: ${removedCount} meshes -> ${mergedCount} merged draw calls`,
+      );
+    }
+  }
+
+  /**
+   * Clone a geometry down to exactly the attributes the shared world material
+   * reads, non-indexed, so a heterogeneous set merges cleanly. Returns null if
+   * any required attribute is missing (caller then skips that mesh).
+   */
+  #prepareMergeGeometry(source) {
+    const base = source.index ? source.toNonIndexed() : source.clone();
+    const geometry = new THREE.BufferGeometry();
+    for (const name of MERGE_KEEP_ATTRS) {
+      const attr = base.getAttribute(name);
+      if (!attr) {
+        base.dispose();
+        geometry.dispose();
+        return null;
+      }
+      geometry.setAttribute(name, attr.clone());
+    }
+    base.dispose();
+    return geometry;
   }
 
   #addBenchColliders(group, physics) {

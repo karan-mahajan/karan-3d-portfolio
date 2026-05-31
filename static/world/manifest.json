@@ -80,6 +80,12 @@
       "objects": 37
     },
     {
+      "system": "bonfires",
+      "file": "bonfires/bonfires.glb",
+      "kind": "monolithic",
+      "objects": 9
+    },
+    {
       "system": "areas",
       "file": "areas/areas.glb",
       "kind": "monolithic",

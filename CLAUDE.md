@@ -183,17 +183,17 @@ driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
 
 ## Known parked work (don't surprise the user with rewrites)
 
-- **Push is a comedy gag** — trees/rocks/signs/billboards/compass are push
-  spots so [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a
-  joke pool. Real pushables: crate + bag. Lying-down props (`kind: 'log'`)
-  excluded (standing anim mismatch). Don't "fix" without confirmation.
-- **B (backflip) / C (cartwheel)** don't raycast for clearance — flag if you
-  add similar global animations.
-- **Furniture pass removed** (commit 12e494a) — don't re-add without asking.
-  Grass cleared around interactable props so colliders match visuals (cd996b7).
+- **Push is a comedy gag** — trees/rocks/signs/billboards/compass are push spots
+  so [ActionPrompts.js](src/Portfolio/ActionPrompts.js) rotates a joke pool. Real
+  pushables: crate + bag. Lying-down props (`kind: 'log'`) excluded. Don't "fix".
+- **B (backflip) / C (cartwheel)** don't raycast for clearance.
+- **Furniture pass removed** (12e494a) — don't re-add without asking.
+- **Material/perf system is user-validated — don't break.** GLB mats → ~2 shared
+  node materials + spatial-chunk STATIC-prop merge in [GlbV3World.js](src/World/GlbV3World.js).
+  NEVER merge/re-material animated or name-looked-up meshes (skillSphere_/lava/
+  miscFx/bonfire_/terrain). Rules: docs/v3-runtime/material-consolidation-analysis.md.
 
 ## When in doubt
 
 - [App.js](src/App.js) = wiring. [World.js](src/World/World.js) = load order.
-- [Interaction.js](src/Portfolio/Interaction.js) + [ActionPrompts.js](src/Portfolio/ActionPrompts.js) = how the player triggers things.
 - If an asset/animation isn't in `static/`, **ask** (rule 1).
