@@ -127,7 +127,6 @@ export class SkillSphere {
     this.root = new THREE.Group();
     this.root.name = 'runtime-skill-sphere';
     this.root.position.copy(this.center);
-    this.root.userData.noTorchRaycast = true;
 
     this.labelRoot = new THREE.Group();
     this.labelRoot.name = 'runtime-skill-label-orbit';
@@ -376,7 +375,6 @@ export class SkillSphere {
     });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth, worldHeight), material);
     mesh.name = `skill-board-${item.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-    mesh.userData.noTorchRaycast = true;
     mesh.userData.skill = item;
     mesh.userData.baseOpacity = material.opacity;
     mesh.userData.baseScale = mesh.scale.clone();
@@ -514,7 +512,6 @@ export class SkillSphere {
     });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.85), material);
     mesh.name = 'skill-sphere-title-board';
-    mesh.userData.noTorchRaycast = true;
     return mesh;
   }
 
@@ -706,7 +703,7 @@ export class SkillSphere {
     this.camera.lookAt(tmpLook.copy(this.center).addScaledVector(tmpDir, this.radius));
   }
 
-  /** React to the binary day/night mode (the same `mode` TorchLight reads). */
+  /** React to the binary day/night mode. */
   #applyTimeOfDay(mode) {
     if (mode === this._todMode) return;
     this._todMode = mode;

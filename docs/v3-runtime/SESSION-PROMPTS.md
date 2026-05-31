@@ -48,7 +48,7 @@ This is a standing rule, in addition to the per-prompt rules below.
 - `30d8090` — B-loader: **first WebGPU frame** (GlbV3World + TSL Sky; world loads +
   collides + renders, 9/9 headless checks). Effects still disabled (TSL port
   pending) + day forced. ✅
-- `fe81906` — **B0 effects port complete**: Fireflies/Rain/WindLines/Leaves/
+- **B0 effects port complete** (HEAD of bruno-world-analysis): Fireflies/Rain/WindLines/Leaves/
   stars/spotShaft + PostFX tilt-shift all GLSL→TSL; `_b0ForceDay`+`_tslReady`
   crutches deleted; prewarm restored. 16/16 WebGPU night checks + 9/9 first-frame
   + visual day/night non-blank. World fully styled day AND night. ✅

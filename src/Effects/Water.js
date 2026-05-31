@@ -1,12 +1,14 @@
 import * as THREE from 'three/webgpu';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
-import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import {
   Fn, attribute, uniform, varying,
   positionLocal, positionGeometry, positionWorld,
   vec2, vec3, vec4, float, texture,
   clamp, mix, smoothstep, max, abs, sin, cos, pow, length, dot, cross, normalize, reflect,
+  fract, floor,
   cameraPosition, cameraProjectionMatrix, cameraViewMatrix,
+  viewportUV, viewportSafeUV, viewportSharedTexture,
+  mx_noise_float, mx_fractal_noise_float,
 } from 'three/tsl';
 import gsap from 'gsap';
 
@@ -133,6 +135,10 @@ export class Water {
     this.skyColor = new THREE.Color(DAY_PALETTE.sky);
     this.sunPos = new THREE.Vector3(...DAY_PALETTE.sun);
     this.entryDisturbance = { x: 0, z: 0, age: 99, strength: 0 };
+    // Rain wetness 0→1, smoothed toward rainTarget (App sets it from rain state)
+    // so the surface sprouts rain-impact rings while it's raining.
+    this.rainLevel = 0;
+    this.rainTarget = 0;
 
     this.#buildHeightTexture();
     this.#scanRippleSources();
@@ -142,11 +148,6 @@ export class Water {
     this._splashTimer = 0;
     this._audioSplashTimer = 0;
     this._playerInWaterPrev = 0;
-    this._reflectionOpacity = 0;
-    this._reflectionTarget = null;
-    this._reflectionGroup = null;
-    this._reflectionMaterials = [];
-    this._reflectionPairs = [];
   }
 
   // ── Terrain depth grounding (half-float so it's linearly filterable) ────────
@@ -231,6 +232,7 @@ export class Water {
     this.uRippleB = uniform(vec2(this.rippleSources[1].x, this.rippleSources[1].y));
     this.uRippleC = uniform(vec2(this.rippleSources[2].x, this.rippleSources[2].y));
     this.uRippleD = uniform(vec2(this.rippleSources[3].x, this.rippleSources[3].y));
+    this.uRain = uniform(0);
     this.uWaterLevel = uniform(WATER_LEVEL_Y);
     this.uIslandHalf = uniform(ISLAND_HALF);
     this.uTerrainMin = uniform(vec2(this.terrainMin.x, this.terrainMin.y));
@@ -246,6 +248,9 @@ export class Water {
     // computed in the vertex and reused by the fragment normal so the swell
     // shape and its shading agree.
     const vWaveScale = varying(float(0), 'vWaterWaveScale');
+    // Actual rolling-swell height contribution at this vertex (post depth-damp),
+    // reused by the fragment to paint whitecaps on the crests.
+    const vSwell = varying(float(0), 'vWaterSwell');
 
     const mat = new MeshBasicNodeMaterial({
       transparent: true,
@@ -290,23 +295,15 @@ export class Water {
       p.x.addAssign(dispX.mul(waveScale));
       p.z.addAssign(dispZ.mul(waveScale));
       p.y.addAssign(dispY.mul(waveScale));
+      vSwell.assign(dispY.mul(waveScale));
 
-      // Inland basins and river cuts get visible traveling rings so the water
-      // reads as alive even when the camera is looking almost straight down.
-      const sourceRipple = (src, freq, speed, amp) => {
-        const d = length(vec2(p.x, p.z).sub(src));
-        const phase = d.mul(freq).sub(t.mul(speed));
-        const crest = pow(sin(phase).mul(0.5).add(0.5), 7.0).mul(2.0).sub(0.55);
-        return crest.mul(amp).mul(smoothstep(34.0, 1.2, d));
-      };
-      const basinRipple = sourceRipple(this.uRippleA, 1.95, 2.70, 0.025)
-        .add(sourceRipple(this.uRippleB, 2.35, 3.15, 0.018))
-        .add(sourceRipple(this.uRippleC, 1.62, 2.35, 0.016))
-        .add(sourceRipple(this.uRippleD, 2.75, 3.65, 0.013));
+      // Inland basins / river get a gentle non-directional slosh so the water
+      // reads as alive WITHOUT the concentric "sonar ring" look (the old
+      // source-centred traveling rings were removed — they read as bad).
       const currentRipple = sin(p.x.mul(0.38).add(p.z.mul(1.15)).sub(t.mul(1.9))).mul(0.012)
         .add(sin(p.x.mul(-0.72).add(p.z.mul(0.42)).add(t.mul(1.35))).mul(0.007))
         .mul(0.45);
-      p.y.addAssign(basinRipple.add(currentRipple).mul(inlandMask));
+      p.y.addAssign(currentRipple.mul(inlandMask));
 
       // Player wake — concentric rings expanding from the feet while wading.
       const d = length(vec2(p.x, p.z).sub(this.uPlayerPos));
@@ -352,18 +349,55 @@ export class Water {
       const p2 = vec2(wp.x, wp.z);
       const t = this.uTime;
       const N = surfaceNormal(p2, t, vWaveScale).toVar();
-      const V = normalize(cameraPosition.sub(wp));
+      // Organic break-up of the regular sine-ripple normal — a cheap value-noise
+      // gradient (3 taps) so the shimmer reads as water, not a perfect grid.
+      const nEps = 0.18;
+      const nC = mx_noise_float(vec3(p2.mul(1.4), t.mul(0.35)));
+      const nX = mx_noise_float(vec3(p2.add(vec2(nEps, 0)).mul(1.4), t.mul(0.35)));
+      const nZ = mx_noise_float(vec3(p2.add(vec2(0, nEps)).mul(1.4), t.mul(0.35)));
+      const nGrad = vec2(nX.sub(nC), nZ.sub(nC)).mul(0.5);
+      N.assign(normalize(N.add(vec3(nGrad.x.negate(), 0.0, nGrad.y.negate()))));
 
-      // Depth tint (shallow → deep), thresholds matched to the Blender terrain
-      // material: water colour starts shallow at the -0.15 line (B=0.10) and
-      // blends to deep over B 0.30→1.0, i.e. depth 0.45→1.5 below the plains =
-      // vDepth 0.30→1.35 here. The open-ocean distance term carries the far sea
-      // past 1.35 so it reads solid deep.
-      const depthF = smoothstep(0.30, 1.35, vDepth);
+      const V = normalize(cameraPosition.sub(wp));
+      const topDown = clamp(V.y, 0.0, 1.0);
+
+      // Depth tint (shallow → deep). Pulled in from the old 0.30→1.35 so basin
+      // centres actually commit to the deep blue instead of staying cyan, with a
+      // mild extra darkening at full depth. The open-ocean distance term carries
+      // the far sea past the threshold so it reads solid deep.
+      const depthF = smoothstep(0.18, 0.95, vDepth).toVar();
       const col = mix(this.uShallow, this.uDeep, depthF).toVar();
+      col.mulAssign(mix(float(1.0), float(0.82), depthF));
       const distBeyond = max(max(abs(p2.x), abs(p2.y)).sub(this.uIslandHalf), 0.0);
       const oceanMask = smoothstep(0.0, 8.0, distBeyond);
       const inlandMask = oceanMask.oneMinus().mul(smoothstep(0.16, 0.55, vDepthTerrain));
+      // Shallow → 1, deep/ocean → 0. Gates refraction + caustics so only thin
+      // water shows its floor; deep water and the open sea keep the solid tint.
+      const shallowFactor = smoothstep(1.1, 0.06, vDepthTerrain).toVar();
+
+      // Refraction — sample the opaque scene buffer behind the surface, offset by
+      // the wave normal so the bottom wobbles. Blended in only where shallow AND
+      // looking down; at grazing angles the Fresnel sky reflection (below) takes
+      // over, which also hides screen-edge smear.
+      const refrOffset = N.xz.mul(0.045).mul(topDown);
+      const bottom = viewportSharedTexture(viewportSafeUV(viewportUV.add(refrOffset))).rgb;
+      // Depth murk — the bottom shows clearly in the shallows and dissolves into
+      // the water's own colour as it deepens, so the water reads as a volume
+      // rather than a thin clear sheet.
+      const murk = clamp(vDepthTerrain.mul(1.1), 0.0, 1.0);
+      const waterTint = mix(this.uShallow, this.uDeep, murk);
+      const refracted = mix(bottom, waterTint, murk.mul(0.55).add(0.25));
+      const seeThrough = clamp(shallowFactor.mul(topDown), 0.0, 1.0).mul(0.72);
+      col.assign(mix(col, refracted, seeThrough));
+
+      // Caustics — veined light on the shallow floor: two scrolling fractal-noise
+      // layers differenced into bright filaments, tinted by the sky colour so it
+      // dims automatically at night. Sits on top of the refracted bottom.
+      const cuv = p2.mul(0.55);
+      const caA = mx_fractal_noise_float(vec3(cuv.add(vec2(t.mul(0.07), t.mul(0.05))), t.mul(0.12)), 2, 2.0, 0.5);
+      const caB = mx_fractal_noise_float(vec3(cuv.mul(1.35).add(11.3).sub(vec2(t.mul(0.05), t.mul(0.06))), t.mul(0.1)), 2, 2.0, 0.5);
+      const caustic = pow(clamp(float(1.0).sub(abs(caA.sub(caB)).mul(2.6)), 0.0, 1.0), 3.5);
+      col.addAssign(this.uSky.mul(caustic.mul(shallowFactor).mul(topDown.mul(0.5).add(0.5)).mul(0.45)));
 
       // Fresnel — looking straight down shows the water body; at grazing angles
       // the surface turns reflective. Reflect a time-of-day sky tint, brighter
@@ -379,17 +413,8 @@ export class Water {
       const spec = pow(max(dot(specR, V), 0.0), 140.0).mul(0.9);
       col.addAssign(vec3(1.0, 0.96, 0.86).mul(spec));
 
-      const ringBand = (src, freq, speed, power) => {
-        const d = length(p2.sub(src));
-        return pow(sin(d.mul(freq).sub(t.mul(speed))).mul(0.5).add(0.5), power)
-          .mul(smoothstep(34.0, 1.0, d));
-      };
-      const basinBands = ringBand(this.uRippleA, 7.2, 5.1, 10.0)
-        .add(ringBand(this.uRippleB, 8.6, 5.8, 11.0))
-        .add(ringBand(this.uRippleC, 6.4, 4.5, 10.0))
-        .add(ringBand(this.uRippleD, 9.4, 6.4, 12.0))
-        .mul(inlandMask)
-        .mul(0.14);
+      // Directional flow shimmer on the inland water (no concentric rings) +
+      // a slow ocean glint + the broad rolling-wave highlight bands.
       const flowBands = pow(sin(p2.x.mul(0.9).add(p2.y.mul(2.2)).sub(t.mul(2.2))).mul(0.5).add(0.5), 5.0)
         .mul(inlandMask)
         .mul(0.025);
@@ -401,23 +426,75 @@ export class Water {
         .add(pow(sin(p2.x.mul(-0.28).add(p2.y.mul(0.58)).sub(t.mul(0.85))).mul(0.5).add(0.5), 5.0).mul(0.045))
         .mul(smoothstep(0.18, 0.85, vDepth));
       col.addAssign(this.uSky.mul(waveBands));
-      col.addAssign(this.uShallow.mul(basinBands.add(flowBands)));
+      col.addAssign(this.uShallow.mul(flowBands));
       col.addAssign(this.uSky.mul(oceanGlint));
 
-      // Shoreline foam band — bright line where the ground is just under water,
-      // breathing in/out like a tide.
-      const shoreWave = sin(this.uTime.mul(0.8)).mul(0.05);
-      const foam = smoothstep(0.30, 0.05, vDepthTerrain.add(shoreWave)).mul(0.5);
+      // Whitecaps — foam on the upper tips of the rolling swells, patchy
+      // (noise-broken) and only in the deeper water where swells actually roll,
+      // so the open ocean reads as real moving sea rather than a tinted sheet.
+      const capNoise = mx_noise_float(vec3(p2.mul(1.6), t.mul(0.6))).mul(0.5).add(0.5);
+      const crest = smoothstep(0.035, 0.08, vSwell)
+        .mul(smoothstep(0.35, 0.85, vWaveScale))
+        .mul(capNoise.mul(0.7).add(0.3))
+        .mul(0.6);
+      col.assign(mix(col, this.uFoam, clamp(crest, 0.0, 1.0)));
+
+      // Rain-impact rings — while it's raining, expanding ringlets pop across the
+      // whole surface (cellular grid, random phase per cell). Two scales for a
+      // natural mix. Gated by uRain so it's invisible in dry weather.
+      const rainPresence = max(oceanMask, smoothstep(0.05, 0.25, vDepthTerrain));
+      const rainHash = (c) => fract(sin(dot(c, vec2(127.1, 311.7))).mul(43758.5453));
+      const rainCells = (density, rate, thickness) => {
+        const gp = p2.mul(density);
+        const cell = floor(gp);
+        const f = fract(gp);
+        const r1 = rainHash(cell);
+        const r2 = rainHash(cell.add(vec2(5.2, 1.3)));
+        const center = vec2(r1.mul(0.6).add(0.2), r2.mul(0.6).add(0.2));
+        const d = length(f.sub(center));
+        const phase = fract(t.mul(rate).add(r1.mul(6.28)));
+        const ring = smoothstep(thickness, 0.0, abs(d.sub(phase.mul(0.45))));
+        return ring.mul(phase.oneMinus());
+      };
+      const rainRings = rainCells(0.8, 1.7, 0.05).add(rainCells(1.35, 2.2, 0.04).mul(0.8));
+      col.assign(mix(col, this.uFoam, clamp(rainRings.mul(rainPresence).mul(this.uRain).mul(0.7), 0.0, 1.0)));
+
+      // Shoreline foam — an irregular lacy band where the ground is just under
+      // water, broken up by scrolling fractal noise (so it reads as foam, not a
+      // clean ring) and breathing in/out like a tide.
+      const shoreWave = sin(this.uTime.mul(0.8).add(p2.x.mul(0.25))).mul(0.05);
+      const foamBand = smoothstep(0.34, 0.015, vDepthTerrain.add(shoreWave));
+      const foamN = mx_fractal_noise_float(vec3(p2.mul(0.9), t.mul(0.22)), 3, 2.0, 0.5).mul(0.5).add(0.5);
+      const foamTex = smoothstep(0.34, 0.74, foamN).mul(0.75).add(0.25);
+      const foam = clamp(foamBand.mul(foamTex), 0.0, 1.0).mul(0.95);
       col.assign(mix(col, this.uFoam, foam));
 
-      // Player interaction: thin moving ripples, not the old white disk.
+      // Water reacting to the body in it — foam that HUGS the waterline around
+      // the body (present even standing still) plus churn when wading. No
+      // concentric rings.
       const pd = length(p2.sub(this.uPlayerPos));
-      const wakeLines = pow(sin(pd.mul(10.0).sub(t.mul(8.0))).mul(0.5).add(0.5), 9.0)
-        .mul(smoothstep(3.4, 0.35, pd))
+      // Foam collar at the body contact line — a noise-broken band hugging the
+      // body radius, so the water visibly breaks around whatever is standing in
+      // it. Hollow centre (the body occupies it), fading out by ~1 m.
+      const bodyFoamN = mx_noise_float(vec3(p2.mul(4.0), t.mul(1.3))).mul(0.5).add(0.5);
+      // Breathing radius so the waterline undulates with the surface instead of
+      // sitting as a static disc — reads as foam lapping at the body.
+      const ringR = float(0.42).add(sin(t.mul(2.0).add(pd.mul(6.0))).mul(0.04));
+      const bodyFoam = smoothstep(0.16, ringR, pd).mul(smoothstep(0.92, ringR, pd))
         .mul(this.uPlayerInWater)
-        .mul(this.uPlayerSpeed.mul(0.6).add(0.2))
-        .mul(0.10);
-      col.addAssign(this.uSky.mul(wakeLines));
+        .mul(bodyFoamN.mul(0.55).add(0.45))
+        .mul(0.85);
+      col.assign(mix(col, this.uFoam, clamp(bodyFoam, 0.0, 1.0)));
+
+      // Churned foam trailing the wading player — noise-broken white water that
+      // grows with speed.
+      const trailNoise = mx_noise_float(vec3(p2.mul(2.6), t.mul(1.6))).mul(0.5).add(0.5);
+      const trailFoam = smoothstep(1.7, 0.2, pd)
+        .mul(this.uPlayerInWater)
+        .mul(this.uPlayerSpeed.mul(0.9).add(0.1))
+        .mul(trailNoise)
+        .mul(0.55);
+      col.assign(mix(col, this.uFoam, clamp(trailFoam, 0.0, 1.0)));
 
       const entryD = length(p2.sub(this.uEntryPos));
       const entryClear = smoothstep(1.55, 0.18, entryD)
@@ -439,7 +516,7 @@ export class Water {
       // crest tips that brush y=0 don't draw a hard rim on the grass).
       const V = normalize(cameraPosition.sub(positionWorld));
       const grazing = pow(clamp(float(1.0).sub(max(V.y, 0.0)), 0.0, 1.0), 3.0);
-      const depthOp = mix(float(0.50), float(0.90), smoothstep(0.0, 2.0, vDepth));
+      const depthOp = mix(float(0.62), float(0.96), smoothstep(0.0, 1.6, vDepth));
       const op = mix(depthOp, float(0.97), grazing.mul(0.75));
       const edge = smoothstep(0.0, 0.06, vDepth);
       const pd = length(vec2(positionWorld.x, positionWorld.z).sub(this.uPlayerPos));
@@ -455,7 +532,6 @@ export class Water {
     this.mesh.name = 'water';
     this.mesh.renderOrder = 2; // after opaque terrain + grass
     this.mesh.frustumCulled = false;
-    this.mesh.userData.noTorchRaycast = true;
     this.scene.add(this.mesh);
   }
 
@@ -498,40 +574,6 @@ export class Water {
 
   setPhysics(physics) { this.physics = physics; }
 
-  setReflectionTarget(target) {
-    this.#clearReflection();
-    this._reflectionTarget = target;
-    if (!target) return;
-
-    const reflection = cloneSkeleton(target);
-    reflection.name = 'water-character-reflection';
-    reflection.visible = false;
-    reflection.userData.noTorchRaycast = true;
-    reflection.traverse((obj) => {
-      obj.userData.noTorchRaycast = true;
-      if (obj.isLight) {
-        obj.visible = false;
-        return;
-      }
-      if (!obj.isMesh && !obj.isSkinnedMesh) return;
-      obj.castShadow = false;
-      obj.receiveShadow = false;
-      obj.frustumCulled = false;
-      obj.renderOrder = 4;
-      obj.material = this.#reflectionMaterial(obj.material);
-    });
-    this.scene.add(reflection);
-    this._reflectionGroup = reflection;
-    this._reflectionPairs = [];
-    const src = [];
-    const dst = [];
-    target.traverse((obj) => src.push(obj));
-    reflection.traverse((obj) => dst.push(obj));
-    for (let i = 1; i < Math.min(src.length, dst.length); i++) {
-      this._reflectionPairs.push([src[i], dst[i]]);
-    }
-  }
-
   // ── Per-frame ───────────────────────────────────────────────────────────────
   /**
    * @param {number} elapsed
@@ -547,6 +589,9 @@ export class Water {
     this.uFoam.value.set(this.foamColor.r, this.foamColor.g, this.foamColor.b);
     this.uSky.value.set(this.skyColor.r, this.skyColor.g, this.skyColor.b);
     this.uSunPos.value.set(this.sunPos.x, this.sunPos.y, this.sunPos.z);
+    // Ease rain wetness toward its target so rings fade in/out with the weather.
+    this.rainLevel += (this.rainTarget - this.rainLevel) * (1 - Math.exp(-3 * delta));
+    this.uRain.value = this.rainLevel;
     if (this.entryDisturbance.strength > 0) this.entryDisturbance.age += delta;
     this.uEntryPos.value.set(this.entryDisturbance.x, this.entryDisturbance.z);
     this.uEntryAge.value = this.entryDisturbance.age;
@@ -558,11 +603,12 @@ export class Water {
       this.uPlayerInWater.value = inWater;
       const rawSpeed = sample && sample.moving ? sample.speed : 0;
       this.uPlayerSpeed.value = Math.min(1, rawSpeed / 8.0);
-      this.#updateReflection(playerPos, delta, inWater, sample);
 
-      const justEntered = inWater > 0.5 && this._playerInWaterPrev < 0.5;
+      // Splash + disturbance on BOTH entering and leaving the water, so the
+      // surface visibly reacts when the player crosses the shoreline either way.
+      const crossedWater = (inWater > 0.5) !== (this._playerInWaterPrev > 0.5);
       this._playerInWaterPrev = inWater;
-      if (justEntered) {
+      if (crossedWater) {
         this.entryDisturbance.x = playerPos.x;
         this.entryDisturbance.z = playerPos.z;
         this.entryDisturbance.age = 0;
@@ -588,7 +634,6 @@ export class Water {
     } else {
       this.uPlayerInWater.value = 0;
       this.uPlayerSpeed.value = 0;
-      this.#updateReflection(null, delta, 0, sample);
     }
     this.#updateSplashes(delta);
   }
@@ -656,63 +701,10 @@ export class Water {
     this._splashMesh.frustumCulled = false;
     this._splashMesh.name = 'water-splash';
     this._splashMesh.renderOrder = 6;
-    this._splashMesh.userData.noTorchRaycast = true;
     this.scene.add(this._splashMesh);
     this._splashGeom = geom;
   }
 
-  #reflectionMaterial(source) {
-    if (Array.isArray(source)) return source.map((m) => this.#reflectionMaterial(m));
-    const mat = source?.clone ? source.clone() : new THREE.MeshBasicMaterial({ color: '#bde8f2' });
-    mat.transparent = true;
-    mat.opacity = 0;
-    mat.depthWrite = false;
-    mat.side = THREE.DoubleSide;
-    if (mat.color) mat.color.lerp(new THREE.Color('#bde8f2'), 0.45);
-    this._reflectionMaterials.push(mat);
-    return mat;
-  }
-
-  #updateReflection(playerPos, delta, inWater, sample) {
-    if (!this._reflectionGroup || !this._reflectionTarget) return;
-    const targetOpacity = playerPos && inWater > 0.5 ? 0.24 : 0;
-    const lerp = 1 - Math.exp(-6 * delta);
-    this._reflectionOpacity += (targetOpacity - this._reflectionOpacity) * lerp;
-    this._reflectionGroup.visible = this._reflectionOpacity > 0.01;
-    for (const mat of this._reflectionMaterials) mat.opacity = this._reflectionOpacity;
-    if (!playerPos || !this._reflectionGroup.visible) return;
-
-    const speed = Math.min(1, (sample?.speed ?? 0) / 8);
-    for (const [src, dst] of this._reflectionPairs) {
-      dst.position.copy(src.position);
-      dst.quaternion.copy(src.quaternion);
-      dst.scale.copy(src.scale);
-      dst.visible = src.visible;
-    }
-    const wobbleX = Math.sin(this.uTime.value * 3.1) * (0.018 + speed * 0.018);
-    const wobbleZ = Math.cos(this.uTime.value * 2.4) * (0.014 + speed * 0.014);
-    this._reflectionGroup.position.set(
-      this._reflectionTarget.position.x + wobbleX,
-      WATER_LEVEL_Y * 2 - this._reflectionTarget.position.y - 0.03,
-      this._reflectionTarget.position.z + wobbleZ,
-    );
-    this._reflectionGroup.rotation.copy(this._reflectionTarget.rotation);
-    this._reflectionGroup.scale.set(1 + speed * 0.03, -1, 1 + Math.sin(this.uTime.value * 4.0) * 0.018);
-  }
-
-  #clearReflection() {
-    if (this._reflectionGroup) {
-      this.scene.remove(this._reflectionGroup);
-    }
-    for (const mat of this._reflectionMaterials ?? []) {
-      if (Array.isArray(mat)) mat.forEach((m) => m.dispose?.());
-      else mat.dispose?.();
-    }
-    this._reflectionGroup = null;
-    this._reflectionMaterials = [];
-    this._reflectionPairs = [];
-    this._reflectionOpacity = 0;
-  }
 
   #spawnSplashBurst(pos, count) {
     const s = this._splash;
@@ -760,7 +752,6 @@ export class Water {
   dispose() {
     this.scene.remove(this.mesh);
     this.scene.remove(this._splashMesh);
-    this.#clearReflection();
     this.mesh?.geometry?.dispose();
     this.material?.dispose();
     this.heightTex?.dispose();

@@ -95,7 +95,6 @@ src/Effects/            # Fireflies, Water, Rain, Thunderstorm, Leaves, Footprin
 src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast/Panel, MiniMap, MapOverlay, MapMarkers, Discovery, coords, map.css
 src/Travel/             # TransitionFX (iris wipe), Teleport, Navmask (A* nav grid), ClickToMove (auto-walk)
 src/Systems/            # Achievements (34 unlocks + time tracker), DistanceGame (shore mini-game)
-src/Torch/TorchLight.js # night-mode hand-attached torch + F-aim shoulder IK
 src/Audio/AudioManager.js # howler (ambient + footsteps + ui chimes + splashes)
 static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/, wildlife/
 ```
@@ -131,7 +130,7 @@ physics.step → player.update → playerCamera.update → discovery.update
 → fireflies → water → rain → thunderstorm → windLines → leaves
 → footprints → audio.tick → achievements.tick → distanceGame.update
 → sun + shadow follow player → timeOfDay.tick → streetLights.update
-→ torchLight.tick → water.preRender → postfx.render
+→ water.preRender → postfx.render
 ```
 
 ## Conventions
@@ -140,7 +139,7 @@ physics.step → player.update → playerCamera.update → discovery.update
   `progress` events; main.js drives the loading-bar fill.
 - `session-storage` flag `karan-portfolio:journey-started` skips the welcome
   overlay on subsequent reloads. Loading + welcome overlays must sit above
-  ALL HUD layers (torch hint, compass, achievement toast — they hide until
+  ALL HUD layers (compass, achievement toast — they hide until
   overlays clear).
 - Controller is **paused** while overlays (loading, welcome, interaction
   modal, action one-shots) are up, then unpaused.
@@ -157,9 +156,6 @@ physics.step → player.update → playerCamera.update → discovery.update
   state (camera-controls smoothes and gives false positives).
 - **Compass** (`UI/Compass.js`): camera-linked HUD ring, rotates with camera
   yaw, hidden on mobile.
-- **Torch** (`Torch/TorchLight.js`): night-only, hand-attached mesh, F to aim
-  mouse beam with smoothed one-bone IK on the shoulder. Suppressed while
-  modals/interactions are open.
 - **Distance-guess** (`Systems/DistanceGame.js`): mini-game at the shore.
   Exact-only wins; the win card auto-dismisses.
 - **Map system** (`UI/MiniMap.js`, `UI/MapOverlay.js`, `Travel/*`): parchment

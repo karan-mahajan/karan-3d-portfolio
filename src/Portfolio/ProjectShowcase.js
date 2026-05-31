@@ -123,9 +123,6 @@ export class ProjectShowcase {
     // this the screen z-fights with the wall and gets clipped by pillars
     // co-planar with it.
     screen.position.set(0, ProjectShowcase.SCREEN_VERTICAL_OFFSET, ProjectShowcase.SCREEN_FORWARD_OFFSET);
-    // Torch beam should not raycast against the showcase — same as the old
-    // Billboards screen.
-    screen.userData.noTorchRaycast = true;
     this.group.add(screen);
     this.screen = screen;
   }

@@ -29,7 +29,6 @@ import { AudioManager } from './Audio/AudioManager.js';
 import { UIController } from './UI/UIController.js';
 import { Compass } from './UI/Compass.js';
 import { Tutorial } from './UI/Tutorial.js';
-import { TorchLight } from './Torch/TorchLight.js';
 import { Achievements } from './Systems/Achievements.js';
 import { DistanceGame } from './Systems/DistanceGame.js';
 import { AchievementToast } from './UI/AchievementToast.js';
@@ -95,11 +94,6 @@ export class App extends EventTarget {
     // frame; they don't depend on async loaded assets. All ported to TSL node
     // materials (B0-finish) so they render natively on the WebGPU backend.
     this.fireflies = new Fireflies(this.scene, { count: this.quality.fireflyCount });
-    if (this.fireflies.points) this.fireflies.points.userData.noTorchRaycast = true;
-    // Sky dome is created in World ctor — flag it so the torch beam can
-    // never land on the inside of the sky sphere when the mouse points
-    // above the horizon line.
-    if (this.world.sky?.mesh) this.world.sky.mesh.userData.noTorchRaycast = true;
     // Water (pools + river) is created during world.loadAssets so it can
     // register Nature exclusions before nature.load() scatters props. The
     // reference is grabbed in boot() once the world has loaded.
@@ -108,14 +102,11 @@ export class App extends EventTarget {
       count: this.quality.rainCount,
       splashBudget: this.quality.rainSplashBudget,
     });
-    if (this.rain.group) this.rain.group.userData.noTorchRaycast = true;
     this.windLines = new WindLines(this.scene, this.wind, { count: this.quality.windLineCount });
-    if (this.windLines.mesh) this.windLines.mesh.userData.noTorchRaycast = true;
     this.leaves = new Leaves(this.scene, this.wind, this.world.terrain, {
       count: this.quality.leafCount,
       maxSettled: this.quality.maxSettledLeaves,
     });
-    if (this.leaves.mesh) this.leaves.mesh.userData.noTorchRaycast = true;
     // Footprints — persistent flat decals dropped on each footstep. Cadence
     // is driven by AudioManager.onStep (set up after boot) so visual prints
     // and audio steps stay aligned. Path tile positions are plumbed in
@@ -450,26 +441,6 @@ export class App extends EventTarget {
     //   exclusionCircles: INTERACTABLE_PROP_EXCLUSIONS,
     //   multiplier: this.quality.grassMultiplier,
     // });
-    // for (const inst of this.grass.instancedMeshes ?? []) {
-    //   inst.userData.noTorchRaycast = true;
-    // }
-    // Skip ourselves when the mouse points down at our own feet — otherwise
-    // the spot beam lands on the avatar's torso and the decal sticks to the
-    // shirt. Flag both the character.root group AND the inner mesh so the
-    // raycast filter cuts the whole subtree regardless of which level the
-    // ray traverses from.
-    if (this.player?.character?.root) {
-      this.player.character.root.userData.noTorchRaycast = true;
-    }
-    if (this.player?.character?.mesh) {
-      this.player.character.mesh.userData.noTorchRaycast = true;
-    }
-    // The player.group also holds the placeholder + character — flag it so
-    // the raycast never recurses into the avatar via the scene-root walk.
-    if (this.player?.group) {
-      this.player.group.userData.noTorchRaycast = true;
-    }
-
     this.skillSphere = new SkillSphere({
       scene: this.scene,
       camera: this.camera,
@@ -550,8 +521,7 @@ export class App extends EventTarget {
     this.timeOfDay.playerGroup = this.player.group;
     this.timeOfDay.character = this.player.character;
     // Re-apply current mode so freshly-loaded billboard boost picks up
-    // the right intensity (TimeOfDay was built before they existed). This
-    // also fires setTorchVisible() if we booted into night.
+    // the right intensity (TimeOfDay was built before they existed).
     this.timeOfDay.reapply();
 
     // Shader prewarm is moved off the critical path. boot() now resolves
@@ -565,19 +535,6 @@ export class App extends EventTarget {
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
-
-    // Torch beam — constructed after the character exists. Per-frame
-    // intersect uses scene.children filtered by noTorchRaycast (set above
-    // on grass, leaves, fireflies, wind lines, rain, water, sky, character),
-    // which keeps cost off the heavy InstancedMeshes and point clouds.
-    this.torchLight = new TorchLight({
-      scene: this.scene,
-      camera: this.camera,
-      character: this.player.character,
-      timeOfDay: this.timeOfDay,
-      terrain: this.world.terrain,
-    });
-    this.interaction.torchLight = this.torchLight;
 
     // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
     // longer re-schedules itself via requestAnimationFrame.
@@ -983,7 +940,11 @@ export class App extends EventTarget {
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
     this.fireflies.update(elapsed);
-    if (this.water) this.water.update(elapsed, frameDelta, this.player.position, sample);
+    if (this.water) {
+      // Rain wetness drives the water's rain-impact rings.
+      this.water.rainTarget = this.rain?.enabled ? 1 : 0;
+      this.water.update(elapsed, frameDelta, this.player.position, sample);
+    }
     this.rain.update(frameDelta);
     this.thunderstorm.update(frameDelta, this.player.position);
     this.windLines.update(frameDelta, this.player.position);
@@ -1072,13 +1033,6 @@ export class App extends EventTarget {
     }
     this.sun.update(this.camera);
     this.timeOfDay.tick(p, this.camera, elapsed);
-    if (this.torchLight) {
-      const modalOpen = !!(this.interaction?.activeIndex !== -1
-        || this.interaction?.contactOpen
-        || this.interaction?.zooming);
-      this.torchLight.setSuppressed(modalOpen);
-      this.torchLight.tick(p, this.camera);
-    }
 
     // Refresh the shared water reflection + refraction RTs once per frame
     // BEFORE the composer renders. With one master Reflector / Refractor

@@ -201,17 +201,6 @@ body {
   letter-spacing: 0.04em;
 }
 
-/* ─────────────── Torch aim hint (night mode only) ─────────────── */
-.billboard-prompt.torch-hint {
-  bottom: 4%;
-  border-color: rgba(255, 187, 102, 0.45);
-}
-
-.billboard-prompt.torch-hint .key {
-  background: #ffbb66;
-  box-shadow: 0 0 14px rgba(255, 187, 102, 0.6);
-}
-
 /* ─────────────── Skills sphere immersive hint ─────────────── */
 .skill-sphere-hint {
   position: fixed;
@@ -1575,11 +1564,6 @@ body[data-tod="night"] #mobile-actions .action-btn.is-active {
    where width may exceed 480 but height is tight, pull it closer to top. */
 .is-mobile #lightning-msg {
   top: 10%;
-}
-
-/* Torch aim is keyboard-only (F). Hide the hint on touch devices. */
-.is-mobile .torch-hint {
-  display: none !important;
 }
 
 /* ─── Achievements: trophy button (right corner, above 🎮 controls) ─── */

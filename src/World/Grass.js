@@ -329,7 +329,6 @@ export class Grass {
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = false;
-    this.mesh.userData.noTorchRaycast = true;
     this.scene.add(this.mesh);
   }
 

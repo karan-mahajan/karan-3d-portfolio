@@ -92,8 +92,11 @@ export class Interactables {
     // setApplyImpulsesToDynamicBodies(true), so just walking into the ball
     // nudges it. Kick applies a forward+upward impulse.
     const physics = this.physics;
+    const terrain = this.terrain;
+    const WATER_SURFACE_Y = -0.15;     // matches Water.WATER_LEVEL_Y
+    const GRAVITY = 25;                 // matches Physics.GRAVITY magnitude
     const RECOVERY_RADIUS = 50;        // ball further than this → respawn
-    const RECOVERY_Y = -1.0;           // or below this (rolled into ocean)
+    const RECOVERY_Y = -2.5;           // truly lost (sank past the ocean) → respawn
     const KICK_POWER = 6.0;            // forward impulse magnitude
     const KICK_LIFT = 2.2;             // upward impulse so the ball arcs
     const _tmpQ = new THREE.Quaternion();
@@ -131,6 +134,23 @@ export class Interactables {
       update(_delta) {
         if (!body) return;
         const t = body.translation();
+        // Buoyancy — when the ball is over water and dips below the surface,
+        // push it back up (slightly more than gravity) with heavy damping so it
+        // bobs on the surface instead of sinking. Outside water, restore the
+        // default damping so it rolls normally.
+        const overWater = terrain ? terrain.heightAt(t.x, t.z) < WATER_SURFACE_Y : false;
+        const submersion = WATER_SURFACE_Y - (t.y - radius);
+        if (overWater && submersion > 0) {
+          const mass = body.mass();
+          const sub = Math.min(submersion / (radius * 2), 1);
+          const buoy = mass * GRAVITY * sub * 1.15;
+          body.applyImpulse({ x: 0, y: buoy * _delta, z: 0 }, true);
+          body.setLinearDamping(2.2);
+          body.setAngularDamping(1.6);
+        } else {
+          body.setLinearDamping(0.6);
+          body.setAngularDamping(0.55);
+        }
         if (t.y < RECOVERY_Y || (t.x * t.x + t.z * t.z) > RECOVERY_RADIUS * RECOVERY_RADIUS) {
           respawn();
           return;
