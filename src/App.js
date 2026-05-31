@@ -354,7 +354,6 @@ export class App extends EventTarget {
     this.timeOfDay.reapply();
     this.water.audio = this.audio;
     this.water.setPhysics(this.physics);
-    this.water.setReflectionTarget(this.player.group);
 
     // Foliage — tree canopies + bushes grown as Bruno-style SDF leaf clouds.
     // Birch + cherry leaves come from their baked treeLeaves ref empties; OAK has
@@ -480,6 +479,7 @@ export class App extends EventTarget {
       refs: this.world.glb.refs,
       audio: this.audio,
       achievements: this.achievements,
+      timeOfDay: this.timeOfDay,
     });
 
     this.interaction = new Interaction({
@@ -1030,9 +1030,11 @@ export class App extends EventTarget {
     // the relevant world state cached on App.
     if (this.achievements) {
       const ppos = this.player.position;
-      const r = Math.hypot(ppos.x, ppos.z);
-      const inWater = r > Player.WATER_ENTRY_RADIUS;
-      const waterDepth = inWater ? (r - Player.WATER_ENTRY_RADIUS) * 0.1 : 0;
+      // In-water state from the actual terrain water-depth (ponds/river/ocean),
+      // matching Water.playerOverWater so visuals, slowdown, and unlocks agree.
+      const groundY = this.world.terrain ? this.world.terrain.heightAt(ppos.x, ppos.z) : 0;
+      const waterDepth = Math.max(0, Player.WATER_SURFACE_Y - groundY);
+      const inWater = waterDepth > 0;
       this.achievements.tick(frameDelta, {
         playerPos: ppos,
         moving: !!sample?.moving,
