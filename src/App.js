@@ -15,6 +15,7 @@ import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
 import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
 import { SkillSphere } from "./Portfolio/SkillSphere.js";
+import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
 import {
   BLOCKERS,
   LAMPS,
@@ -648,6 +649,19 @@ export class App extends EventTarget {
       timeOfDay: this.timeOfDay,
     });
 
+    this.projectsHut = new ProjectsHut({
+      scene: this.scene,
+      camera: this.camera,
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      refs: this.world.glb.refs,
+      physics: this.physics,
+      postfx: this.postfx,
+      audio: this.audio,
+      achievements: this.achievements,
+    });
+
     this.interaction = new Interaction({
       scene: this.scene,
       camera: this.camera,
@@ -657,6 +671,7 @@ export class App extends EventTarget {
       billboards: this.world.billboards,
       signs: this.world.signs,
       skillSphere: this.skillSphere,
+      projectsHut: this.projectsHut,
       audio: this.audio,
       timeOfDay: this.timeOfDay,
       achievements: this.achievements,
@@ -1205,6 +1220,7 @@ export class App extends EventTarget {
       this.actionPrompts.tick(this.player.position, frameDelta);
     if (this.interaction) this.interaction.tick(this.player.position);
     if (this.skillSphere) this.skillSphere.update(frameDelta);
+    if (this.projectsHut) this.projectsHut.update(frameDelta);
     if (this.interactables) this.interactables.update(frameDelta);
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.

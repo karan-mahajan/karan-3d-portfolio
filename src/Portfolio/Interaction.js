@@ -28,6 +28,7 @@ export class Interaction {
     billboards,
     signs = null,
     skillSphere = null,
+    projectsHut = null,
     audio = null,
     actionPrompts = null,
     timeOfDay = null,
@@ -41,6 +42,7 @@ export class Interaction {
     this.billboards = billboards;
     this.signs = signs;
     this.skillSphere = skillSphere;
+    this.projectsHut = projectsHut;
     this.audio = audio;
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
@@ -51,6 +53,7 @@ export class Interaction {
     this.contactCandidate = false;
     this.contactOpen = false;
     this.skillCandidate = false;
+    this.projectsCandidate = false;
     this.resumeCandidate = false;
     this.resumeOpen = false;
     this.zooming = false;
@@ -154,7 +157,7 @@ export class Interaction {
     this._onKey = (e) => {
       if (this.zooming) return;
       if (e.code === "KeyE") {
-        if (this.contactOpen || this.resumeOpen || this.skillOpen) return;
+        if (this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen) return;
         if (this.activeIndex === -1) {
           // Resume is a smaller proximity than contact, so when both fire
           // (shouldn't happen — different anchors — but be defensive), the
@@ -162,13 +165,18 @@ export class Interaction {
           if (this.resumeCandidate) this.openResume();
           else if (this.contactCandidate) this.openContact();
           else if (this.skillCandidate) this.openSkills();
+          else if (this.projectsCandidate) this.openProjects();
           else if (this.candidate) this.focus(this.candidate.index);
         }
       } else if (e.code === "Escape") {
         if (this.skillOpen) this.closeSkills();
+        else if (this.projectsOpen) this.closeProjects();
         else if (this.resumeOpen) this.closeResume();
         else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
+      } else if (this.projectsOpen) {
+        if (e.code === "ArrowLeft" || e.code === "KeyA") this.projectsHut.prev();
+        else if (e.code === "ArrowRight" || e.code === "KeyD") this.projectsHut.next();
       } else if (this.activeIndex !== -1) {
         if (e.code === "ArrowLeft") this.cycle(-1);
         else if (e.code === "ArrowRight") this.cycle(+1);
@@ -180,7 +188,7 @@ export class Interaction {
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   tick(playerPosition) {
-    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen) {
+    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen) {
       this.#hidePrompt();
       return;
     }
@@ -199,11 +207,14 @@ export class Interaction {
     const nearResume =
       this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
     const nearSkills = this.skillSphere?.near?.(playerPosition);
+    const nearProjects = this.projectsHut?.near?.(playerPosition);
     this.candidate = nearBillboard;
     // Resume has the smallest proximity radius — when both fire, prefer it.
     this.resumeCandidate = !!nearResume && !nearBillboard;
     this.contactCandidate = !!nearContact && !nearBillboard && !nearResume;
     this.skillCandidate = !!nearSkills && !nearBillboard && !nearResume && !nearContact;
+    this.projectsCandidate =
+      !!nearProjects && !nearBillboard && !nearResume && !nearContact && !nearSkills;
 
     // Defer to ActionPrompts — if it's about to show its own E prompt at the
     // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
@@ -224,6 +235,7 @@ export class Interaction {
     else if (this.resumeCandidate) this.#showPrompt("Résumé");
     else if (this.contactCandidate) this.#showPrompt("Contact");
     else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
+    else if (this.projectsCandidate) this.#showPrompt("Projects", "Enter");
     else this.#hidePrompt();
   }
 
@@ -466,6 +478,22 @@ export class Interaction {
 
   closeSkills() {
     this.skillSphere?.exit?.();
+  }
+
+  // ── Projects hut ───────────────────────────────────────────────────────────
+
+  get projectsOpen() {
+    return !!(this.projectsHut?.active || this.projectsHut?.zooming);
+  }
+
+  openProjects() {
+    if (!this.projectsHut || this.projectsOpen) return;
+    this.#hidePrompt();
+    this.projectsHut.enter();
+  }
+
+  closeProjects() {
+    this.projectsHut?.exit?.();
   }
 
   #populatePanel(item) {

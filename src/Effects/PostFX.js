@@ -51,6 +51,7 @@ const tiltShift = /*#__PURE__*/ Fn(([tex, amount]) => {
 export class PostFX {
   #tiltShiftAmount = 1.0;
   #tiltUniform = null;
+  #bloomStrength = 0.30;
 
   constructor(renderer, scene, camera, sizes, quality = {}) {
     this.renderer = renderer;
@@ -75,14 +76,29 @@ export class PostFX {
     // screens) bloom. Lower strength + higher threshold keeps the sun a clean
     // glowing disc instead of a blown-out blob. Same values as the legacy
     // UnrealBloomPass. Bloom reads the SHARP scene so highlights stay clean.
+    this.#bloomStrength = quality.bloomStrength ?? 0.30;
     const bloomPass = bloom(
       scenePassColor,
-      quality.bloomStrength ?? 0.30,
+      this.#bloomStrength,
       quality.bloomRadius ?? 0.55,
       quality.bloomThreshold ?? 0.92,
     );
+    this.bloomPass = bloomPass;
 
     this.postProcessing.outputNode = tiltShift(scenePassColor, this.#tiltUniform).add(bloomPass);
+  }
+
+  /**
+   * Live-tune bloom strength (default 0.30). Dropped to ~0 while the camera
+   * sits inside the projects hut so the bright board doesn't bloom into a haze.
+   */
+  set bloomStrength(value) {
+    this.#bloomStrength = value;
+    if (this.bloomPass?.strength) this.bloomPass.strength.value = value;
+  }
+
+  get bloomStrength() {
+    return this.#bloomStrength;
   }
 
   /** Live-tune tilt-shift intensity (default 1.0). */
