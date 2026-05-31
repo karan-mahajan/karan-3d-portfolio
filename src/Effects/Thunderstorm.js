@@ -86,6 +86,32 @@ export class Thunderstorm {
     this._lastMessageIdx = -1;          // ensure no two same messages in a row
     this._lastManualStrike = 0;         // perf.now() / 1000 of last manual click
 
+    // Shared bolt materials, created ONCE and reused across every strike.
+    // Previously each strike newed + disposed its own materials; disposing
+    // frees the compiled GPU program, so the next strike recompiled cold —
+    // a recurring hitch on every lightning. Persisting them means the
+    // shader compiles a single time (first strike) and stays warm. Only
+    // one bolt-group is ever on screen at once (see #strike), so sharing
+    // is safe; opacity is reset per-strike and driven by the fade in update().
+    this._boltMat = new THREE.MeshBasicMaterial({
+      color: 0xddeeff,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      toneMapped: false,
+    });
+    this._glowMat = new THREE.MeshBasicMaterial({
+      color: 0x8888ff,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      toneMapped: false,
+    });
+
     this.#createFlashOverlay();
     this.#createTriggerButton();
   }
@@ -283,28 +309,17 @@ export class Thunderstorm {
     const points = this.#zigzagPath(start, end, segments, jitter);
     const curve = new THREE.CatmullRomCurve3(points);
 
+    // Shared, persistent materials — reset opacity for a fresh strike; the
+    // per-frame fade in update() drives them down from here.
+    const boltMat = this._boltMat;
+    const glowMat = this._glowMat;
+    boltMat.opacity = 1;
+    glowMat.opacity = 0.4;
+
     const boltGeom = new THREE.TubeGeometry(curve, segments * 2, 0.15, 6, false);
-    const boltMat = new THREE.MeshBasicMaterial({
-      color: 0xddeeff,
-      transparent: true,
-      opacity: 1,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      fog: false,
-      toneMapped: false,
-    });
     const boltMesh = new THREE.Mesh(boltGeom, boltMat);
 
     const glowGeom = new THREE.TubeGeometry(curve, segments * 2, 0.35, 6, false);
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: 0x8888ff,
-      transparent: true,
-      opacity: 0.4,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      fog: false,
-      toneMapped: false,
-    });
     const glowMesh = new THREE.Mesh(glowGeom, glowMat);
 
     const group = new THREE.Group();
@@ -351,9 +366,9 @@ export class Thunderstorm {
   #disposeBolt(group) {
     this.scene.remove(group);
     for (const g of group._geometries) g.dispose();
-    // Both materials are reused across main + branch — dispose once.
-    group._boltMat.dispose();
-    group._glowMat.dispose();
+    // Materials are shared + persistent (created once in the constructor) so
+    // their compiled programs stay warm between strikes — do NOT dispose them
+    // here. They live for the page lifetime, like the system itself.
   }
 
   #disposeAllBolts() {

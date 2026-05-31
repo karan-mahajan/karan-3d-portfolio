@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "compress:world": "node tools/compress-world-glb.mjs"
   },
   "keywords": [
     "three.js",

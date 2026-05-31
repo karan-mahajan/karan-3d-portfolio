@@ -1,17 +1,34 @@
-import * as THREE from 'three/webgpu';
-import { MeshLambertNodeMaterial } from 'three/webgpu';
 import {
-  Fn, attribute, uniform, varying, positionGeometry,
-  vec2, vec3, float, color, texture, step, mod, clamp, mix, sin, cos,
-  length, smoothstep, max, abs,
-} from 'three/tsl';
+  Fn,
+  abs,
+  attribute,
+  clamp,
+  color,
+  cos,
+  float,
+  length,
+  max,
+  mix,
+  mod,
+  positionGeometry,
+  sin,
+  smoothstep,
+  step,
+  texture,
+  uniform,
+  varying,
+  vec2,
+  vec3,
+} from "three/tsl";
+import * as THREE from "three/webgpu";
+import { MeshLambertNodeMaterial } from "three/webgpu";
 
 /**
  * Runtime grass field — karan's authored curved-blade grass ("myGrass") ported
  * to a TSL instanced field for the WebGPU backend.
  *
- * Unlike Bruno's flat camera-billboarded triangle, each blade is the real
- * 9-vertex arched blade authored in Blender (`Plane.012`): a 4-segment stem
+ * Unlike Bruno's flat camera-billboarded triangle, each blade is the authored
+ * Blender arch (`Plane.012`), decimated to a 5-vertex stem (base → elbow → tip)
  * that tapers from a 0.030 m base to a single tip and curves forward, with a
  * per-vertex `blade_height` [0,1] driving a 6-stop colour ramp (dark olive base
  * → soft dry-yellow tip), plus a ~10% "dry" variant whose upper stops go brown.
@@ -29,25 +46,29 @@ import {
  * bends with the shared Wind module (one wind across the scene).
  */
 
-// 9-vert curved blade authored on Plane.012. Blender uses Z-up / +Y-forward;
-// remapped here to three's Y-up: three(x, y, z) = blender(x_width, z_up, y_fwd).
-const BLADE_HEIGHT_MAX = 0.55;
+// 5-vert curved blade — the authored Plane.012 arch decimated from 9 verts to
+// its base, elbow (old seg2, the point the dropped rings deviate from most), and
+// tip. Keeps the forward arch + taper; halves the per-vertex positionNode cost
+// (wind + player-bend + mask + height + 3 rotations all run per vertex), the
+// dominant grass expense. Blender uses Z-up / +Y-forward; remapped to three's
+// Y-up: three(x, y, z) = blender(x_width, z_up, y_fwd). Stored [width, fwd, up].
+const BLADE_HEIGHT_MAX = 0.45;
 const BLENDER_VERTS = [
-  [-0.030, 0.000, 0.000], [0.030, 0.000, 0.000],   // base
-  [-0.026, 0.025, 0.165], [0.026, 0.025, 0.165],   // seg 1
-  [-0.020, 0.065, 0.310], [0.020, 0.065, 0.310],   // seg 2
-  [-0.013, 0.120, 0.450], [0.013, 0.120, 0.450],   // seg 3
-  [0.000, 0.170, 0.550],                           // tip
+  [-0.03, 0.0, 0.0],
+  [0.03, 0.0, 0.0], // base
+  [-0.02, 0.065, 0.31],
+  [0.02, 0.065, 0.31], // elbow (old seg 2)
+  [0.0, 0.17, 0.55], // tip
 ];
-const BLADE_FACES = [0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4, 4, 5, 7, 4, 7, 6, 6, 7, 8];
+const BLADE_FACES = [0, 1, 3, 0, 3, 2, 2, 3, 4];
 
 // Random rotation envelope per blade (radians). Small lean + full spin.
 const TILT_X = 0.35;
 const TILT_Y = 0.35;
 // Continuous per-blade size multiplier (× the mask), authored range.
 const SIZE_MIN_FACTOR = 0.35;
-const SIZE_MAX_FACTOR = 1.50;
-const DRY_FRACTION = 0.10;
+const SIZE_MAX_FACTOR = 1.5;
+const DRY_FRACTION = 0.1;
 
 // Mask G → blade coverage. The mask is sparse (G tops out ~0.64, lots of low
 // values), so a naive `G × k` scale leaves the partial-mask halos as stubble
@@ -55,9 +76,9 @@ const DRY_FRACTION = 0.10;
 // essentially zero (paths / water / bare plazas), and remap the surviving range
 // [PRESENCE..FULL] → height [MIN_VISIBLE..1] so any grassy land grows a
 // near-full blade. Raise MIN_VISIBLE / lower FULL_AT for even denser cover.
-const GRASS_CULL = 0.03;        // G ≤ this → no blade at all
-const GRASS_PRESENCE = 0.03;    // G where blades start growing
-const GRASS_FULL_AT = 0.42;     // G where blades reach full height
+const GRASS_CULL = 0.03; // G ≤ this → no blade at all
+const GRASS_PRESENCE = 0.03; // G where blades start growing
+const GRASS_FULL_AT = 0.42; // G where blades reach full height
 const GRASS_MIN_VISIBLE = 0.55; // blade height floor wherever any grass exists
 
 // Player interaction. This is shader-side "soft physics": cheap enough for the
@@ -70,16 +91,24 @@ const RUN_RIPPLE_SPEED = 1.8; // quarter preview speed; keeps the wake very subt
 
 // Blade colour ramp (sRGB hex; three converts → linear, matching Blender).
 const PALETTE_GREEN = [
-  [0.00, '#4F6429'], [0.30, '#617707'], [0.55, '#80890C'],
-  [0.75, '#90A110'], [0.90, '#A8AD36'], [1.00, '#B8B868'],
+  [0.0, "#4F6429"],
+  [0.3, "#617707"],
+  [0.55, "#80890C"],
+  [0.75, "#90A110"],
+  [0.9, "#A8AD36"],
+  [1.0, "#B8B868"],
 ];
 const PALETTE_DRY = [
-  [0.00, '#4F6429'], [0.30, '#617707'], [0.55, '#80890C'],
-  [0.75, '#6B4A30'], [0.90, '#8A6A55'], [1.00, '#9B6B75'],
+  [0.0, "#4F6429"],
+  [0.3, "#617707"],
+  [0.55, "#80890C"],
+  [0.75, "#6B4A30"],
+  [0.9, "#8A6A55"],
+  [1.0, "#9B6B75"],
 ];
 // Day grass tint reference — TimeOfDay's day grassColor. setColor() normalises
 // against this so day reads neutral (palette intact) and night darkens/cools.
-const DAY_GRASS_REF = '#5aa033';
+const DAY_GRASS_REF = "#5aa033";
 
 export class Grass {
   /**
@@ -132,7 +161,13 @@ export class Grass {
         data[w * verts + u] = THREE.DataUtils.toHalfFloat(src[u * verts + w]);
       }
     }
-    const tex = new THREE.DataTexture(data, verts, verts, THREE.RedFormat, THREE.HalfFloatType);
+    const tex = new THREE.DataTexture(
+      data,
+      verts,
+      verts,
+      THREE.RedFormat,
+      THREE.HalfFloatType,
+    );
     tex.wrapS = THREE.ClampToEdgeWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.minFilter = THREE.LinearFilter;
@@ -151,13 +186,16 @@ export class Grass {
     const bladeHeight = new Float32Array(BLENDER_VERTS.length);
     for (let i = 0; i < BLENDER_VERTS.length; i++) {
       const [bx, by, bz] = BLENDER_VERTS[i];
-      verts[i * 3] = bx;          // width   → x
-      verts[i * 3 + 1] = bz;      // up       → y
-      verts[i * 3 + 2] = by;      // forward  → z
+      verts[i * 3] = bx; // width   → x
+      verts[i * 3 + 1] = bz; // up       → y
+      verts[i * 3 + 2] = by; // forward  → z
       bladeHeight[i] = bz / BLADE_HEIGHT_MAX;
     }
-    base.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    base.setAttribute('blade_height', new THREE.Float32BufferAttribute(bladeHeight, 1));
+    base.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    base.setAttribute(
+      "blade_height",
+      new THREE.Float32BufferAttribute(bladeHeight, 1),
+    );
     base.setIndex(BLADE_FACES);
 
     const geom = new THREE.InstancedBufferGeometry();
@@ -168,10 +206,10 @@ export class Grass {
     geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
     // Per-instance attributes (built once; CPU never touches them again).
-    const offset = new Float32Array(this.count * 2);   // pre-wrap grid XZ
+    const offset = new Float32Array(this.count * 2); // pre-wrap grid XZ
     const yaw = new Float32Array(this.count);
-    const tilt = new Float32Array(this.count * 2);      // lean X, Z
-    const sizeRand = new Float32Array(this.count);      // [SIZE_MIN, SIZE_MAX]
+    const tilt = new Float32Array(this.count * 2); // lean X, Z
+    const sizeRand = new Float32Array(this.count); // [SIZE_MIN, SIZE_MAX]
     const drySeed = new Float32Array(this.count);
 
     const sub = this.subdivisions;
@@ -185,15 +223,16 @@ export class Grass {
         yaw[i] = Math.random() * Math.PI * 2;
         tilt[i * 2] = (Math.random() * 2 - 1) * TILT_X;
         tilt[i * 2 + 1] = (Math.random() * 2 - 1) * TILT_Y;
-        sizeRand[i] = SIZE_MIN_FACTOR + Math.random() * (SIZE_MAX_FACTOR - SIZE_MIN_FACTOR);
+        sizeRand[i] =
+          SIZE_MIN_FACTOR + Math.random() * (SIZE_MAX_FACTOR - SIZE_MIN_FACTOR);
         drySeed[i] = Math.random();
       }
     }
-    geom.setAttribute('aOffset', new THREE.InstancedBufferAttribute(offset, 2));
-    geom.setAttribute('aYaw', new THREE.InstancedBufferAttribute(yaw, 1));
-    geom.setAttribute('aTilt', new THREE.InstancedBufferAttribute(tilt, 2));
-    geom.setAttribute('aSize', new THREE.InstancedBufferAttribute(sizeRand, 1));
-    geom.setAttribute('aDry', new THREE.InstancedBufferAttribute(drySeed, 1));
+    geom.setAttribute("aOffset", new THREE.InstancedBufferAttribute(offset, 2));
+    geom.setAttribute("aYaw", new THREE.InstancedBufferAttribute(yaw, 1));
+    geom.setAttribute("aTilt", new THREE.InstancedBufferAttribute(tilt, 2));
+    geom.setAttribute("aSize", new THREE.InstancedBufferAttribute(sizeRand, 1));
+    geom.setAttribute("aDry", new THREE.InstancedBufferAttribute(drySeed, 1));
 
     this.geometry = geom;
   }
@@ -212,24 +251,36 @@ export class Grass {
 
     const invSpan = 1 / (this.gridBounds * 2);
 
-    const vBladeH = varying(float(0), 'vBladeH');
-    const vDry = varying(float(0), 'vDry');
+    const vBladeH = varying(float(0), "vBladeH");
+    const vDry = varying(float(0), "vDry");
 
     // Rotation helpers — build node graphs (pivot at the blade base / origin).
-    const rotX = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x, p.y.mul(c).sub(p.z.mul(s)), p.y.mul(s).add(p.z.mul(c))); };
-    const rotZ = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c)), p.z); };
-    const rotY = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).add(p.z.mul(s)), p.y, p.z.mul(c).sub(p.x.mul(s))); };
+    const rotX = (p, a) => {
+      const c = cos(a),
+        s = sin(a);
+      return vec3(p.x, p.y.mul(c).sub(p.z.mul(s)), p.y.mul(s).add(p.z.mul(c)));
+    };
+    const rotZ = (p, a) => {
+      const c = cos(a),
+        s = sin(a);
+      return vec3(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c)), p.z);
+    };
+    const rotY = (p, a) => {
+      const c = cos(a),
+        s = sin(a);
+      return vec3(p.x.mul(c).add(p.z.mul(s)), p.y, p.z.mul(c).sub(p.x.mul(s)));
+    };
 
     const mat = new MeshLambertNodeMaterial({ side: THREE.DoubleSide });
 
     mat.positionNode = Fn(() => {
-      const local = positionGeometry;                 // blade vertex (m)
-      const hb = attribute('blade_height');           // 0 base → 1 tip
-      const off = attribute('aOffset');
-      const yaw = attribute('aYaw');
-      const tilt = attribute('aTilt');
-      const sizeR = attribute('aSize');
-      const dry = attribute('aDry');
+      const local = positionGeometry; // blade vertex (m)
+      const hb = attribute("blade_height"); // 0 base → 1 tip
+      const off = attribute("aOffset");
+      const yaw = attribute("aYaw");
+      const tilt = attribute("aTilt");
+      const sizeR = attribute("aSize");
+      const dry = attribute("aDry");
 
       // Wrap the blade into the player-centred window.
       const half = this.sizeUniform.mul(0.5);
@@ -248,8 +299,12 @@ export class Grass {
       // fills with near-full blades, not stubble (see consts above). True-zero
       // land is culled below, so this only fattens up actual grass.
       const grassFactor = clamp(
-        maskG.sub(GRASS_PRESENCE).div(GRASS_FULL_AT - GRASS_PRESENCE), 0, 1,
-      ).mul(1 - GRASS_MIN_VISIBLE).add(GRASS_MIN_VISIBLE);
+        maskG.sub(GRASS_PRESENCE).div(GRASS_FULL_AT - GRASS_PRESENCE),
+        0,
+        1,
+      )
+        .mul(1 - GRASS_MIN_VISIBLE)
+        .add(GRASS_MIN_VISIBLE);
       const size = sizeR.mul(grassFactor);
 
       // Blade local → scaled → leaned → spun (all rooted at the base).
@@ -262,7 +317,11 @@ export class Grass {
       const hUv = worldXZ.sub(this.uTerrainMin).div(this.uTerrainSpan);
       const baseY = this.heightTex ? texture(this.heightTex, hUv).r : float(0);
 
-      const world = vec3(worldXZ.x.add(p.x), baseY.add(p.y), worldXZ.y.add(p.z)).toVar();
+      const world = vec3(
+        worldXZ.x.add(p.x),
+        baseY.add(p.y),
+        worldXZ.y.add(p.z),
+      ).toVar();
 
       // Wind — bend more toward the tip (blade_height weighted).
       const wind = this.wind.offsetNode(worldXZ).mul(hb).mul(0.6);
@@ -285,14 +344,20 @@ export class Grass {
         .mul(WALK_BEND_STRENGTH)
         .mul(moveGate)
         .mul(walking);
-      const runEnv = smoothstep(RUN_RIPPLE_RADIUS, 0.12, playerDist).mul(running).mul(moveGate);
-      const runWave = sin(playerDist.mul(9.0).sub(this.wind.nodes.time.mul(RUN_RIPPLE_SPEED)));
+      const runEnv = smoothstep(RUN_RIPPLE_RADIUS, 0.12, playerDist)
+        .mul(running)
+        .mul(moveGate);
+      const runWave = sin(
+        playerDist.mul(9.0).sub(this.wind.nodes.time.mul(RUN_RIPPLE_SPEED)),
+      );
       const runRipple = runWave.mul(runEnv).mul(RUN_RIPPLE_STRENGTH);
       const runDir = away.add(this.uPlayerDir.mul(0.35)).toVar();
       const push = away.mul(walkBend).add(runDir.mul(runRipple)).mul(tip);
       world.x.addAssign(push.x);
       world.z.addAssign(push.y);
-      world.y.subAssign(tip.mul(walkBend.mul(0.055).add(abs(runRipple).mul(0.035))));
+      world.y.subAssign(
+        tip.mul(walkBend.mul(0.055).add(abs(runRipple).mul(0.035))),
+      );
 
       // Cull blades only where the mask is essentially zero (paths / water /
       // bare plazas) by lifting them out of view; anything with even faint grass
@@ -310,14 +375,18 @@ export class Grass {
     const ramp = (t, stops) => {
       let c = color(stops[0][1]);
       for (let i = 1; i < stops.length; i++) {
-        const f = clamp(t.sub(stops[i - 1][0]).div(stops[i][0] - stops[i - 1][0]), 0, 1);
+        const f = clamp(
+          t.sub(stops[i - 1][0]).div(stops[i][0] - stops[i - 1][0]),
+          0,
+          1,
+        );
         c = mix(c, color(stops[i][1]), f);
       }
       return c;
     };
     const green = ramp(vBladeH, PALETTE_GREEN);
     const dryCol = ramp(vBladeH, PALETTE_DRY);
-    const isDry = step(vDry, DRY_FRACTION);          // 1 when this blade is dry
+    const isDry = step(vDry, DRY_FRACTION); // 1 when this blade is dry
     mat.colorNode = mix(green, dryCol, isDry).mul(this.tint);
 
     this.material = mat;
@@ -325,7 +394,7 @@ export class Grass {
 
   #setMesh() {
     this.mesh = new THREE.Mesh(this.geometry, this.material);
-    this.mesh.name = 'grass-field';
+    this.mesh.name = "grass-field";
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = false;
@@ -359,9 +428,21 @@ export class Grass {
 
   /** Push the live tint (baseColor / dayRef) into the GPU uniform. */
   syncColor() {
-    const r = THREE.MathUtils.clamp(this.baseColor.r / Math.max(this._dayRef.r, 1e-3), 0, 1.5);
-    const g = THREE.MathUtils.clamp(this.baseColor.g / Math.max(this._dayRef.g, 1e-3), 0, 1.5);
-    const b = THREE.MathUtils.clamp(this.baseColor.b / Math.max(this._dayRef.b, 1e-3), 0, 1.5);
+    const r = THREE.MathUtils.clamp(
+      this.baseColor.r / Math.max(this._dayRef.r, 1e-3),
+      0,
+      1.5,
+    );
+    const g = THREE.MathUtils.clamp(
+      this.baseColor.g / Math.max(this._dayRef.g, 1e-3),
+      0,
+      1.5,
+    );
+    const b = THREE.MathUtils.clamp(
+      this.baseColor.b / Math.max(this._dayRef.b, 1e-3),
+      0,
+      1.5,
+    );
     this.tint.value.set(r, g, b);
   }
 

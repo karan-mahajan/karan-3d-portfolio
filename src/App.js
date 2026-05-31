@@ -1,51 +1,56 @@
-import * as THREE from 'three/webgpu';
-import { Sizes } from './Utils/Sizes.js';
-import { Debug } from './Utils/Debug.js';
-import { Loader } from './Utils/Loader.js';
-import { detectQuality } from './Utils/Quality.js';
-import { World } from './World/World.js';
-import { DUSK } from './World/Palette.js';
-import { Wind } from './World/Wind.js';
-import { Grass } from './World/Grass.js';
-import { Foliage } from './World/Foliage.js';
-import { Flowers } from './World/Flowers.js';
-import { Lights } from './World/Lights.js';
-import { Lava } from './World/Lava.js';
-import { AnimatedProps } from './World/AnimatedProps.js';
-import { Sun } from './World/Sun.js';
-import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
-import { Player } from './Player/Player.js';
-import { PlayerCamera } from './Player/PlayerCamera.js';
-import { Physics } from './Physics/Physics.js';
-import { Interaction } from './Portfolio/Interaction.js';
-import { SkillSphere } from './Portfolio/SkillSphere.js';
-import { ActionPrompts } from './Portfolio/ActionPrompts.js';
-import { Interactables, INTERACTABLE_PROP_EXCLUSIONS } from './Portfolio/Interactables.js';
-import { Fireflies } from './Effects/Fireflies.js';
-import { Water } from './Effects/Water.js';
-import { Rain } from './Effects/Rain.js';
-import { Thunderstorm } from './Effects/Thunderstorm.js';
-import { WindLines } from './Effects/WindLines.js';
-import { Leaves } from './Effects/Leaves.js';
-import { Footprints } from './Effects/Footprints.js';
-import { PostFX } from './Effects/PostFX.js';
-import { AudioManager } from './Audio/AudioManager.js';
-import { UIController } from './UI/UIController.js';
-import { Compass } from './UI/Compass.js';
-import { Tutorial } from './UI/Tutorial.js';
-import { Achievements } from './Systems/Achievements.js';
-import { DistanceGame } from './Systems/DistanceGame.js';
-import { AchievementToast } from './UI/AchievementToast.js';
-import { AchievementPanel } from './UI/AchievementPanel.js';
-import { WORLD_BOUNDS, BLOCKERS, LAMPS, SECTIONS } from './Portfolio/WorldMap.js';
-import { assertCoordRoundTrip } from './UI/coords.js';
-import { Discovery } from './UI/Discovery.js';
-import { MiniMap } from './UI/MiniMap.js';
-import { MapOverlay } from './UI/MapOverlay.js';
-import { TransitionFX } from './Travel/TransitionFX.js';
-import { Teleport } from './Travel/Teleport.js';
-import { Navmask } from './Travel/Navmask.js';
-import { ClickToMove } from './Travel/ClickToMove.js';
+import * as THREE from "three/webgpu";
+import { AudioManager } from "./Audio/AudioManager.js";
+import { Fireflies } from "./Effects/Fireflies.js";
+import { Footprints } from "./Effects/Footprints.js";
+import { Leaves } from "./Effects/Leaves.js";
+import { PostFX } from "./Effects/PostFX.js";
+import { Rain } from "./Effects/Rain.js";
+import { Thunderstorm } from "./Effects/Thunderstorm.js";
+import { Water } from "./Effects/Water.js";
+import { WindLines } from "./Effects/WindLines.js";
+import { Physics } from "./Physics/Physics.js";
+import { Player } from "./Player/Player.js";
+import { PlayerCamera } from "./Player/PlayerCamera.js";
+import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
+import { Interactables } from "./Portfolio/Interactables.js";
+import { Interaction } from "./Portfolio/Interaction.js";
+import { SkillSphere } from "./Portfolio/SkillSphere.js";
+import {
+  BLOCKERS,
+  LAMPS,
+  SECTIONS,
+  WORLD_BOUNDS,
+} from "./Portfolio/WorldMap.js";
+import { Achievements } from "./Systems/Achievements.js";
+import { DistanceGame } from "./Systems/DistanceGame.js";
+import { ClickToMove } from "./Travel/ClickToMove.js";
+import { Navmask } from "./Travel/Navmask.js";
+import { Teleport } from "./Travel/Teleport.js";
+import { TransitionFX } from "./Travel/TransitionFX.js";
+import { AchievementPanel } from "./UI/AchievementPanel.js";
+import { AchievementToast } from "./UI/AchievementToast.js";
+import { Compass } from "./UI/Compass.js";
+import { assertCoordRoundTrip } from "./UI/coords.js";
+import { Discovery } from "./UI/Discovery.js";
+import { MapOverlay } from "./UI/MapOverlay.js";
+import { MiniMap } from "./UI/MiniMap.js";
+import { Tutorial } from "./UI/Tutorial.js";
+import { UIController } from "./UI/UIController.js";
+import { Debug } from "./Utils/Debug.js";
+import { Loader } from "./Utils/Loader.js";
+import { detectQuality } from "./Utils/Quality.js";
+import { Sizes } from "./Utils/Sizes.js";
+import { AnimatedProps } from "./World/AnimatedProps.js";
+import { Flowers } from "./World/Flowers.js";
+import { Foliage } from "./World/Foliage.js";
+import { Grass } from "./World/Grass.js";
+import { Lava } from "./World/Lava.js";
+import { Lights } from "./World/Lights.js";
+import { DUSK } from "./World/Palette.js";
+import { Sun } from "./World/Sun.js";
+import { TimeOfDay } from "./World/TimeOfDay.js";
+import { Wind } from "./World/Wind.js";
+import { World } from "./World/World.js";
 
 /**
  * Core application: scene, renderer, camera, render loop, async asset boot.
@@ -53,7 +58,7 @@ import { ClickToMove } from './Travel/ClickToMove.js';
 export class App extends EventTarget {
   constructor() {
     super();
-    this.canvas = document.getElementById('canvas');
+    this.canvas = document.getElementById("canvas");
     this.sizes = new Sizes();
     this.debug = new Debug();
     this.clock = new THREE.Clock();
@@ -61,8 +66,8 @@ export class App extends EventTarget {
     this.quality = detectQuality();
     window.__quality = this.quality;
 
-    this.loader.addEventListener('progress', (e) => {
-      this.dispatchEvent(new CustomEvent('progress', { detail: e.detail }));
+    this.loader.addEventListener("progress", (e) => {
+      this.dispatchEvent(new CustomEvent("progress", { detail: e.detail }));
     });
 
     this.#initRenderer();
@@ -97,7 +102,9 @@ export class App extends EventTarget {
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets. All ported to TSL node
     // materials (B0-finish) so they render natively on the WebGPU backend.
-    this.fireflies = new Fireflies(this.scene, { count: this.quality.fireflyCount });
+    this.fireflies = new Fireflies(this.scene, {
+      count: this.quality.fireflyCount,
+    });
     // Water (pools + river) is created during world.loadAssets so it can
     // register Nature exclusions before nature.load() scatters props. The
     // reference is grabbed in boot() once the world has loaded.
@@ -106,7 +113,9 @@ export class App extends EventTarget {
       count: this.quality.rainCount,
       splashBudget: this.quality.rainSplashBudget,
     });
-    this.windLines = new WindLines(this.scene, this.wind, { count: this.quality.windLineCount });
+    this.windLines = new WindLines(this.scene, this.wind, {
+      count: this.quality.windLineCount,
+    });
     this.leaves = new Leaves(this.scene, this.wind, this.world.terrain, {
       count: this.quality.leafCount,
       maxSettled: this.quality.maxSettledLeaves,
@@ -118,7 +127,13 @@ export class App extends EventTarget {
     this.footprints = new Footprints(this.scene, this.world.terrain);
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
-    this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.sizes, this.quality.postfx);
+    this.postfx = new PostFX(
+      this.renderer,
+      this.scene,
+      this.camera,
+      this.sizes,
+      this.quality.postfx,
+    );
 
     this.audio = new AudioManager();
     // Rain's toggle button (built in its own constructor) plays a toggle
@@ -129,7 +144,12 @@ export class App extends EventTarget {
     // element. Auto-strikes only fire while rain is enabled; the manual
     // button works at any time. setActive() is called below + on every
     // rain toggle so the auto-timer resumes/halts in lockstep.
-    this.thunderstorm = new Thunderstorm(this.scene, this.camera, this.lights.ambient, this.audio);
+    this.thunderstorm = new Thunderstorm(
+      this.scene,
+      this.camera,
+      this.lights.ambient,
+      this.audio,
+    );
     this.thunderstorm.setActive(this.rain.enabled);
     // Wrap Rain.setEnabled so the auto-storm follows the toggle without
     // needing Rain to know about Thunderstorm.
@@ -156,7 +176,7 @@ export class App extends EventTarget {
       // water is wired in boot() once world.loadAssets has created it.
       water: null,
       playerGroup: null, // wired after player loads in boot()
-      character: null,   // wired after player loads in boot()
+      character: null, // wired after player loads in boot()
     });
 
     // Achievements — persistent counter system + toast + side panel. Built
@@ -198,7 +218,7 @@ export class App extends EventTarget {
     // visible state of the tab is the single source of truth.
     this._backgroundMode = false;
     this._bgFrame = 0;
-    this._fixedAccumulator = this.quality.physicsStep ?? (1 / 60);
+    this._fixedAccumulator = this.quality.physicsStep ?? 1 / 60;
     this._lastPlayerSample = null;
     // Adaptive DPR — base is the original cap set in Sizes (typically 1.0);
     // factor scales between 1.0 and quality.dprFloor under load. Reapplied
@@ -208,7 +228,13 @@ export class App extends EventTarget {
     this._dprFrameAccum = 0;
     this._dprFrameCount = 0;
     this._dprFastWindows = 0;
-    document.addEventListener('visibilitychange', () => {
+    // Windows to wait after any pixelRatio change before the next one may
+    // fire. setPixelRatio + postfx.resize each reallocate GPU framebuffers
+    // (a one-frame stall), so back-to-back adjustments read as stutter when
+    // the player walks in/out of a heavy view. The cooldown + the stickier
+    // recovery below keep adjustments rare instead of oscillating.
+    this._dprCooldown = 0;
+    document.addEventListener("visibilitychange", () => {
       this._backgroundMode = document.hidden;
       this._bgFrame = 0;
     });
@@ -216,10 +242,17 @@ export class App extends EventTarget {
 
   /** Wires the HTML toggle button (#tod-toggle) to setMode. */
   #bindTimeOfDayToggle() {
-    const btn = document.getElementById('tod-toggle');
+    const btn = document.getElementById("tod-toggle");
     if (!btn) return;
-    btn.addEventListener('click', () => {
+    btn.addEventListener("click", async () => {
       this.audio?.playToggle();
+      // The opposite mode's shader variants are only warm once the deferred
+      // prewarm resolves. If the user flips before then, await it so the
+      // toggle doesn't JIT-compile materials on screen (the night/morning
+      // hitch). Audio feedback above already fired, so the wait is invisible.
+      if (!this._shaderReady && this.shaderPrewarmPromise) {
+        await this.shaderPrewarmPromise;
+      }
       this.timeOfDay.toggle();
       this.#syncTimeOfDayButton();
     });
@@ -227,7 +260,7 @@ export class App extends EventTarget {
   }
 
   #syncTimeOfDayButton() {
-    const btn = document.getElementById('tod-toggle');
+    const btn = document.getElementById("tod-toggle");
     if (!btn) return;
     const mode = this.timeOfDay.mode;
     btn.dataset.mode = mode;
@@ -236,11 +269,18 @@ export class App extends EventTarget {
     document.body.dataset.tod = mode;
     // Sun icon during day (click switches TO night) and a moon during
     // night (click switches TO day) — the icon shows the CURRENT state.
-    btn.innerHTML = mode === 'day'
-      ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
-      : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>';
-    btn.setAttribute('aria-label', mode === 'day' ? 'Switch to night mode' : 'Switch to day mode');
-    btn.setAttribute('title', mode === 'day' ? 'Switch to night' : 'Switch to day');
+    btn.innerHTML =
+      mode === "day"
+        ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
+        : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>';
+    btn.setAttribute(
+      "aria-label",
+      mode === "day" ? "Switch to night mode" : "Switch to day mode",
+    );
+    btn.setAttribute(
+      "title",
+      mode === "day" ? "Switch to night" : "Switch to day",
+    );
   }
 
   /**
@@ -262,7 +302,7 @@ export class App extends EventTarget {
    */
   async #prewarmDayNightShaders() {
     if (!this.renderer || !this.scene || !this.camera) return;
-    if (typeof this.renderer.compileAsync !== 'function') return; // r152+
+    if (typeof this.renderer.compileAsync !== "function") return; // r152+
     const original = this.timeOfDay.mode;
     const playerPos = this.player?.position ?? { x: 0, y: 0, z: 0 };
 
@@ -277,12 +317,12 @@ export class App extends EventTarget {
     };
 
     try {
-      applyAndSettle(original === 'day' ? 'night' : 'day');
+      applyAndSettle(original === "day" ? "night" : "day");
       await this.renderer.compileAsync(this.scene, this.camera);
       applyAndSettle(original);
       await this.renderer.compileAsync(this.scene, this.camera);
     } catch (err) {
-      console.warn('[App] shader prewarm failed:', err);
+      console.warn("[App] shader prewarm failed:", err);
       applyAndSettle(original); // always restore original mode
     }
   }
@@ -318,11 +358,25 @@ export class App extends EventTarget {
     // Grass — v3 runtime TSL blade field. Built now that the terrain
     // heightfield + Blender grass mask exist. Blade count scales with the
     // quality tier (√multiplier keeps the per-blade area roughly constant).
-    const grassSub = Math.max(64, Math.round(820 * Math.sqrt(this.quality.grassMultiplier ?? 1)));
-    this.grass = new Grass(this.scene, this.world.terrain, this.wind, this.world.glb.grassMask, {
-      subdivisions: grassSub,
-      gridBounds: this.world.grassGrid?.bounds ?? 96,
-    });
+    // The base below was lowered from the original 820 to cut grass blade
+    // count (N² over the ~76 m window) — the biggest steady-FPS lever on
+    // desktop GPUs, since the field was oversampled (~116 blades/m² at 820,
+    // far past Bruno's lush look). The 0.5 m arched blades still overlap into
+    // a full carpet well below 820; tune the base to taste.
+    const grassSub = Math.max(
+      64,
+      Math.round(450 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
+    );
+    this.grass = new Grass(
+      this.scene,
+      this.world.terrain,
+      this.wind,
+      this.world.glb.grassMask,
+      {
+        subdivisions: grassSub,
+        gridBounds: this.world.grassGrid?.bounds ?? 96,
+      },
+    );
     // Wire grass into the day/night cycle (it was null at TimeOfDay
     // construction) and snap it to the current mode's grass tint via reapply().
     this.timeOfDay.grass = this.grass;
@@ -343,7 +397,9 @@ export class App extends EventTarget {
     // river) AND the ocean ring beyond the island. Built here (like grass) now
     // that the terrain heightfield exists; its depth/visibility derive from it.
     // Hook it into TimeOfDay (day/night tint) and AudioManager (wade splashes).
-    this.water = new Water(this.scene, this.world.terrain);
+    this.water = new Water(this.scene, this.world.terrain, {
+      highDetail: this.quality.waterHighDetail !== false,
+    });
     this.world.water = this.water;
     this.timeOfDay.water = this.water;
     this.timeOfDay.reapply();
@@ -358,34 +414,45 @@ export class App extends EventTarget {
     // two-tone palette: birch summer-green, cherry pink-blossom, oak green,
     // bushes yellow-green (user-chosen).
     const FOLIAGE_PALETTE = {
-      birch: { colorA: '#4c7a2a', colorB: '#9ec25a' },  // summer green, shaded → lit
-      cherry: { colorA: '#e0556a', colorB: '#ff9990' }, // blossom pink
-      oak: { colorA: '#3f6b22', colorB: '#7ba23e' },    // natural oak green
-      bushes: { colorA: '#9aa02f', colorB: '#d8cf3b' }, // yellow-green
+      birch: { colorA: "#4c7a2a", colorB: "#9ec25a" }, // summer green, shaded → lit
+      cherry: { colorA: "#e0556a", colorB: "#ff9990" }, // blossom pink
+      oak: { colorA: "#3f6b22", colorB: "#7ba23e" }, // natural oak green
+      bushes: { colorA: "#9aa02f", colorB: "#d8cf3b" }, // yellow-green
     };
-    const DEFAULT_FOLIAGE_COLORS = { colorA: '#4c7a2a', colorB: '#9ec25a' };
+    const DEFAULT_FOLIAGE_COLORS = { colorA: "#4c7a2a", colorB: "#9ec25a" };
     const [foliageGroups, foliageSDF] = await Promise.all([
       this.world.glb.loadFoliageGroups(),
-      this.loader.loadTexture('/textures/foliage/foliageSDF.png').then((tex) => {
-        tex.minFilter = THREE.NearestFilter;
-        tex.magFilter = THREE.NearestFilter;
-        tex.generateMipmaps = false;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.colorSpace = THREE.NoColorSpace;
-        tex.needsUpdate = true;
-        return tex;
-      }).catch(() => null),
+      this.loader
+        .loadTexture("/textures/foliage/foliageSDF.png")
+        .then((tex) => {
+          tex.minFilter = THREE.NearestFilter;
+          tex.magFilter = THREE.NearestFilter;
+          tex.generateMipmaps = false;
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.colorSpace = THREE.NoColorSpace;
+          tex.needsUpdate = true;
+          return tex;
+        })
+        .catch(() => null),
     ]);
     const foliageClouds = [];
     for (const { system, groups } of foliageGroups) {
       for (const [species, refs] of groups) {
-        const pal = FOLIAGE_PALETTE[species] ?? FOLIAGE_PALETTE[system] ?? DEFAULT_FOLIAGE_COLORS;
+        const pal =
+          FOLIAGE_PALETTE[species] ??
+          FOLIAGE_PALETTE[system] ??
+          DEFAULT_FOLIAGE_COLORS;
         foliageClouds.push({ key: `${system}:${species}`, refs, ...pal });
       }
     }
     if (foliageSDF && foliageClouds.length > 0) {
-      this.foliage = new Foliage(this.scene, this.wind, foliageSDF, foliageClouds);
+      this.foliage = new Foliage(
+        this.scene,
+        this.wind,
+        foliageSDF,
+        foliageClouds,
+      );
       this.foliage.setSunDirection(this.timeOfDay.sunOffset);
       this.world.foliage = this.foliage;
     }
@@ -394,7 +461,11 @@ export class App extends EventTarget {
     // (walk-through, no collider; soft-physics like the foliage). Built from the
     // groups GlbV3World collected during load (needs the shared Wind).
     if (this.world.glb?.flowerGroups?.length) {
-      this.flowers = new Flowers(this.scene, this.wind, this.world.glb.flowerGroups);
+      this.flowers = new Flowers(
+        this.scene,
+        this.wind,
+        this.world.glb.flowerGroups,
+      );
       this.world.flowers = this.flowers;
     }
 
@@ -406,7 +477,12 @@ export class App extends EventTarget {
     if (v3refs) {
       this.worldLights = new Lights(this.scene, v3refs);
       this.lava = new Lava(this.scene, this.wind, v3refs);
-      this.animatedProps = new AnimatedProps(this.scene, this.world.terrain, v3refs, this.physics);
+      this.animatedProps = new AnimatedProps(
+        this.scene,
+        this.world.terrain,
+        v3refs,
+        this.physics,
+      );
     }
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
@@ -437,16 +513,22 @@ export class App extends EventTarget {
     // callback so prints drop at the exact moment a step would sound. Read
     // the player's world yaw from group.rotation.y at step time.
     this.footprints.setPaths({
-      pathPositions: this.world.paths?.getTilePositions() ?? new Float32Array(0),
+      pathPositions:
+        this.world.paths?.getTilePositions() ?? new Float32Array(0),
       pathCount: this.world.paths?.getTileCount() ?? 0,
       pathRadius: 1.4,
     });
     this.audio.onStep = (odd) => {
-      this.footprints.onStep(this.player.position, this.player.group.rotation.y, !odd);
+      this.footprints.onStep(
+        this.player.position,
+        this.player.group.rotation.y,
+        !odd,
+      );
     };
     // Cache path arrays once for #surfaceAt() — picking grass/stone/sand
     // per-frame for footstep audio + landing.
-    this._pathPositions = this.world.paths?.getTilePositions() ?? new Float32Array(0);
+    this._pathPositions =
+      this.world.paths?.getTilePositions() ?? new Float32Array(0);
     this._pathCount = this.world.paths?.getTileCount() ?? 0;
     this._pathRadius2 = 1.4 * 1.4;
 
@@ -504,10 +586,18 @@ export class App extends EventTarget {
     // Pre-populate push spots from the loaded world.
     this.actionPrompts.discoverPushSpots(this.world);
 
-    this.interactables = new Interactables(this.scene, this.loader, this.physics, this.actionPrompts, this.world.terrain);
+    this.interactables = new Interactables(
+      this.scene,
+      this.loader,
+      this.physics,
+      this.actionPrompts,
+      this.world.terrain,
+    );
     // Fire and forget — props load asynchronously and self-register triggers
     // as each one settles. No need to block the boot resolution on this.
-    this.interactables.load().catch((err) => console.warn('[Interactables] load failed:', err));
+    this.interactables
+      .load()
+      .catch((err) => console.warn("[Interactables] load failed:", err));
 
     // UI redesign controller — owns desktop layout (top-left + bottom-left
     // stacks, bottom-right controls panel) and, on touch devices, the
@@ -552,9 +642,14 @@ export class App extends EventTarget {
     // can hitch briefly if the user flips before this completes. The
     // common case is the user spends 2-5 s reading the welcome overlay,
     // which is plenty of time for compileAsync to finish in the background.
-    this.shaderPrewarmPromise = this.#prewarmDayNightShaders().catch((err) => {
-      console.warn('[App] deferred prewarm failed:', err);
-    });
+    this.shaderPrewarmPromise = this.#prewarmDayNightShaders()
+      .catch((err) => {
+        console.warn("[App] deferred prewarm failed:", err);
+      })
+      .finally(() => {
+        // Toggle is safe to flip without an on-screen compile from here on.
+        this._shaderReady = true;
+      });
 
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
@@ -564,14 +659,16 @@ export class App extends EventTarget {
     this.renderer.setAnimationLoop(this.#tick);
     this.#scheduleDeferredAnimationWarmup();
     if (this.debug?.enabled) {
-      console.log(`[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`);
+      console.log(
+        `[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`,
+      );
     }
     return { character: characterResult, world: worldResult };
   }
 
   #scheduleDeferredAnimationWarmup() {
     const warm = () => this.player?.character?.preloadDeferredAnimations?.();
-    if (typeof window.requestIdleCallback === 'function') {
+    if (typeof window.requestIdleCallback === "function") {
       window.requestIdleCallback(warm, { timeout: 5000 });
     } else {
       window.setTimeout(warm, 2500);
@@ -580,10 +677,12 @@ export class App extends EventTarget {
 
   // Adaptive DPR controller — samples frame time over 60-frame windows.
   // When average exceeds the drop threshold, scales effective pixelRatio
-  // down by 0.15 (to the quality-tier floor). When it stays comfortably
-  // below the raise threshold for two consecutive windows, scales back
-  // up to 1.0. Hysteresis prevents oscillation; setPixelRatio only fires
-  // on actual factor change (it reallocates the framebuffer).
+  // down by 0.15 (to the quality-tier floor). Recovery is deliberately
+  // SLOW (six comfortable windows, asymmetric vs. the single bad window
+  // that drops) so the factor settles instead of ping-ponging around the
+  // threshold as the player walks in/out of a heavy view — every change
+  // costs a framebuffer realloc, which is the stutter we're avoiding. A
+  // post-change cooldown further spaces adjustments out.
   #updateAdaptiveDpr(frameDelta) {
     this._dprFrameAccum += frameDelta;
     this._dprFrameCount++;
@@ -592,6 +691,14 @@ export class App extends EventTarget {
     this._dprFrameAccum = 0;
     this._dprFrameCount = 0;
 
+    // Hold steady while a recent change is still cooling down — never two
+    // reallocs in quick succession.
+    if (this._dprCooldown > 0) {
+      this._dprCooldown--;
+      this._dprFastWindows = 0;
+      return;
+    }
+
     const floor = this.quality.dprFloor ?? 0.7;
     let next = this._dprFactor;
     if (avg > 0.022) {
@@ -599,9 +706,10 @@ export class App extends EventTarget {
       next = Math.max(floor, this._dprFactor - 0.15);
       this._dprFastWindows = 0;
     } else if (avg < 0.014) {
-      // Comfortable — bank a fast window. Recover after two consecutive.
+      // Comfortable — bank a fast window. Recover only after a long, stable
+      // run of headroom so a brief lull doesn't bounce us back up.
       this._dprFastWindows++;
-      if (this._dprFastWindows >= 2) {
+      if (this._dprFastWindows >= 6) {
         next = Math.min(1.0, this._dprFactor + 0.15);
         this._dprFastWindows = 0;
       }
@@ -611,31 +719,36 @@ export class App extends EventTarget {
     }
 
     if (Math.abs(next - this._dprFactor) < 0.01) return;
+    // A change is firing — block the next one for a few windows.
+    this._dprCooldown = 3;
     this._dprFactor = next;
     const eff = this._dprBase * next;
     this.renderer.setPixelRatio(eff);
     this.postfx?.resize(this.sizes.width, this.sizes.height, eff);
     if (this.debug?.enabled) {
-      console.log(`[DPR] avg ${(avg * 1000).toFixed(1)}ms → factor ${next.toFixed(2)} (effective ${eff.toFixed(2)})`);
+      console.log(
+        `[DPR] avg ${(avg * 1000).toFixed(1)}ms → factor ${next.toFixed(2)} (effective ${eff.toFixed(2)})`,
+      );
     }
   }
 
   #initMapSystems() {
     assertCoordRoundTrip(WORLD_BOUNDS);
-    const solidPushSpots = this.actionPrompts?.pushSpots ?? this.world.nature?.pushSpots ?? [];
+    const solidPushSpots =
+      this.actionPrompts?.pushSpots ?? this.world.nature?.pushSpots ?? [];
     const runtimeBlockers = solidPushSpots
-      .filter((spot) => spot.type !== 'log')
+      .filter((spot) => spot.type !== "log")
       .map((spot) => ({
-        type: 'circle',
+        type: "circle",
         center: [spot.position.x, spot.position.z],
         radius: this.#navBlockerRadius(spot),
-        label: spot.type ?? 'solid',
+        label: spot.type ?? "solid",
       }));
     const lampBlockers = LAMPS.map(([x, z]) => ({
-      type: 'circle',
+      type: "circle",
       center: [x, z],
       radius: 1.15,
-      label: 'lamp',
+      label: "lamp",
     }));
 
     this.discovery = new Discovery();
@@ -643,7 +756,9 @@ export class App extends EventTarget {
       bounds: WORLD_BOUNDS,
       blockers: [...BLOCKERS, ...runtimeBlockers, ...lampBlockers],
     });
-    this.transitionFx = new TransitionFX(document.getElementById('transition-root'));
+    this.transitionFx = new TransitionFX(
+      document.getElementById("transition-root"),
+    );
     this.teleport = new Teleport({
       player: this.player,
       playerCamera: this.playerCamera,
@@ -690,28 +805,29 @@ export class App extends EventTarget {
   }
 
   #navBlockerRadius(spot) {
-    if (spot.type === 'tree') return 0.6;
-    if (spot.type === 'rock') return Math.max(0.8, Math.min(1.4, spot.colliderRadius ?? 1.0));
-    if (spot.type === 'board') return 3.2;
-    if (spot.type === 'section') return 3.4;
-    if (spot.type === 'sign') return 1.8;
+    if (spot.type === "tree") return 0.6;
+    if (spot.type === "rock")
+      return Math.max(0.8, Math.min(1.4, spot.colliderRadius ?? 1.0));
+    if (spot.type === "board") return 3.2;
+    if (spot.type === "section") return 3.4;
+    if (spot.type === "sign") return 1.8;
     return Math.max(0.6, Math.min(1.2, spot.colliderRadius ?? 0.8));
   }
 
   #bindMapKeys() {
     if (this._mapKeysBound) return;
     this._mapKeysBound = true;
-    window.addEventListener('keydown', (e) => {
-      if (document.body.classList.contains('booting')) return;
-      if (e.code === 'KeyM') {
+    window.addEventListener("keydown", (e) => {
+      if (document.body.classList.contains("booting")) return;
+      if (e.code === "KeyM") {
         e.preventDefault();
         this.mapOverlay?.toggle?.();
-      } else if (e.code === 'Escape' && this.mapOverlay?.isOpen) {
+      } else if (e.code === "Escape" && this.mapOverlay?.isOpen) {
         e.preventDefault();
         this.mapOverlay.close();
-      } else if (e.code === 'Backquote' && this.navmask) {
+      } else if (e.code === "Backquote" && this.navmask) {
         this.#toggleNavmaskDebug();
-      } else if (e.code === 'KeyK') {
+      } else if (e.code === "KeyK") {
         this.#toggleColliderDebug();
       }
     });
@@ -742,7 +858,7 @@ export class App extends EventTarget {
         toneMapped: false,
       }),
     );
-    lines.name = 'collider-debug';
+    lines.name = "collider-debug";
     lines.renderOrder = 999;
     lines.frustumCulled = false;
     this.scene.add(lines);
@@ -756,8 +872,11 @@ export class App extends EventTarget {
     const lines = this._colliderDebugLines;
     if (!lines || !this.physics?.world) return;
     const { vertices, colors } = this.physics.world.debugRender();
-    lines.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    lines.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+    lines.geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(vertices, 3),
+    );
+    lines.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 4));
   }
 
   #dumpColliders() {
@@ -767,26 +886,36 @@ export class App extends EventTarget {
     const rows = [];
     world.forEachCollider((c) => {
       const t = c.translation();
-      const he = c.halfExtents?.();      // cuboids only
-      const radius = c.radius?.();        // cylinders/balls
+      const he = c.halfExtents?.(); // cuboids only
+      const radius = c.radius?.(); // cylinders/balls
       const footprint = he ? Math.max(he.x, he.z) : (radius ?? null);
       rows.push({
-        shape: he ? 'cuboid' : (radius != null ? 'cylinder' : 'other'),
-        x: +t.x.toFixed(2), y: +t.y.toFixed(2), z: +t.z.toFixed(2),
+        shape: he ? "cuboid" : radius != null ? "cylinder" : "other",
+        x: +t.x.toFixed(2),
+        y: +t.y.toFixed(2),
+        z: +t.z.toFixed(2),
         hx: he ? +he.x.toFixed(2) : null,
-        hy: he ? +he.y.toFixed(2) : (c.halfHeight?.() != null ? +c.halfHeight().toFixed(2) : null),
+        hy: he
+          ? +he.y.toFixed(2)
+          : c.halfHeight?.() != null
+            ? +c.halfHeight().toFixed(2)
+            : null,
         hz: he ? +he.z.toFixed(2) : null,
         radius: radius != null ? +radius.toFixed(2) : null,
         footprint: footprint != null ? +footprint.toFixed(2) : null,
         dist: +Math.hypot(t.x - ppos.x, t.z - ppos.z).toFixed(2),
       });
     });
-    console.log(`[colliders] ${rows.length} total — player at`,
-      `(${ppos.x.toFixed(1)}, ${ppos.z.toFixed(1)})`);
-    console.groupCollapsed('[colliders] by footprint width (widest first)');
-    console.table([...rows].sort((a, b) => (b.footprint ?? -1) - (a.footprint ?? -1)));
+    console.log(
+      `[colliders] ${rows.length} total — player at`,
+      `(${ppos.x.toFixed(1)}, ${ppos.z.toFixed(1)})`,
+    );
+    console.groupCollapsed("[colliders] by footprint width (widest first)");
+    console.table(
+      [...rows].sort((a, b) => (b.footprint ?? -1) - (a.footprint ?? -1)),
+    );
     console.groupEnd();
-    console.groupCollapsed('[colliders] by distance to player (nearest first)');
+    console.groupCollapsed("[colliders] by distance to player (nearest first)");
     console.table([...rows].sort((a, b) => a.dist - b.dist));
     console.groupEnd();
   }
@@ -805,7 +934,7 @@ export class App extends EventTarget {
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
       antialias: true,
-      powerPreference: 'high-performance',
+      powerPreference: "high-performance",
       alpha: false,
     });
     this.renderer.setPixelRatio(this.sizes.pixelRatio);
@@ -875,7 +1004,7 @@ export class App extends EventTarget {
     sun.shadow.normalBias = 0.04;
 
     // Soft warm rim from the opposite side so trees aren't black silhouettes.
-    const rim = new THREE.DirectionalLight('#ff6b3d', 0.5);
+    const rim = new THREE.DirectionalLight("#ff6b3d", 0.5);
     rim.position.set(-30, 12, -20);
     rim.target.position.set(0, 0, 0);
     this.scene.add(rim.target, rim);
@@ -889,12 +1018,16 @@ export class App extends EventTarget {
   }
 
   #bindResize() {
-    this.sizes.addEventListener('resize', () => {
+    this.sizes.addEventListener("resize", () => {
       this.camera.aspect = this.sizes.aspect;
       this.camera.updateProjectionMatrix();
       this.renderer.setPixelRatio(this.sizes.pixelRatio);
       this.renderer.setSize(this.sizes.width, this.sizes.height);
-      this.postfx?.resize(this.sizes.width, this.sizes.height, this.sizes.pixelRatio);
+      this.postfx?.resize(
+        this.sizes.width,
+        this.sizes.height,
+        this.sizes.pixelRatio,
+      );
     });
   }
 
@@ -902,7 +1035,7 @@ export class App extends EventTarget {
     // Skip 5 of every 6 frames while the tab is hidden. Don't burn the
     // clock's delta on the skipped frames — getDelta() is only called on
     // frames we actually process, so the player doesn't teleport on resume.
-    if (this._backgroundMode && (++this._bgFrame % 6) !== 0) {
+    if (this._backgroundMode && ++this._bgFrame % 6 !== 0) {
       // setAnimationLoop re-fires on its own next frame — just skip work.
       return;
     }
@@ -913,9 +1046,12 @@ export class App extends EventTarget {
     this.renderer.info.reset();
     this.#updateAdaptiveDpr(frameDelta);
 
-    const fixedDelta = this.quality.physicsStep ?? (1 / 60);
+    const fixedDelta = this.quality.physicsStep ?? 1 / 60;
     const maxSteps = this.quality.maxPhysicsSteps ?? 5;
-    this._fixedAccumulator = Math.min(this._fixedAccumulator + frameDelta, fixedDelta * maxSteps);
+    this._fixedAccumulator = Math.min(
+      this._fixedAccumulator + frameDelta,
+      fixedDelta * maxSteps,
+    );
 
     let sample = this._lastPlayerSample;
     let steps = 0;
@@ -925,7 +1061,12 @@ export class App extends EventTarget {
       this._fixedAccumulator -= fixedDelta;
       steps++;
     }
-    if (!sample) sample = this._lastPlayerSample ?? { moving: false, velocity: { x: 0, y: 0, z: 0 }, speed: 0 };
+    if (!sample)
+      sample = this._lastPlayerSample ?? {
+        moving: false,
+        velocity: { x: 0, y: 0, z: 0 },
+        speed: 0,
+      };
     this._lastPlayerSample = sample;
 
     // Drive the camera's dynamic movement-zoom before update() reads it.
@@ -934,7 +1075,8 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
     });
     this.playerCamera.update(frameDelta);
-    if (this.discovery) this.discovery.update(this.player.position.x, this.player.position.z);
+    if (this.discovery)
+      this.discovery.update(this.player.position.x, this.player.position.z);
     if (this.clickToMove) this.clickToMove.update(frameDelta);
     if (this.miniMap) this.miniMap.update();
     if (this.mapOverlay) this.mapOverlay.update();
@@ -952,10 +1094,13 @@ export class App extends EventTarget {
     });
     // Foliage parts/flutters around the player (bushes at walking height,
     // canopies when jumped into) — driven by the player's 3D position.
-    if (this.world.foliage) this.world.foliage.setPlayerPos(this.player.position);
-    if (this.world.flowers) this.world.flowers.setPlayerPos(this.player.position);
+    if (this.world.foliage)
+      this.world.foliage.setPlayerPos(this.player.position);
+    if (this.world.flowers)
+      this.world.flowers.setPlayerPos(this.player.position);
     // Phase F — day/night lamp + bonfire intensity, lava glow, animated props.
-    if (this.worldLights) this.worldLights.update(frameDelta, this.timeOfDay.mode, elapsed);
+    if (this.worldLights)
+      this.worldLights.update(frameDelta, this.timeOfDay.mode, elapsed);
     if (this.lava) this.lava.update(elapsed);
     if (this.animatedProps) {
       this.animatedProps.setPlayerPos(this.player.position);
@@ -963,7 +1108,8 @@ export class App extends EventTarget {
     }
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
-    if (this.actionPrompts) this.actionPrompts.tick(this.player.position, frameDelta);
+    if (this.actionPrompts)
+      this.actionPrompts.tick(this.player.position, frameDelta);
     if (this.interaction) this.interaction.tick(this.player.position);
     if (this.skillSphere) this.skillSphere.update(frameDelta);
     if (this.interactables) this.interactables.update(frameDelta);
@@ -1006,7 +1152,11 @@ export class App extends EventTarget {
     // Keep ambient bed in sync with day/night flips. Only push on change so
     // ad-hoc `audio.setMode(...)` calls (probes, debug) aren't stomped each
     // frame.
-    if (this.audio && this.timeOfDay && this._lastAudioMode !== this.timeOfDay.mode) {
+    if (
+      this.audio &&
+      this.timeOfDay &&
+      this._lastAudioMode !== this.timeOfDay.mode
+    ) {
       this._lastAudioMode = this.timeOfDay.mode;
       this.audio.setMode(this.timeOfDay.mode);
     }
@@ -1024,7 +1174,9 @@ export class App extends EventTarget {
       const ppos = this.player.position;
       // In-water state from the actual terrain water-depth (ponds/river/ocean),
       // matching Water.playerOverWater so visuals, slowdown, and unlocks agree.
-      const groundY = this.world.terrain ? this.world.terrain.heightAt(ppos.x, ppos.z) : 0;
+      const groundY = this.world.terrain
+        ? this.world.terrain.heightAt(ppos.x, ppos.z)
+        : 0;
       const waterDepth = Math.max(0, Player.WATER_SURFACE_Y - groundY);
       const inWater = waterDepth > 0;
       this.achievements.tick(frameDelta, {
@@ -1034,7 +1186,7 @@ export class App extends EventTarget {
         grounded: _grounded,
         inWater,
         waterDepth,
-        isNight: this.timeOfDay?.mode === 'night',
+        isNight: this.timeOfDay?.mode === "night",
         isRaining: !!this.rain?.enabled,
         mode: this.timeOfDay?.mode,
       });
@@ -1046,7 +1198,7 @@ export class App extends EventTarget {
     if (this.distanceGame) {
       this.distanceGame.update(frameDelta, this.player.position, {
         moving: !!sample?.moving,
-        isNight: this.timeOfDay?.mode === 'night',
+        isNight: this.timeOfDay?.mode === "night",
       });
     }
 
@@ -1100,17 +1252,17 @@ export class App extends EventTarget {
         // Detect cluster centre by averaging is overkill — just compare to
         // whatever sign is closest within 10m.
         const d = Math.hypot(px - cx, pz - projects.z);
-        if (d < 14) ach.onSectionVisited('projects');
+        if (d < 14) ach.onSectionVisited("projects");
       }
     }
     if (this.world.signs) {
       const skills = this.world.signs.skillsPosition;
       const contact = this.world.signs.contactPosition;
       if (skills && Math.hypot(px - skills.x, pz - skills.z) < 10) {
-        ach.onSectionVisited('skills');
+        ach.onSectionVisited("skills");
       }
       if (contact && Math.hypot(px - contact.x, pz - contact.z) < 10) {
-        ach.onSectionVisited('contact');
+        ach.onSectionVisited("contact");
       }
       const expItems = this.world.signs.experienceItems;
       if (expItems && expItems.length) {
@@ -1120,18 +1272,19 @@ export class App extends EventTarget {
           const p = expItems[i].position;
           const dx = px - p.x;
           const dz = pz - p.z;
-          if (dx * dx + dz * dz < 16) { // within 4m
+          if (dx * dx + dz * dz < 16) {
+            // within 4m
             ach.onExperienceSignViewed(i);
             nearAny = true;
           }
         }
-        if (nearAny) ach.onSectionVisited('experience');
+        if (nearAny) ach.onSectionVisited("experience");
       }
     }
 
     // Off-path: 15m+ from every path tile, on land. Skip when wading so
     // the open ocean doesn't trivially unlock this.
-    if (!inWater && !ach.unlocked.has('off_script')) {
+    if (!inWater && !ach.unlocked.has("off_script")) {
       const pos = this._pathPositions;
       const n = this._pathCount;
       if (pos && n > 0) {
@@ -1140,7 +1293,10 @@ export class App extends EventTarget {
         for (let i = 0; i < n; i++) {
           const dx = px - pos[i * 2];
           const dz = pz - pos[i * 2 + 1];
-          if (dx * dx + dz * dz < minDist2) { anyWithin = true; break; }
+          if (dx * dx + dz * dz < minDist2) {
+            anyWithin = true;
+            break;
+          }
         }
         if (!anyWithin) ach.onOffPath();
       }
@@ -1153,8 +1309,8 @@ export class App extends EventTarget {
    *  tile → 'stone'; otherwise grass. Cheap O(N) over path positions, but
    *  N is small (~tens) and only runs once per frame. */
   #surfaceAt(x, z) {
-    if (this.water?.playerOverWater?.(x, z)) return 'water';
-    if ((x * x + z * z) >= 38 * 38) return 'sand';
+    if (this.water?.playerOverWater?.(x, z)) return "water";
+    if (x * x + z * z >= 38 * 38) return "sand";
     const pos = this._pathPositions;
     const n = this._pathCount;
     const r2 = this._pathRadius2;
@@ -1162,9 +1318,9 @@ export class App extends EventTarget {
       for (let i = 0; i < n; i++) {
         const dx = x - pos[i * 2];
         const dz = z - pos[i * 2 + 1];
-        if (dx * dx + dz * dz < r2) return 'stone';
+        if (dx * dx + dz * dz < r2) return "stone";
       }
     }
-    return 'grass';
+    return "grass";
   }
 }

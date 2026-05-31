@@ -116,9 +116,14 @@ export class Water {
    * @param {{heights:Float32Array, segments:number, size:number, bboxMin:THREE.Vector3, heightAt:Function}} terrain
    * @param {object} [opts]
    */
-  constructor(scene, terrain, _opts = {}) {
+  constructor(scene, terrain, opts = {}) {
     this.scene = scene;
     this.terrain = terrain;
+    // Full surface detail (refraction / caustics / whitecaps / shoreline foam /
+    // noise-broken normal). Dropped on medium/low tiers via quality.waterHighDetail
+    // — those blocks are skipped at graph-build time, so the cheap shader never
+    // compiles them in (zero runtime branch). Defaults true for safety.
+    this.highDetail = opts.highDetail !== false;
     this.islandCenter = new THREE.Vector2(0, 0);
     this.islandRadius = AUDIO_SHORE_RADIUS;
     this.level = WATER_LEVEL_Y;
@@ -349,14 +354,16 @@ export class Water {
       const p2 = vec2(wp.x, wp.z);
       const t = this.uTime;
       const N = surfaceNormal(p2, t, vWaveScale).toVar();
-      // Organic break-up of the regular sine-ripple normal — a cheap value-noise
-      // gradient (3 taps) so the shimmer reads as water, not a perfect grid.
-      const nEps = 0.18;
-      const nC = mx_noise_float(vec3(p2.mul(1.4), t.mul(0.35)));
-      const nX = mx_noise_float(vec3(p2.add(vec2(nEps, 0)).mul(1.4), t.mul(0.35)));
-      const nZ = mx_noise_float(vec3(p2.add(vec2(0, nEps)).mul(1.4), t.mul(0.35)));
-      const nGrad = vec2(nX.sub(nC), nZ.sub(nC)).mul(0.5);
-      N.assign(normalize(N.add(vec3(nGrad.x.negate(), 0.0, nGrad.y.negate()))));
+      if (this.highDetail) {
+        // Organic break-up of the regular sine-ripple normal — a cheap value-noise
+        // gradient (3 taps) so the shimmer reads as water, not a perfect grid.
+        const nEps = 0.18;
+        const nC = mx_noise_float(vec3(p2.mul(1.4), t.mul(0.35)));
+        const nX = mx_noise_float(vec3(p2.add(vec2(nEps, 0)).mul(1.4), t.mul(0.35)));
+        const nZ = mx_noise_float(vec3(p2.add(vec2(0, nEps)).mul(1.4), t.mul(0.35)));
+        const nGrad = vec2(nX.sub(nC), nZ.sub(nC)).mul(0.5);
+        N.assign(normalize(N.add(vec3(nGrad.x.negate(), 0.0, nGrad.y.negate()))));
+      }
 
       const V = normalize(cameraPosition.sub(wp));
       const topDown = clamp(V.y, 0.0, 1.0);
@@ -375,29 +382,31 @@ export class Water {
       // water shows its floor; deep water and the open sea keep the solid tint.
       const shallowFactor = smoothstep(1.1, 0.06, vDepthTerrain).toVar();
 
-      // Refraction — sample the opaque scene buffer behind the surface, offset by
-      // the wave normal so the bottom wobbles. Blended in only where shallow AND
-      // looking down; at grazing angles the Fresnel sky reflection (below) takes
-      // over, which also hides screen-edge smear.
-      const refrOffset = N.xz.mul(0.045).mul(topDown);
-      const bottom = viewportSharedTexture(viewportSafeUV(viewportUV.add(refrOffset))).rgb;
-      // Depth murk — the bottom shows clearly in the shallows and dissolves into
-      // the water's own colour as it deepens, so the water reads as a volume
-      // rather than a thin clear sheet.
-      const murk = clamp(vDepthTerrain.mul(1.1), 0.0, 1.0);
-      const waterTint = mix(this.uShallow, this.uDeep, murk);
-      const refracted = mix(bottom, waterTint, murk.mul(0.55).add(0.25));
-      const seeThrough = clamp(shallowFactor.mul(topDown), 0.0, 1.0).mul(0.72);
-      col.assign(mix(col, refracted, seeThrough));
+      if (this.highDetail) {
+        // Refraction — sample the opaque scene buffer behind the surface, offset by
+        // the wave normal so the bottom wobbles. Blended in only where shallow AND
+        // looking down; at grazing angles the Fresnel sky reflection (below) takes
+        // over, which also hides screen-edge smear.
+        const refrOffset = N.xz.mul(0.045).mul(topDown);
+        const bottom = viewportSharedTexture(viewportSafeUV(viewportUV.add(refrOffset))).rgb;
+        // Depth murk — the bottom shows clearly in the shallows and dissolves into
+        // the water's own colour as it deepens, so the water reads as a volume
+        // rather than a thin clear sheet.
+        const murk = clamp(vDepthTerrain.mul(1.1), 0.0, 1.0);
+        const waterTint = mix(this.uShallow, this.uDeep, murk);
+        const refracted = mix(bottom, waterTint, murk.mul(0.55).add(0.25));
+        const seeThrough = clamp(shallowFactor.mul(topDown), 0.0, 1.0).mul(0.72);
+        col.assign(mix(col, refracted, seeThrough));
 
-      // Caustics — veined light on the shallow floor: two scrolling fractal-noise
-      // layers differenced into bright filaments, tinted by the sky colour so it
-      // dims automatically at night. Sits on top of the refracted bottom.
-      const cuv = p2.mul(0.55);
-      const caA = mx_fractal_noise_float(vec3(cuv.add(vec2(t.mul(0.07), t.mul(0.05))), t.mul(0.12)), 2, 2.0, 0.5);
-      const caB = mx_fractal_noise_float(vec3(cuv.mul(1.35).add(11.3).sub(vec2(t.mul(0.05), t.mul(0.06))), t.mul(0.1)), 2, 2.0, 0.5);
-      const caustic = pow(clamp(float(1.0).sub(abs(caA.sub(caB)).mul(2.6)), 0.0, 1.0), 3.5);
-      col.addAssign(this.uSky.mul(caustic.mul(shallowFactor).mul(topDown.mul(0.5).add(0.5)).mul(0.45)));
+        // Caustics — veined light on the shallow floor: two scrolling fractal-noise
+        // layers differenced into bright filaments, tinted by the sky colour so it
+        // dims automatically at night. Sits on top of the refracted bottom.
+        const cuv = p2.mul(0.55);
+        const caA = mx_fractal_noise_float(vec3(cuv.add(vec2(t.mul(0.07), t.mul(0.05))), t.mul(0.12)), 2, 2.0, 0.5);
+        const caB = mx_fractal_noise_float(vec3(cuv.mul(1.35).add(11.3).sub(vec2(t.mul(0.05), t.mul(0.06))), t.mul(0.1)), 2, 2.0, 0.5);
+        const caustic = pow(clamp(float(1.0).sub(abs(caA.sub(caB)).mul(2.6)), 0.0, 1.0), 3.5);
+        col.addAssign(this.uSky.mul(caustic.mul(shallowFactor).mul(topDown.mul(0.5).add(0.5)).mul(0.45)));
+      }
 
       // Fresnel — looking straight down shows the water body; at grazing angles
       // the surface turns reflective. Reflect a time-of-day sky tint, brighter
@@ -429,15 +438,17 @@ export class Water {
       col.addAssign(this.uShallow.mul(flowBands));
       col.addAssign(this.uSky.mul(oceanGlint));
 
-      // Whitecaps — foam on the upper tips of the rolling swells, patchy
-      // (noise-broken) and only in the deeper water where swells actually roll,
-      // so the open ocean reads as real moving sea rather than a tinted sheet.
-      const capNoise = mx_noise_float(vec3(p2.mul(1.6), t.mul(0.6))).mul(0.5).add(0.5);
-      const crest = smoothstep(0.035, 0.08, vSwell)
-        .mul(smoothstep(0.35, 0.85, vWaveScale))
-        .mul(capNoise.mul(0.7).add(0.3))
-        .mul(0.6);
-      col.assign(mix(col, this.uFoam, clamp(crest, 0.0, 1.0)));
+      if (this.highDetail) {
+        // Whitecaps — foam on the upper tips of the rolling swells, patchy
+        // (noise-broken) and only in the deeper water where swells actually roll,
+        // so the open ocean reads as real moving sea rather than a tinted sheet.
+        const capNoise = mx_noise_float(vec3(p2.mul(1.6), t.mul(0.6))).mul(0.5).add(0.5);
+        const crest = smoothstep(0.035, 0.08, vSwell)
+          .mul(smoothstep(0.35, 0.85, vWaveScale))
+          .mul(capNoise.mul(0.7).add(0.3))
+          .mul(0.6);
+        col.assign(mix(col, this.uFoam, clamp(crest, 0.0, 1.0)));
+      }
 
       // Rain-impact rings — while it's raining, expanding ringlets pop across the
       // whole surface (cellular grid, random phase per cell). Two scales for a
@@ -459,15 +470,17 @@ export class Water {
       const rainRings = rainCells(0.8, 1.7, 0.05).add(rainCells(1.35, 2.2, 0.04).mul(0.8));
       col.assign(mix(col, this.uFoam, clamp(rainRings.mul(rainPresence).mul(this.uRain).mul(0.7), 0.0, 1.0)));
 
-      // Shoreline foam — an irregular lacy band where the ground is just under
-      // water, broken up by scrolling fractal noise (so it reads as foam, not a
-      // clean ring) and breathing in/out like a tide.
-      const shoreWave = sin(this.uTime.mul(0.8).add(p2.x.mul(0.25))).mul(0.05);
-      const foamBand = smoothstep(0.34, 0.015, vDepthTerrain.add(shoreWave));
-      const foamN = mx_fractal_noise_float(vec3(p2.mul(0.9), t.mul(0.22)), 3, 2.0, 0.5).mul(0.5).add(0.5);
-      const foamTex = smoothstep(0.34, 0.74, foamN).mul(0.75).add(0.25);
-      const foam = clamp(foamBand.mul(foamTex), 0.0, 1.0).mul(0.95);
-      col.assign(mix(col, this.uFoam, foam));
+      if (this.highDetail) {
+        // Shoreline foam — an irregular lacy band where the ground is just under
+        // water, broken up by scrolling fractal noise (so it reads as foam, not a
+        // clean ring) and breathing in/out like a tide.
+        const shoreWave = sin(this.uTime.mul(0.8).add(p2.x.mul(0.25))).mul(0.05);
+        const foamBand = smoothstep(0.34, 0.015, vDepthTerrain.add(shoreWave));
+        const foamN = mx_fractal_noise_float(vec3(p2.mul(0.9), t.mul(0.22)), 3, 2.0, 0.5).mul(0.5).add(0.5);
+        const foamTex = smoothstep(0.34, 0.74, foamN).mul(0.75).add(0.25);
+        const foam = clamp(foamBand.mul(foamTex), 0.0, 1.0).mul(0.95);
+        col.assign(mix(col, this.uFoam, foam));
+      }
 
       // Water reacting to the body in it — foam that HUGS the waterline around
       // the body (present even standing still) plus churn when wading. No
