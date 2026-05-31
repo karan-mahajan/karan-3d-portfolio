@@ -2,6 +2,31 @@ import * as THREE from 'three/webgpu';
 import { MeshLambertNodeMaterial } from 'three/webgpu';
 import { Fn, positionWorld, texture, uv, vec2, vec3, mix, color, uniform, clamp } from 'three/tsl';
 
+// Tree GLB systems that ship a solid low-poly GREEN canopy primitive (material
+// `*_canopy_*`) alongside their trunk → foliage species key. ONLY oak does:
+// verified from the GLBs, oakTrees has `oak_canopy_karan_*` (green) + `oak_trunk_
+// karan` per `oakBody`; birch/cherry are trunk/branch-only and get their leaves
+// from the treeLeaves ref empties instead. The canopy is just the placement
+// GUIDE — we sample anchors across it (in its form), delete the green primitive,
+// and grow SDF leaf blobs there, leaving the trunk. See #extractTreeFoliage.
+const TREE_SYSTEMS = { oakTrees: 'oak' };
+// Canopy → foliage-anchor sampling. Poisson-thin the canopy verts to this world
+// spacing; each surviving point grows one SDF blob scaled to fill the gap.
+const CANOPY_ANCHOR_SPACING = 1.25;   // m between blobs
+const CANOPY_SCALE_FACTOR = 0.62;     // blob scale = spacing × this (× jitter)
+const CANOPY_SCALE_JITTER = 0.2;      // ±fraction deterministic size variation
+const DYNAMIC_BRICK_SCALE = 0.5;
+const DYNAMIC_BRICK_TEMPLATES = new Set(['brickKerbMesh', 'brickPileMesh']);
+const TITLE_LETTER_COLOR = '#24345a';
+const TITLE_LETTER_EMISSIVE = '#080d18';
+const TITLE_LETTER_FLOAT_CLEARANCE = 1.15;
+const TITLE_LETTER_FLOAT_AMPLITUDE = 0.12;
+const TITLE_LETTER_FLOAT_SPEED = 1.6;
+const TITLE_LETTER_TOUCH_PADDING = 0.32;
+const TITLE_LETTER_DROP_IMPULSE = 0.16;
+const TITLE_LETTER_RETURN_DELAY = 5;
+const TITLE_LETTER_RETURN_DURATION = 1.25;
+
 /**
  * v3 blend-driven world loader (Bruno-style, manifest-driven).
  *
@@ -56,6 +81,14 @@ export class GlbV3World {
     // white (no-op) so the runtime matches the Blender material exactly; kept as
     // a uniform so day/night can later dim the ground alongside the blades.
     this.groundGrassColor = uniform(color('#ffffff'));
+    this.dynamicBrickPiles = [];
+    this.dynamicTitleLetters = [];
+    this.audio = null;
+
+    // Foliage anchors sampled from each tree's green canopy (then the canopy is
+    // deleted). species ('oak'|'birch'|'cherry') → [{position, scale}]. App grows
+    // one SDF leaf blob per anchor. Populated by #extractTreeFoliage during load.
+    this.treeCanopyAnchors = new Map();
 
     this.terrain = {
       mesh: null,
@@ -116,7 +149,8 @@ export class GlbV3World {
   }
 
   /** Load + parse the world per the manifest, populate buckets, run assertions. */
-  async load(physics) {
+  async load(physics, opts = {}) {
+    this.audio = opts.audio ?? null;
     const manifest = await fetch(GlbV3World.MANIFEST_PATH).then((r) => {
       if (!r.ok) throw new Error(`GlbV3World: manifest fetch failed (${r.status})`);
       return r.json();
@@ -199,14 +233,20 @@ export class GlbV3World {
           if (obj) this.refs.markers[markerName] = obj;
         }
       }
+      // Trees: strip the solid green canopy → SDF foliage anchors in its form.
+      const treeSpecies = TREE_SYSTEMS[entry.system];
+      if (treeSpecies) this.#extractTreeFoliage(group, treeSpecies);
+      if (entry.system === 'miscFx') this.#extractDynamicTitleLetters(group, physics);
     }
+
+    if (physics?.ready) this.#registerBridgeColliders(physics);
 
     // 1b. Instanced bricks — the authored stone paving (pave/kerb/pile). Other
     // instanced systems (rocks/flowers) stay deferred; only bricks are wired so
     // the walkable path reads as paving + footsteps register stone zones.
     const bricksEntry = (manifest.instanced ?? []).find((e) => e.system === 'bricks');
     if (bricksEntry) {
-      this._pathTilePositions = await this.#loadInstancedSystem(bricksEntry);
+      this._pathTilePositions = await this.#loadInstancedSystem(bricksEntry, physics);
     }
 
     // 2. Colliders — parse the proxy GLB, build Rapier shapes, discard meshes.
@@ -221,6 +261,178 @@ export class GlbV3World {
 
     this.#assertBootInvariants();
     return this;
+  }
+
+  update(delta = 0, playerPos = null) {
+    this.#updateFloatingTitleLetters(delta, playerPos);
+    this.#syncDynamicItems(this.dynamicBrickPiles);
+    this.#syncDynamicItems(this.dynamicTitleLetters);
+  }
+
+  #updateFloatingTitleLetters(delta, playerPos) {
+    const dt = Math.min(Math.max(delta || 1 / 60, 0), 1 / 30);
+    const touchedLetter = playerPos ? this.#closestTouchedFloatingTitleLetter(playerPos) : null;
+    for (const letter of this.dynamicTitleLetters) {
+      const { body } = letter;
+      if (!body) continue;
+
+      if (letter.returning) {
+        this.#animateTitleLetterReturn(letter, dt);
+        continue;
+      }
+
+      if (!letter.floating) {
+        if (this.#isDroppedTitleLetterOnGround(letter)) {
+          letter.groundedTime += dt;
+        } else {
+          letter.groundedTime = 0;
+        }
+        if (letter.groundedTime >= TITLE_LETTER_RETURN_DELAY) {
+          this.#startTitleLetterReturn(letter);
+        }
+        continue;
+      }
+
+      const t = body.translation();
+      if (playerPos && letter === touchedLetter) {
+        this.#dropFloatingTitleLetter(letter, playerPos, t);
+        continue;
+      }
+
+      letter.floatTime += dt;
+      const bobY = Math.sin(letter.floatTime * TITLE_LETTER_FLOAT_SPEED + letter.floatPhase)
+        * TITLE_LETTER_FLOAT_AMPLITUDE;
+      body.setTranslation({
+        x: letter.startCenter.x,
+        y: letter.startCenter.y + bobY,
+        z: letter.startCenter.z,
+      }, false);
+      body.setRotation(letter.startRotation, false);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+      body.sleep();
+    }
+  }
+
+  #closestTouchedFloatingTitleLetter(playerPos) {
+    let closest = null;
+    let closestD2 = Infinity;
+    for (const letter of this.dynamicTitleLetters) {
+      if (!letter.floating || !letter.body) continue;
+      const t = letter.body.translation();
+      if (!this.#isPlayerTouchingFloatingLetter(letter, playerPos, t)) continue;
+      const dx = playerPos.x - t.x;
+      const dz = playerPos.z - t.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < closestD2) {
+        closest = letter;
+        closestD2 = d2;
+      }
+    }
+    return closest;
+  }
+
+  #isPlayerTouchingFloatingLetter(letter, playerPos, bodyPos) {
+    const dx = playerPos.x - bodyPos.x;
+    const dz = playerPos.z - bodyPos.z;
+    const radius = Math.hypot(letter.halfExtents.x, letter.halfExtents.z) + TITLE_LETTER_TOUCH_PADDING;
+    if ((dx * dx + dz * dz) > radius * radius) return false;
+
+    const playerBottom = playerPos.y ?? 0;
+    const playerTop = playerBottom + 1.7;
+    const letterBottom = bodyPos.y - letter.halfExtents.y;
+    const letterTop = bodyPos.y + letter.halfExtents.y;
+    return playerTop >= letterBottom && playerBottom <= letterTop + 0.25;
+  }
+
+  #dropFloatingTitleLetter(letter, playerPos, bodyPos) {
+    letter.floating = false;
+    letter.groundedTime = 0;
+    const dx = bodyPos.x - playerPos.x;
+    const dz = bodyPos.z - playerPos.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const pushX = dx / len;
+    const pushZ = dz / len;
+    letter.body.wakeUp();
+    letter.body.applyImpulse({
+      x: pushX * TITLE_LETTER_DROP_IMPULSE,
+      y: 0.035,
+      z: pushZ * TITLE_LETTER_DROP_IMPULSE,
+    }, true);
+    letter.body.applyTorqueImpulse?.({
+      x: pushZ * 0.025,
+      y: 0.018,
+      z: -pushX * 0.025,
+    }, true);
+  }
+
+  #isDroppedTitleLetterOnGround(letter) {
+    const t = letter.body.translation();
+    const groundY = this.terrain.heightAt(t.x, t.z);
+    letter.mesh.updateMatrixWorld(true);
+    letter._groundBox.setFromObject(letter.mesh);
+    const bottomY = letter._groundBox.min.y;
+    return bottomY <= groundY + 0.08 || (letter.body.isSleeping() && bottomY <= groundY + 0.18);
+  }
+
+  #startTitleLetterReturn(letter) {
+    const t = letter.body.translation();
+    const r = letter.body.rotation();
+    letter.returning = true;
+    letter.returnTime = 0;
+    letter.returnFromCenter.set(t.x, t.y, t.z);
+    letter.returnFromRotation.set(r.x, r.y, r.z, r.w).normalize();
+    letter.body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+    letter.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+    letter.body.wakeUp();
+  }
+
+  #animateTitleLetterReturn(letter, dt) {
+    letter.returnTime += dt;
+    const t = Math.min(1, letter.returnTime / TITLE_LETTER_RETURN_DURATION);
+    const ease = t < 0.5
+      ? 4 * t * t * t
+      : 1 - ((-2 * t + 2) ** 3) / 2;
+    const center = letter._returnCenter
+      .copy(letter.returnFromCenter)
+      .lerp(letter.startCenter, ease);
+    const rotation = letter._returnRotation
+      .copy(letter.returnFromRotation)
+      .slerp(letter.startRotation, ease);
+
+    letter.body.setTranslation(center, false);
+    letter.body.setRotation(rotation, false);
+    letter.body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+    letter.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+
+    if (t >= 1) {
+      letter.returning = false;
+      letter.floating = true;
+      letter.groundedTime = 0;
+      letter.floatTime = 0;
+      letter.body.setTranslation(letter.startCenter, false);
+      letter.body.setRotation(letter.startRotation, false);
+      letter.body.sleep();
+    }
+  }
+
+  #syncDynamicItems(items) {
+    for (const item of items) {
+      const { body, mesh } = item;
+      if (!body || !mesh) continue;
+
+      const t = body.translation();
+      if (t.y < -8 || Math.hypot(t.x, t.z) > 95) {
+        this.#resetDynamicItem(item);
+        continue;
+      }
+
+      const r = body.rotation();
+      item._quat.set(r.x, r.y, r.z, r.w);
+      item._offset.copy(item.centerOffset).applyQuaternion(item._quat);
+      mesh.position.set(t.x, t.y, t.z).sub(item._offset);
+      mesh.quaternion.copy(item._quat);
+    }
   }
 
   // ── Terrain heightfield ───────────────────────────────────────────────────
@@ -428,6 +640,71 @@ export class GlbV3World {
     console.log(`[GlbV3World] colliders: ${cyl} cylinders, ${box} boxes, ${pad} pads`);
   }
 
+  #registerBridgeColliders(physics) {
+    const bridgeMeshes = [];
+    this.root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      if (!this.#isBridgeColliderMesh(obj.name || '')) return;
+      bridgeMeshes.push(obj);
+    });
+
+    let count = 0;
+    for (const mesh of bridgeMeshes) {
+      if (this.#addBridgeDeckCollider(physics, mesh)) count++;
+    }
+    if (count > 0) console.log(`[GlbV3World] bridge colliders: ${count} deck slabs`);
+  }
+
+  #isBridgeColliderMesh(name) {
+    return name === 'bridge01'
+      || name.startsWith('bridge02_deck_slats');
+  }
+
+  #addBridgeDeckCollider(physics, mesh) {
+    const pos = mesh.geometry?.attributes?.position;
+    if (!pos) return false;
+
+    mesh.updateMatrixWorld(true);
+    mesh.geometry.computeBoundingBox();
+    const bbox = mesh.geometry.boundingBox;
+    const localCenter = bbox.getCenter(new THREE.Vector3());
+    const localSize = bbox.getSize(new THREE.Vector3());
+    const worldCenter = localCenter.clone().applyMatrix4(mesh.matrixWorld);
+    const _pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    mesh.matrixWorld.decompose(_pos, quat, scl);
+
+    const thickness = mesh.name === 'bridge01' ? 0.24 : 0.18;
+    const deckTop = this.#meshWorldYPercentile(mesh, mesh.name === 'bridge01' ? 0.75 : 0.9);
+    const yaw = new THREE.Euler().setFromQuaternion(quat, 'YXZ').y;
+
+    physics.addStaticCuboid(
+      worldCenter.x,
+      deckTop - thickness / 2,
+      worldCenter.z,
+      Math.max(Math.abs(localSize.x * scl.x) / 2, 0.05),
+      thickness / 2,
+      Math.max(Math.abs(localSize.z * scl.z) / 2, 0.05),
+      yaw,
+    );
+    return true;
+  }
+
+  #meshWorldYPercentile(mesh, percentile) {
+    const pos = mesh.geometry?.attributes?.position;
+    if (!pos) return mesh.position.y;
+    const ys = [];
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+      ys.push(v.y);
+    }
+    ys.sort((a, b) => a - b);
+    const index = Math.min(ys.length - 1, Math.max(0, Math.floor((ys.length - 1) * percentile)));
+    return ys[index];
+  }
+
   // ── References ────────────────────────────────────────────────────────────
 
   async #loadReferences(url) {
@@ -476,11 +753,12 @@ export class GlbV3World {
    * auto-converts it to a node material, exactly like the monolithic GLBs).
    *
    * Returns a packed Float32Array of `[x,z,x,z,…]` world centres for the
-   * path-forming bricks (pave + kerb; piles are decorative) so the paths facade
-   * can flag stone footstep/footprint zones. No colliders are added — the bricks
-   * are flat paving on the terrain heightfield (colliders.glb is authoritative).
+   * path-forming bricks (pave + kerb) so the paths facade can flag stone
+   * footstep/footprint zones. Stacked brick piles are split into individual
+   * dynamic meshes + Rapier bodies, following Bruno's folio-2025 Bricks.js
+   * pattern; flat paving stays instanced/static.
    */
-  async #loadInstancedSystem(entry) {
+  async #loadInstancedSystem(entry, physics = null) {
     const [visual, refs] = await Promise.all([
       this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.visual),
       this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.references),
@@ -504,6 +782,7 @@ export class GlbV3World {
     });
 
     const PATH_TEMPLATES = new Set(['brickPaveMesh', 'brickKerbMesh']);
+    const dynamicTemplates = entry.system === 'bricks' ? DYNAMIC_BRICK_TEMPLATES : new Set();
     const pathXZ = [];
     let total = 0;
 
@@ -516,6 +795,15 @@ export class GlbV3World {
       const proto = templates.get(tmpl);
       if (!proto) {
         console.warn(`[GlbV3World] ${entry.system}: no visual template "${tmpl}" — skipped`);
+        continue;
+      }
+      if (dynamicTemplates.has(tmpl)) {
+        const transforms = this.#buildScaledBrickPileTransforms(proto, placements);
+        for (let i = 0; i < transforms.length; i++) {
+          this.#createDynamicBrickPile(proto, transforms[i], physics, `${entry.system}_${tmpl}_${i}`);
+          if (PATH_TEMPLATES.has(tmpl)) pathXZ.push(transforms[i].pos.x, transforms[i].pos.z);
+        }
+        total += placements.length;
         continue;
       }
       const inst = new THREE.InstancedMesh(proto.geometry, proto.material, placements.length);
@@ -536,6 +824,379 @@ export class GlbV3World {
 
     console.log(`[GlbV3World] ${entry.system}: ${total} instances across ${byTemplate.size} templates`);
     return new Float32Array(pathXZ);
+  }
+
+  #buildScaledBrickPileTransforms(proto, placements) {
+    proto.geometry.computeBoundingBox();
+    const bbox = proto.geometry.boundingBox;
+    const localSize = bbox.getSize(new THREE.Vector3());
+    const raw = [];
+    const groups = new Map();
+
+    for (const placement of placements) {
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scl = new THREE.Vector3();
+      placement.matrixWorld.decompose(pos, quat, scl);
+
+      const key = (placement.name || '').replace(/_\d+$/u, '') || 'brickPile';
+      const halfY = Math.abs(localSize.y * scl.y) / 2;
+      const bottomY = pos.y - halfY;
+      const item = { pos, quat, scl, key, bottomY };
+      raw.push(item);
+
+      const group = groups.get(key) ?? { count: 0, x: 0, z: 0, baseY: Infinity };
+      group.count++;
+      group.x += pos.x;
+      group.z += pos.z;
+      group.baseY = Math.min(group.baseY, bottomY);
+      groups.set(key, group);
+    }
+
+    for (const group of groups.values()) {
+      group.x /= group.count;
+      group.z /= group.count;
+    }
+
+    return raw.map((item) => {
+      const group = groups.get(item.key);
+      const scaledPos = new THREE.Vector3(
+        group.x + (item.pos.x - group.x) * DYNAMIC_BRICK_SCALE,
+        group.baseY + (item.pos.y - group.baseY) * DYNAMIC_BRICK_SCALE,
+        group.z + (item.pos.z - group.z) * DYNAMIC_BRICK_SCALE,
+      );
+      return {
+        pos: scaledPos,
+        quat: item.quat,
+        scl: item.scl.multiplyScalar(DYNAMIC_BRICK_SCALE),
+      };
+    });
+  }
+
+  #createDynamicBrickPile(proto, transform, physics, name) {
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    pos.copy(transform.pos);
+    quat.copy(transform.quat);
+    scl.copy(transform.scl);
+
+    const mesh = new THREE.Mesh(proto.geometry, proto.material);
+    mesh.name = name;
+    mesh.position.copy(pos);
+    mesh.quaternion.copy(quat);
+    mesh.scale.copy(scl);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.root.add(mesh);
+
+    proto.geometry.computeBoundingBox();
+    const bbox = proto.geometry.boundingBox;
+    const localSize = bbox.getSize(new THREE.Vector3());
+    const localCenter = bbox.getCenter(new THREE.Vector3());
+    const halfExtents = new THREE.Vector3(
+      Math.max(Math.abs(localSize.x * scl.x) / 2, 0.02),
+      Math.max(Math.abs(localSize.y * scl.y) / 2, 0.02),
+      Math.max(Math.abs(localSize.z * scl.z) / 2, 0.02),
+    );
+    const centerOffset = localCenter.clone().multiply(scl);
+    const bodyCenter = centerOffset.clone().applyQuaternion(quat).add(pos);
+
+    let body = null;
+    if (physics?.ready) {
+      body = physics.addDynamicCuboid(
+        bodyCenter.x,
+        bodyCenter.y,
+        bodyCenter.z,
+        halfExtents.x,
+        halfExtents.y,
+        halfExtents.z,
+        { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+        {
+          mass: 0.1,
+          friction: 0.7,
+          restitution: 0.15,
+          linearDamping: 0.1,
+          angularDamping: 0.1,
+          sleeping: true,
+          contactThreshold: 15,
+          onCollision: (force, position) => {
+            this.audio?.playBrickHit?.(force, position);
+          },
+        },
+      );
+    }
+
+    this.dynamicBrickPiles.push({
+      mesh,
+      body,
+      centerOffset,
+      startPosition: pos.clone(),
+      startCenter: bodyCenter.clone(),
+      startRotation: quat.clone(),
+      _quat: new THREE.Quaternion(),
+      _offset: new THREE.Vector3(),
+    });
+  }
+
+  #resetDynamicBrick(brick) {
+    this.#resetDynamicItem(brick);
+  }
+
+  #resetDynamicItem(item) {
+    const { body, mesh } = item;
+    if (body) {
+      body.setTranslation(item.startCenter, false);
+      body.setRotation(item.startRotation, false);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+      body.resetForces?.(false);
+      body.resetTorques?.(false);
+      body.sleep();
+    }
+    if (item.kind === 'titleLetter') {
+      item.floating = true;
+      item.floatTime = 0;
+      item.groundedTime = 0;
+      item.returning = false;
+      item.returnTime = 0;
+    }
+    mesh.position.copy(item.startPosition);
+    mesh.quaternion.copy(item.startRotation);
+  }
+
+  #extractDynamicTitleLetters(group, physics) {
+    group.updateMatrixWorld(true);
+    const letters = [];
+    group.traverse((obj) => {
+      if (obj.isMesh && /^titleLetter_\d+_/i.test(obj.name)) letters.push(obj);
+    });
+
+    const material = new THREE.MeshStandardMaterial({
+      color: TITLE_LETTER_COLOR,
+      roughness: 0.72,
+      metalness: 0,
+      emissive: TITLE_LETTER_EMISSIVE,
+      emissiveIntensity: 0.1,
+    });
+
+    for (let i = 0; i < letters.length; i++) {
+      const source = letters[i];
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scl = new THREE.Vector3();
+      source.matrixWorld.decompose(pos, quat, scl);
+
+      const mesh = new THREE.Mesh(source.geometry, material);
+      mesh.name = `dynamic_${source.name}`;
+      mesh.position.copy(pos);
+      mesh.quaternion.copy(quat);
+      mesh.scale.copy(scl);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.root.add(mesh);
+      source.removeFromParent();
+
+      source.geometry.computeBoundingBox();
+      const bbox = source.geometry.boundingBox;
+      const localSize = bbox.getSize(new THREE.Vector3());
+      const localCenter = bbox.getCenter(new THREE.Vector3());
+      const halfExtents = new THREE.Vector3(
+        Math.max(Math.abs(localSize.x * scl.x) / 2, 0.02),
+        Math.max(Math.abs(localSize.y * scl.y) / 2, 0.02),
+        Math.max(Math.abs(localSize.z * scl.z) / 2, 0.02),
+      );
+      const centerOffset = localCenter.clone().multiply(scl);
+      const bodyCenter = centerOffset.clone().applyQuaternion(quat).add(pos);
+      const groundY = this.terrain.heightAt(bodyCenter.x, bodyCenter.z);
+      const targetBottomY = groundY + TITLE_LETTER_FLOAT_CLEARANCE;
+      const currentBottomY = bodyCenter.y - halfExtents.y;
+      const liftY = Math.max(0, targetBottomY - currentBottomY);
+      pos.y += liftY;
+      bodyCenter.y += liftY;
+      mesh.position.y = pos.y;
+
+      let body = null;
+      if (physics?.ready) {
+        body = physics.addDynamicCuboid(
+          bodyCenter.x,
+          bodyCenter.y,
+          bodyCenter.z,
+          halfExtents.x,
+          halfExtents.y,
+          halfExtents.z,
+          { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+          {
+            mass: 0.1,
+            friction: 0.7,
+            restitution: 0.15,
+            linearDamping: 0.1,
+            angularDamping: 0.1,
+            sleeping: true,
+            contactThreshold: 5,
+            onCollision: (force, position) => {
+              this.audio?.playBrickHit?.(force, position);
+            },
+          },
+        );
+      }
+
+      this.dynamicTitleLetters.push({
+        kind: 'titleLetter',
+        mesh,
+        body,
+        centerOffset,
+        halfExtents,
+        startPosition: pos.clone(),
+        startCenter: bodyCenter.clone(),
+        startRotation: quat.clone(),
+        floating: true,
+        floatTime: 0,
+        floatPhase: i * 0.9,
+        groundedTime: 0,
+        returning: false,
+        returnTime: 0,
+        returnFromCenter: new THREE.Vector3(),
+        returnFromRotation: new THREE.Quaternion(),
+        _groundBox: new THREE.Box3(),
+        _returnCenter: new THREE.Vector3(),
+        _returnRotation: new THREE.Quaternion(),
+        _quat: new THREE.Quaternion(),
+        _offset: new THREE.Vector3(),
+      });
+    }
+
+    if (letters.length) {
+      console.log(`[GlbV3World] dynamic title letters: ${letters.length}`);
+    }
+  }
+
+  // ── Tree foliage from the green canopy (Phase E) ────────────────────────────
+
+  /**
+   * Strip a tree group's solid low-poly green canopy and turn it into SDF foliage
+   * anchors "in the form of the green part" (user directive 2026-05-31).
+   *
+   * Each oak mesh ships an `oak_canopy_karan_*` canopy primitive (solid green,
+   * base ~0.19,0.38,0.16) + an `oak_trunk_karan` trunk. The green canopy reads as
+   * faceted low-poly and only exists to mark where leaves belong — so we sample
+   * anchors across it (Poisson-thinned to CANOPY_ANCHOR_SPACING in world units),
+   * DELETE the green primitive (the trunk stays), and App grows one SDF leaf blob
+   * per anchor, reproducing the canopy's shape as fluff. Only oak hits this path
+   * (birch/cherry have no green canopy → they keep the treeLeaves ref empties).
+   */
+  #extractTreeFoliage(group, species) {
+    group.updateMatrixWorld(true);
+    const canopyMeshes = [];
+    group.traverse((o) => {
+      if (o.isMesh && (o.material?.name || '').includes('canopy')) canopyMeshes.push(o);
+    });
+
+    const anchors = this.treeCanopyAnchors.get(species) ?? [];
+    const spacing2 = CANOPY_ANCHOR_SPACING * CANOPY_ANCHOR_SPACING;
+    const v = new THREE.Vector3();
+
+    for (const mesh of canopyMeshes) {
+      const posAttr = mesh.geometry?.attributes?.position;
+      if (posAttr) {
+        // Greedy Poisson thinning over the canopy's world-space verts: accept a
+        // vertex only if it's ≥ spacing from every accepted one → even coverage.
+        const accepted = [];
+        for (let i = 0; i < posAttr.count; i++) {
+          v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
+          let ok = true;
+          for (const a of accepted) {
+            if (a.distanceToSquared(v) < spacing2) { ok = false; break; }
+          }
+          if (ok) accepted.push(v.clone());
+        }
+        if (accepted.length === 0 && posAttr.count > 0) {
+          accepted.push(v.fromBufferAttribute(posAttr, 0).applyMatrix4(mesh.matrixWorld).clone());
+        }
+        for (const p of accepted) {
+          // Deterministic ±jitter on blob size (hashed from rounded position) so
+          // neighbouring blobs vary without breaking reload stability.
+          const key = (Math.round(p.x * 13.1) ^ Math.round(p.y * 3.3) ^ Math.round(p.z * 7.7)) >>> 0;
+          const h = (Math.imul(key | 1, 2654435761) >>> 0) / 4294967296;
+          const jitter = 1 + (h - 0.5) * 2 * CANOPY_SCALE_JITTER;
+          anchors.push({
+            position: p,
+            scale: CANOPY_ANCHOR_SPACING * CANOPY_SCALE_FACTOR * jitter,
+          });
+        }
+      }
+      // Drop the solid green canopy — the trunk (bark_*) stays in the scene.
+      mesh.removeFromParent();
+      mesh.geometry?.dispose();
+    }
+
+    this.treeCanopyAnchors.set(species, anchors);
+    console.log(`[GlbV3World] tree foliage ${species}: ${anchors.length} canopy anchors (solid green canopy removed)`);
+  }
+
+  // ── Foliage references (Phase E) ────────────────────────────────────────────
+
+  /**
+   * Load the `foliage` manifest entries (treeLeaves / bushes) and return their
+   * placement empties grouped by species, for the runtime Foliage SDF clouds.
+   *
+   * Each References GLB holds *empties only* (no geometry) carrying a baked
+   * world TRS + `extras.species` (birch/cherry for treeLeaves; bushes have one
+   * implicit group). We read each empty's world position + uniform scale and
+   * bucket by species so App can build one Foliage cloud per (system, species)
+   * with the right palette. Trunks + bush colliders already exist — nothing is
+   * added to physics here.
+   *
+   * @returns {Promise<Array<{system:string, groups:Map<string, Array<{position:THREE.Vector3, scale:number}>>}>>}
+   */
+  async loadFoliageGroups() {
+    const out = [];
+    const entries = this.manifest?.foliage ?? [];
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+
+    for (const entry of entries) {
+      if (!entry.references) continue;
+      // treeLeaves refs (birch + cherry — oak isn't in them) AND bushes load here.
+      // Oak's leaves come from its green canopy geometry instead (#extractTreeFoliage).
+      let gltf;
+      try {
+        gltf = await this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.references);
+      } catch (err) {
+        console.warn(`[GlbV3World] foliage "${entry.system}" load failed:`, err?.message || err);
+        continue;
+      }
+      gltf.scene.updateMatrixWorld(true);
+
+      const groups = new Map();
+      let count = 0;
+      gltf.scene.traverse((obj) => {
+        if (obj.isMesh || obj === gltf.scene || !obj.name) return;
+        obj.matrixWorld.decompose(pos, quat, scl);
+        const species = obj.userData?.species ?? entry.system;
+        if (!groups.has(species)) groups.set(species, []);
+        groups.get(species).push({ position: pos.clone(), scale: scl.x });
+        count++;
+      });
+
+      out.push({ system: entry.system, groups });
+      console.log(`[GlbV3World] foliage ${entry.system}: ${count} refs across`,
+        [...groups.keys()]);
+    }
+
+    // Oak (and any tree with a baked solid green canopy): leaves grown "in the
+    // form of the green part" — anchors sampled from the canopy geometry by
+    // #extractTreeFoliage, which also deleted the green mesh. Emit them through
+    // the SAME group shape so App's foliage loop builds an oak SDF cloud with no
+    // special-casing. (treeLeaves refs above cover birch/cherry; oak isn't there.)
+    if (this.treeCanopyAnchors.size > 0) {
+      out.push({ system: 'treeCanopy', groups: this.treeCanopyAnchors });
+      for (const [species, anchors] of this.treeCanopyAnchors) {
+        console.log(`[GlbV3World] foliage treeCanopy: ${anchors.length} ${species} canopy anchors`);
+      }
+    }
+    return out;
   }
 
   // ── Boot invariants ───────────────────────────────────────────────────────

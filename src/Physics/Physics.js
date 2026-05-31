@@ -23,6 +23,7 @@ export class Physics {
     this.ready = false;
     this.RAPIER = null;
     this.world = null;
+    this.eventQueue = null;
     this.characterController = null;
     this._tmpVec = new THREE.Vector3();
   }
@@ -33,6 +34,7 @@ export class Physics {
     await RAPIER.init();
     this.RAPIER = RAPIER;
     this.world = new RAPIER.World({ x: 0, y: Physics.GRAVITY, z: 0 });
+    this.eventQueue = new RAPIER.EventQueue(true);
 
     // Character controller — handles slope, autostep, snap-to-ground.
     // The 0.01 offset is the skin-width; keep it small to avoid floating.
@@ -54,7 +56,8 @@ export class Physics {
     // Override the integration parameters dt so step matches our frame delta —
     // keeps physics responsive at variable framerates.
     this.world.timestep = Math.min(delta, 1 / 30);
-    this.world.step();
+    this.world.step(this.eventQueue);
+    this.#drainContactForceEvents();
   }
 
   // ── Static colliders ─────────────────────────────────────────────────────
@@ -154,6 +157,78 @@ export class Physics {
       .setFriction(friction);
     world.createCollider(colliderDesc, body);
     return body;
+  }
+
+  /**
+   * Dynamic cuboid — used for lightweight pushable props. `(x, y, z)` is the
+   * collider centre; half-extents must match the visible mesh.
+   */
+  addDynamicCuboid(
+    x, y, z,
+    hx, hy, hz,
+    rotation = { x: 0, y: 0, z: 0, w: 1 },
+    {
+      mass = 0.1,
+      density = null,
+      restitution = 0.15,
+      friction = 0.7,
+      linearDamping = 0.1,
+      angularDamping = 0.1,
+      canSleep = true,
+      sleeping = true,
+      contactThreshold = null,
+      onCollision = null,
+    } = {},
+  ) {
+    const { RAPIER, world } = this;
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(x, y, z)
+      .setRotation(rotation)
+      .setLinearDamping(linearDamping)
+      .setAngularDamping(angularDamping)
+      .setCanSleep(canSleep)
+      .setSleeping(sleeping)
+      .setCcdEnabled(true);
+
+    const body = world.createRigidBody(bodyDesc);
+    let colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setRestitution(restitution)
+      .setFriction(friction);
+    colliderDesc = density === null ? colliderDesc.setMass(mass) : colliderDesc.setDensity(density);
+
+    if (typeof onCollision === 'function' || contactThreshold !== null) {
+      colliderDesc = colliderDesc
+        .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+        .setContactForceEventThreshold(contactThreshold ?? 15);
+    }
+
+    const collider = world.createCollider(colliderDesc, body);
+    body.userData = { onCollision, collider };
+    return body;
+  }
+
+  #drainContactForceEvents() {
+    if (!this.eventQueue) return;
+    this.eventQueue.drainContactForceEvents((event) => {
+      const collider1 = this.world.getCollider(event.collider1());
+      const collider2 = this.world.getCollider(event.collider2());
+      const body1 = collider1?.parent();
+      const body2 = collider2?.parent();
+      const callback1 = body1?.userData?.onCollision;
+      const callback2 = body2?.userData?.onCollision;
+      if (typeof callback1 !== 'function' && typeof callback2 !== 'function') return;
+
+      const mass = Math.max((body1?.mass?.() ?? 0) + (body2?.mass?.() ?? 0), 0.001);
+      const force = event.maxForceMagnitude() / mass;
+      const p1 = body1?.translation?.();
+      const p2 = body2?.translation?.();
+      const position = p1 && p2
+        ? { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 }
+        : (p1 ?? p2 ?? { x: 0, y: 0, z: 0 });
+
+      if (typeof callback1 === 'function') callback1(force, position);
+      if (typeof callback2 === 'function') callback2(force, position);
+    });
   }
 
   /**

@@ -69,6 +69,7 @@ const VOL = {
   objectSlide: 0.4,
   // Continuous scrape loop volume during a sustained push hold.
   pushHold: 0.35,
+  brickHit: 0.6,
   kick: 0.9,
   punchBag: 0.75,
   flip: 0.55,
@@ -204,6 +205,26 @@ const SOUND_FILES = {
     loop: true,
     vol: 0,
   },
+  brickHit1: {
+    src: "/sounds/hits/bricks/24445%20brick%20light%20hitting-full-2.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
+  brickHit2: {
+    src: "/sounds/hits/bricks/41559%20Stone%20brick%20fall%20hit%2001-full-1.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
+  brickHit3: {
+    src: "/sounds/hits/bricks/41563%20Stone%20brick%20fall%20hit%2005-full-1.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
+  brickHit4: {
+    src: "/sounds/hits/bricks/BrickSetDown_BW.5803-1.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
   click: { src: "/sounds/interact-click.mp3", loop: false, vol: VOL.click },
   toggleClick: { src: "/sounds/toggle.mp3", loop: false, vol: VOL.toggle },
   menuOpen: { src: "/sounds/menu-open.mp3", loop: false, vol: VOL.menuOpen },
@@ -236,6 +257,8 @@ const STEP_POOLS = {
   // in playFootstep) so a single pool is enough.
 };
 
+const BRICK_HIT_KEYS = ["brickHit1", "brickHit2", "brickHit3", "brickHit4"];
+
 export class AudioManager {
   constructor() {
     this.muted = localStorage.getItem(STORAGE_KEY) === "1";
@@ -251,6 +274,8 @@ export class AudioManager {
     this._wasRainOn = false;
     this._rainOn = false;
     this._ambientDuck = 1;
+    this._lastBrickHitKey = -1;
+    this._lastBrickHitAt = -Infinity;
 
     /** Visual footprint cadence hook — see header comment in old version. */
     this.onStep = null;
@@ -721,6 +746,26 @@ export class AudioManager {
     setTimeout(() => {
       if (loop.volume() < 0.005 && loop.playing()) loop.pause();
     }, 280);
+  }
+
+  /** Bruno-style brick impact: random non-repeating sample, force-shaped gain. */
+  playBrickHit(force = 0, _position = null) {
+    if (this.muted || this._focusLost) return;
+    const now = performance.now();
+    if (now - this._lastBrickHitAt < 100) return;
+
+    const forceVolume = Math.max(0, Math.min(1, (force - 5) / 15)) ** 2;
+    if (forceVolume <= 0.001) return;
+
+    const delta = 1 + Math.floor(Math.random() * Math.max(1, BRICK_HIT_KEYS.length - 1));
+    this._lastBrickHitKey = (this._lastBrickHitKey + delta) % BRICK_HIT_KEYS.length;
+    this._lastBrickHitAt = now;
+
+    const h = this.howls[BRICK_HIT_KEYS[this._lastBrickHitKey]];
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.volume(VOL.brickHit * forceVolume, id);
+    h.rate(0.9 + Math.random() * 0.2, id);
   }
 
   /** Flip whoosh — fires on backflip or cartwheel. */

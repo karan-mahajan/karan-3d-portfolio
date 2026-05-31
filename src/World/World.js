@@ -35,8 +35,8 @@ export class World {
     this.grassGrid = this.glb.grassGrid;
   }
 
-  async loadAssets(loader, physics = null, _opts = {}) {
-    await this.glb.load(physics);
+  async loadAssets(loader, physics = null, opts = {}) {
+    await this.glb.load(physics, opts);
     this.grassMask = this.glb.grassMask;
 
     return {
@@ -49,6 +49,7 @@ export class World {
   }
 
   update(elapsed, camera = null, delta = 0, playerPos = null) {
+    this.glb.update(delta, playerPos);
     if (camera) this.sky.update(camera.position);
     if (this.billboards?.update) this.billboards.update(elapsed, playerPos, delta);
   }

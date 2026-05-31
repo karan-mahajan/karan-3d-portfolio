@@ -7,6 +7,7 @@ import { World } from './World/World.js';
 import { DUSK } from './World/Palette.js';
 import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
+import { Foliage } from './World/Foliage.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
 import { Player } from './Player/Player.js';
@@ -309,6 +310,7 @@ export class App extends EventTarget {
     // character GLBs off in parallel with the world parse so total boot time
     // doesn't regress.
     const worldLoadPromise = this.world.loadAssets(this.loader, this.physics, {
+      audio: this.audio,
       playerUniforms: this.grass?.playerUniforms ?? null,
       wind: this.wind,
     });
@@ -351,6 +353,46 @@ export class App extends EventTarget {
     this.water.audio = this.audio;
     this.water.setPhysics(this.physics);
     this.water.setReflectionTarget(this.player.group);
+
+    // Foliage — tree canopies + bushes grown as Bruno-style SDF leaf clouds.
+    // Birch + cherry leaves come from their baked treeLeaves ref empties; OAK has
+    // a solid low-poly green canopy mesh instead, so GlbV3World samples leaf
+    // anchors in its form, deletes the green mesh, and emits them as the
+    // `treeCanopy` group (species 'oak'). One cloud per (system, species) with a
+    // two-tone palette: birch summer-green, cherry pink-blossom, oak green,
+    // bushes yellow-green (user-chosen).
+    const FOLIAGE_PALETTE = {
+      birch: { colorA: '#4c7a2a', colorB: '#9ec25a' },  // summer green, shaded → lit
+      cherry: { colorA: '#e0556a', colorB: '#ff9990' }, // blossom pink
+      oak: { colorA: '#3f6b22', colorB: '#7ba23e' },    // natural oak green
+      bushes: { colorA: '#9aa02f', colorB: '#d8cf3b' }, // yellow-green
+    };
+    const DEFAULT_FOLIAGE_COLORS = { colorA: '#4c7a2a', colorB: '#9ec25a' };
+    const [foliageGroups, foliageSDF] = await Promise.all([
+      this.world.glb.loadFoliageGroups(),
+      this.loader.loadTexture('/textures/foliage/foliageSDF.png').then((tex) => {
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.colorSpace = THREE.NoColorSpace;
+        tex.needsUpdate = true;
+        return tex;
+      }).catch(() => null),
+    ]);
+    const foliageClouds = [];
+    for (const { system, groups } of foliageGroups) {
+      for (const [species, refs] of groups) {
+        const pal = FOLIAGE_PALETTE[species] ?? FOLIAGE_PALETTE[system] ?? DEFAULT_FOLIAGE_COLORS;
+        foliageClouds.push({ key: `${system}:${species}`, refs, ...pal });
+      }
+    }
+    if (foliageSDF && foliageClouds.length > 0) {
+      this.foliage = new Foliage(this.scene, this.wind, foliageSDF, foliageClouds);
+      this.foliage.setSunDirection(this.timeOfDay.sunOffset);
+      this.world.foliage = this.foliage;
+    }
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
     // Blender-authored world.glb will eventually provide horizon mountain
@@ -829,10 +871,14 @@ export class App extends EventTarget {
     if (this.compass) this.compass.update();
     this.world.update(elapsed, this.camera, frameDelta, this.player.position);
     this.wind.update(frameDelta);
-    // Grass's wind sway is driven by uWindTime; the per-frame work is one
-    // uniform write for the player-bend (F5) — blades within
-    // uPlayerBendRadius lean away from the player.
-    this.grass?.setPlayerPos(this.player.position);
+    // Grass's wind sway is driven by the shared Wind clock; the per-frame work
+    // here is feeding player position/speed so blades bend while walking and
+    // ripple locally around the legs while running.
+    this.grass?.setPlayerPos(this.player.position, {
+      velocity: sample?.velocity,
+      speed: sample?.speed ?? 0,
+      running: this.player.controller.isRunning,
+    });
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, frameDelta);

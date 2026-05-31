@@ -65,7 +65,15 @@ This is a standing rule, in addition to the per-prompt rules below.
   GLSL-Points→instanced TSL billboards. Wired in App.boot() (was
   `this.world.water`, null in v3). WebGPU first-frame clean + WebGL2 water 14/14
   (pond pool + ocean ring + night palette verified visually), user-approved. ✅
-- Next → **Phase C** (sections & interactions). Effects FX/lights = Phase E/F-rest.
+- *(pending commit — awaiting approval)* — **Phase E foliage**: new
+  `src/World/Foliage.js` (Bruno SDF leaf-cloud → TSL `MeshLambertNodeMaterial`,
+  mulberry32, two-tone sun mix, wind-fluttered SDF alpha-cut), instanced from the
+  baked treeLeaves(575)/bushes(45) refs via `GlbV3World.loadFoliageGroups()`,
+  wired in App.boot (birch green / cherry pink / bushes yellow-green). Trees grow
+  canopies; oak stays bare by design. `npm run build` green; runtime visual verify
+  pending (user verifies manually).
+- Next → **Phase C** (sections & interactions) + **Phase E instancing**
+  (rocks/bricks-rest/flowers — foliage half done). Effects FX/lights = Phase F.
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
@@ -360,6 +368,73 @@ the learning wins — but re-verify from the actual file before relying on it.
   `this.water = this.world.water` grab with `new Water(scene, terrain)` + set
   `world.water`, `timeOfDay.water`, `water.audio`, `water.setPhysics`.
 
+### Phase E foliage (this session — build-green; runtime visual verify pending)
+- **Trees were bald because canopies are `foliage` refs the loader skips.** The
+  trunk GLBs are trunk-only (verified from the actual GLBs: `oakTrees.glb` =
+  `oakBody_*` only; `birchTrees`/`cherryTrees` = `*_mesh` trunk bodies only — NO
+  leaf meshes baked in). Canopies live as empties in
+  `treeLeaves/treeLeavesReferences.glb`.
+- **Verified ref-GLB contents (parsed the GLB JSON chunk directly):**
+  treeLeaves = **575 empties, 0 meshes**, species **cherry 305 / birch 270**,
+  uniform scale 0.258–0.998 (mean 0.553), **0 rotations**, `extras.species` set.
+  bushes = **45 empties** `ref_bushAnchor_*`, **NO `species` extra** (tally
+  `(none)`:45) → loader falls back to `system` (`'bushes'`); bushes DO carry
+  rotation + slightly non-uniform scale (x≠y) — Foliage ignores the ref rotation
+  (applies its own deterministic spin) and uses `scale.x` as the uniform size.
+- **OAK is NOT bare — it ships a solid low-poly GREEN canopy** (CORRECTED after
+  the user's screenshot 2026-05-31; my first read was wrong). Verified from the
+  GLB: each `oakBody` mesh = `oak_canopy_karan_*` primitive (green, base
+  ~0.19,0.38,0.16) + `oak_trunk_karan`. That faceted green crown is the LEFT tree
+  in the screenshot. Oak has NO treeLeaves refs because the canopy geometry IS its
+  leaf source. **User directive: remove the solid green canopy and grow the SDF
+  leaves "in the form of how the green part is."** birch/cherry have NO canopy
+  material (trunk/branch only) → their leaves stay from the treeLeaves refs (the
+  RIGHT tree, already fluffy SDF). So: oak ⇒ canopy-derived; birch/cherry ⇒ refs.
+- **Oak canopy → SDF anchors (`GlbV3World.#extractTreeFoliage`).** Traverse the
+  oak group for meshes whose material name `includes('canopy')`, greedy-Poisson-
+  thin their world-space verts to `CANOPY_ANCHOR_SPACING` (1.25 m), `removeFromParent()`
+  the green primitive (trunk sibling stays — multi-primitive glTF meshes load as a
+  Group of per-primitive Meshes, so removing the canopy mesh keeps the trunk), and
+  store `{position, scale}` anchors per species. Measured: 18 oaks, 66 canopy
+  verts each → **~23 anchors/tree, 414 total**. Blob scale = spacing×0.62×jitter
+  ≈ 0.78 (radius ~1.2 m, ≈ anchor spacing → overlapping fluff). App grows one
+  Foliage blob per anchor (oak green palette `#3f6b22`/`#7ba23e`). The treeLeaves
+  ref empties are birch(270)+cherry(305) ONLY (no oak), so no double-up.
+- **Canopy palette (user-chosen 2026-05-30): birch = summer GREEN, cherry =
+  blossom pink, bushes = yellow-green** (NOT Bruno's autumn-orange birch). App.boot
+  `FOLIAGE_PALETTE`: birch `#4c7a2a`/`#9ec25a`, cherry `#e0556a`/`#ff9990`,
+  bushes `#9aa02f`/`#d8cf3b` (colorA=shaded, colorB=lit).
+- **Port differences from Bruno (folio-2025 Foliage.js):** geometry identical (80
+  PlaneGeometry(0.8) on a sphere, radius `1−rng³`, normals lerped 85 % to the
+  sphere normal, mergeGeometries) but `alea`→**mulberry32** for determinism.
+  Material = **MeshLambertNodeMaterial** (NOT Bruno's `MeshDefaultMaterial`, which
+  is hard-wired to his `Game` singleton / terrain bounce / water cut / reveal).
+  `opacityNode` = SDF (UV `rotateUV`'d by
+  `wind.offsetNode(positionLocal.xz).length()*2.2`) + `alphaTest` (0.4) → crisp
+  leaflet cut-out. `colorNode` = two-tone
+  `mix(colorA, colorB, normalWorld.dot(sunDir).smoothstep(-0.2,1))` as ALBEDO;
+  Lambert then applies the scene sun/ambient/hemi+fog, so **day/night darkening is
+  automatic** (same rig as the trunks; no TimeOfDay foliage hook needed). Bruno's
+  see-through-near-vehicle fade dropped (no vehicle).
+- **InstancedMesh needs NO custom positionNode here.** Bruno used one with
+  `instance(count, instanceMatrix)` because MeshDefaultMaterial overrode the
+  position pipeline. With a plain `MeshLambertNodeMaterial` + `THREE.InstancedMesh`
+  and only colour/opacity nodes, the default pipeline applies `instanceMatrix`
+  automatically (and `normalWorld` accounts for the instance rotation), so the
+  per-blob spin shading works for free. `castShadow=false` (perf), `receiveShadow
+  =true`.
+- **Wiring:** `GlbV3World.loadFoliageGroups()` loads `manifest.foliage[]` refs via
+  `loader.loadGLTF`, decomposes each empty's world matrix, groups by
+  `extras.species ?? system`. App.boot (after water) loads the SDF
+  (`/textures/foliage/foliageSDF.png`, NearestFilter, no mipmaps, NoColorSpace) +
+  the groups in parallel, builds one cloud per (system, species), constructs
+  `new Foliage(scene, wind, sdf, clouds)`, sets `this.world.foliage`. The
+  per-frame `world.foliage.setSunDirection(timeOfDay.sunOffset)` hook **already
+  existed** in App.tick (dangling v2 ref) — it now drives the live two-tone mix.
+  `npm run build` green (85 modules). NOT yet visually verified on WebGPU/WebGL2
+  (user verifies manually) — confirm canopies + bushes render day+night and tune
+  `SDF_THRESHOLD`/palette if blobs read too sparse/dense.
+
 ---
 
 ## DONE — B0 effects port (GLSL→TSL ports + un-force day) ✅
@@ -510,21 +585,22 @@ Co-Authored-By trailer.
 ## Phase E — Vegetation, foliage, props instancing
 
 ```
-v3 runtime Phase E: instancing off the split GLBs (read manifest.json; verify
-node counts/extras from the actual GLBs, don't guess). FIRST read the
-SESSION-PROMPTS.md "Learnings log"; before finishing, append learnings + update
-the next prompt + bump Progress/commits.
-- Trees: monolithic trunks already load (vegetation/*.glb). Grow leaf clouds via
-  Bruno-style Foliage at treeLeaves/treeLeavesReferences.glb anchors (extras.species
-  birch/cherry) — port Bruno Foliage.js to TSL.
-- Instanced (Visual + References pairs): rocks (rocksVisual: rockStyle_boulderCluster/
-  volcanicShards), bricks (3 templates), flowers (8 zone templates). For each
-  reference empty, read extras.template + baked world matrix → one InstancedMesh
-  per (system, template).
-- Foliage refs-only: bushes/bushesReferences.glb → SDF foliage.
+v3 runtime Phase E (instancing half — foliage is DONE, see learnings): instancing
+off the split GLBs (read manifest.json; verify node counts/extras from the actual
+GLBs, don't guess). FIRST read the SESSION-PROMPTS.md "Learnings log"; before
+finishing, append learnings + update the next prompt + bump Progress/commits.
+- ✅ DONE (this session): tree canopies (treeLeaves, birch+cherry) + bushes as
+  TSL SDF Foliage clouds (src/World/Foliage.js + GlbV3World.loadFoliageGroups()).
+  Oak is bare by design (no refs, no baked canopy). Don't redo.
+- Instanced (Visual + References pairs) STILL TODO: rocks (rocksVisual:
+  rockStyle_boulderCluster/volcanicShards), flowers (8 zone templates). NOTE
+  bricks (pave/kerb/pile) are ALREADY instanced by
+  GlbV3World.#loadInstancedSystem (the path paving). For each remaining reference
+  empty, read extras.template + baked world matrix → one InstancedMesh per
+  (system, template). Reuse the #loadInstancedSystem pattern.
 
-Verify headless (rocks/bricks/flowers/leaves visible at correct transforms). One
-commit after approval. No Claude trailer.
+Verify headless (rocks/flowers visible at correct transforms). One commit after
+approval. No Claude trailer.
 ```
 
 ---

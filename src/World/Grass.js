@@ -3,6 +3,7 @@ import { MeshLambertNodeMaterial } from 'three/webgpu';
 import {
   Fn, attribute, uniform, varying, positionGeometry,
   vec2, vec3, float, color, texture, step, mod, clamp, mix, sin, cos,
+  length, smoothstep, max, abs,
 } from 'three/tsl';
 
 /**
@@ -59,6 +60,14 @@ const GRASS_PRESENCE = 0.03;    // G where blades start growing
 const GRASS_FULL_AT = 0.42;     // G where blades reach full height
 const GRASS_MIN_VISIBLE = 0.55; // blade height floor wherever any grass exists
 
+// Player interaction. This is shader-side "soft physics": cheap enough for the
+// full instanced field, but still reads like grass yielding around the avatar.
+const WALK_BEND_RADIUS = 0.625;
+const RUN_RIPPLE_RADIUS = 0.725;
+const WALK_BEND_STRENGTH = 0.36;
+const RUN_RIPPLE_STRENGTH = 0.17;
+const RUN_RIPPLE_SPEED = 1.8; // quarter preview speed; keeps the wake very subtle
+
 // Blade colour ramp (sRGB hex; three converts → linear, matching Blender).
 const PALETTE_GREEN = [
   [0.00, '#4F6429'], [0.30, '#617707'], [0.55, '#80890C'],
@@ -98,6 +107,7 @@ export class Grass {
 
     this.baseColor = new THREE.Color(DAY_GRASS_REF);
     this._dayRef = new THREE.Color(DAY_GRASS_REF);
+    this._lastMoveDir = new THREE.Vector2(0, 1);
 
     this.#buildHeightTexture();
     this.#setGeometry();
@@ -195,6 +205,10 @@ export class Grass {
     this.uTerrainMin = uniform(vec2(this.terrainMin.x, this.terrainMin.y));
     this.uTerrainSpan = uniform(vec2(this.terrainSpan.x, this.terrainSpan.y));
     this.tint = uniform(vec3(1, 1, 1));
+    this.uPlayerPos = uniform(vec2(0, 0));
+    this.uPlayerDir = uniform(vec2(0, 1));
+    this.uPlayerSpeed = uniform(0);
+    this.uPlayerRunning = uniform(0);
 
     const invSpan = 1 / (this.gridBounds * 2);
 
@@ -255,6 +269,31 @@ export class Grass {
       world.x.addAssign(wind.x);
       world.z.addAssign(wind.y);
 
+      // Player interaction. Walking uses a direct bend-away bubble. Running
+      // swaps to a tighter, slower leg wake so it feels like a local disturbance
+      // instead of a fast field-wide wave.
+      const deltaToBlade = worldXZ.sub(this.uPlayerPos).toVar();
+      const playerDist = length(deltaToBlade).toVar();
+      const safeDist = max(playerDist, 0.001);
+      const away = deltaToBlade.div(safeDist);
+      const moveGate = clamp(this.uPlayerSpeed.div(1.8), 0, 1);
+      const running = clamp(this.uPlayerRunning, 0, 1);
+      const walking = running.oneMinus();
+      const tip = hb.mul(hb);
+
+      const walkBend = smoothstep(WALK_BEND_RADIUS, 0.08, playerDist)
+        .mul(WALK_BEND_STRENGTH)
+        .mul(moveGate)
+        .mul(walking);
+      const runEnv = smoothstep(RUN_RIPPLE_RADIUS, 0.12, playerDist).mul(running).mul(moveGate);
+      const runWave = sin(playerDist.mul(9.0).sub(this.wind.nodes.time.mul(RUN_RIPPLE_SPEED)));
+      const runRipple = runWave.mul(runEnv).mul(RUN_RIPPLE_STRENGTH);
+      const runDir = away.add(this.uPlayerDir.mul(0.35)).toVar();
+      const push = away.mul(walkBend).add(runDir.mul(runRipple)).mul(tip);
+      world.x.addAssign(push.x);
+      world.z.addAssign(push.y);
+      world.y.subAssign(tip.mul(walkBend.mul(0.055).add(abs(runRipple).mul(0.035))));
+
       // Cull blades only where the mask is essentially zero (paths / water /
       // bare plazas) by lifting them out of view; anything with even faint grass
       // now keeps a full blade.
@@ -297,9 +336,20 @@ export class Grass {
   // ── Public API (matches the surface TimeOfDay / App expect) ─────────────────
 
   /** Recentre the grid on the player each frame. */
-  setPlayerPos(pos) {
+  setPlayerPos(pos, state = {}) {
     if (!pos) return;
     this.center.value.set(pos.x, pos.z);
+    this.uPlayerPos.value.set(pos.x, pos.z);
+
+    const vx = state.velocity?.x ?? 0;
+    const vz = state.velocity?.z ?? 0;
+    const speed = state.speed ?? Math.hypot(vx, vz);
+    if (speed > 0.05) {
+      this._lastMoveDir.set(vx, vz).normalize();
+    }
+    this.uPlayerDir.value.copy(this._lastMoveDir);
+    this.uPlayerSpeed.value = speed;
+    this.uPlayerRunning.value = state.running ? 1 : 0;
   }
 
   /** Day/night tint (TimeOfDay.applyInstant) — normalised against the day ref. */
