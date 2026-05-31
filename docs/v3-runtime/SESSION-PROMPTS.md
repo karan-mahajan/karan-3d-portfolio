@@ -72,8 +72,27 @@ This is a standing rule, in addition to the per-prompt rules below.
   wired in App.boot (birch green / cherry pink / bushes yellow-green). Trees grow
   canopies; oak stays bare by design. `npm run build` green; runtime visual verify
   pending (user verifies manually).
-- Next → **Phase C** (sections & interactions) + **Phase E instancing**
-  (rocks/bricks-rest/flowers — foliage half done). Effects FX/lights = Phase F.
+
+**STATE RECONCILED against git log (HEAD `c6eae11`)** — the per-commit lines above
+drifted across parallel sessions; this is the authoritative current status:
+- ✅ **DONE & committed:** B0 render core + first frame + effects port (all FX
+  TSL); **Phase D grass + mask terrain ground** (`be7ab0a`); **Phase F water**
+  (`9adb237`, basins + ocean, animated TSL surface); **Phase E foliage** clouds
+  (`14bd12a` birch/cherry/bush canopies) + **bricks** paving instancing; tree-trunk
+  + foliage colliders (`44c507f`/`313407a`); v2 StreetLights/Interactables removed
+  (`04228d8`/`bb140be`); **Skills-sphere interaction** redesigned (`ce97a7e`);
+  night-torch removed + water-realism WIP (`c6eae11`).
+- ⬜ **NOT yet wired (the remaining phases):**
+  - **Phase E remainder** — `rocks` + `flowers` instanced systems (only `bricks`
+    is loaded; rocks/flowers still deferred in `GlbV3World`). Biggest win for the
+    "empty island" feel.
+  - **Phase C remainder** — `projectsHut` + `contactBoard` interactions (Skills
+    sphere already done; projects/contact markers load but aren't interactive).
+  - **Phase F remainder** — point lights from `refPoleLight_*`/`refBonfire_*`,
+    animated `animalPivot_*`/`airDancerPivot_*`, `lavaRef_pool` glow.
+  - **Phase G** — calibration + cleanup.
+- **Recommended next → Phase E instancing (rocks + flowers)** for visual fill,
+  then Phase F lights/props, then Phase C projects/contact.
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
