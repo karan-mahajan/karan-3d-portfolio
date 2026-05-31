@@ -212,6 +212,52 @@ body {
   box-shadow: 0 0 14px rgba(255, 187, 102, 0.6);
 }
 
+/* ─────────────── Skills sphere immersive hint ─────────────── */
+.skill-sphere-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 4%;
+  z-index: 44;
+  display: grid;
+  gap: 0.12rem;
+  width: min(92vw, 26rem);
+  padding: 0.7rem 1rem;
+  transform: translateX(-50%);
+  border: 1px solid rgba(122, 240, 174, 0.45);
+  border-radius: 10px;
+  background: rgba(10, 17, 14, 0.78);
+  color: var(--paper);
+  text-align: center;
+  font-family: 'Rajdhani', sans-serif;
+  line-height: 1.2;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.42), 0 0 30px rgba(64, 255, 160, 0.12);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+.skill-sphere-hint.hidden {
+  opacity: 0;
+  transform: translate(-50%, 10px);
+}
+
+.skill-sphere-kicker,
+.skill-sphere-exit {
+  color: #7af0ae;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.skill-sphere-hint strong {
+  font-family: 'Oswald', sans-serif;
+  font-size: clamp(1rem, 4vw, 1.3rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 /* ─────────────── Action prompt (do / perform) ─────────────── */
 .action-prompt {
   position: fixed;

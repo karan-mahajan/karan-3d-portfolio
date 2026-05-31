@@ -14,6 +14,7 @@ import { Player } from './Player/Player.js';
 import { PlayerCamera } from './Player/PlayerCamera.js';
 import { Physics } from './Physics/Physics.js';
 import { Interaction } from './Portfolio/Interaction.js';
+import { SkillSphere } from './Portfolio/SkillSphere.js';
 import { ActionPrompts } from './Portfolio/ActionPrompts.js';
 import { Interactables, INTERACTABLE_PROP_EXCLUSIONS } from './Portfolio/Interactables.js';
 import { Fireflies } from './Effects/Fireflies.js';
@@ -73,6 +74,7 @@ export class App extends EventTarget {
     this.playerCamera = new PlayerCamera(this.camera, this.canvas);
     this.compass = new Compass({ playerCamera: this.playerCamera });
     this.player = null;
+    this.skillSphere = null;
     this.discovery = null;
     this.miniMap = null;
     this.mapOverlay = null;
@@ -469,6 +471,17 @@ export class App extends EventTarget {
       this.player.group.userData.noTorchRaycast = true;
     }
 
+    this.skillSphere = new SkillSphere({
+      scene: this.scene,
+      camera: this.camera,
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      refs: this.world.glb.refs,
+      audio: this.audio,
+      achievements: this.achievements,
+    });
+
     this.interaction = new Interaction({
       scene: this.scene,
       camera: this.camera,
@@ -477,6 +490,7 @@ export class App extends EventTarget {
       controller: this.player.controller,
       billboards: this.world.billboards,
       signs: this.world.signs,
+      skillSphere: this.skillSphere,
       audio: this.audio,
       timeOfDay: this.timeOfDay,
       achievements: this.achievements,
@@ -879,10 +893,14 @@ export class App extends EventTarget {
       speed: sample?.speed ?? 0,
       running: this.player.controller.isRunning,
     });
+    // Foliage parts/flutters around the player (bushes at walking height,
+    // canopies when jumped into) — driven by the player's 3D position.
+    if (this.world.foliage) this.world.foliage.setPlayerPos(this.player.position);
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, frameDelta);
     if (this.interaction) this.interaction.tick(this.player.position);
+    if (this.skillSphere) this.skillSphere.update(frameDelta);
     if (this.interactables) this.interactables.update(frameDelta);
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.

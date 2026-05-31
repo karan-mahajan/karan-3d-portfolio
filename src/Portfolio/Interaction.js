@@ -27,6 +27,7 @@ export class Interaction {
     controller,
     billboards,
     signs = null,
+    skillSphere = null,
     audio = null,
     actionPrompts = null,
     timeOfDay = null,
@@ -39,6 +40,7 @@ export class Interaction {
     this.controller = controller;
     this.billboards = billboards;
     this.signs = signs;
+    this.skillSphere = skillSphere;
     this.audio = audio;
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
@@ -49,6 +51,7 @@ export class Interaction {
     this.candidate = null; // billboard the player is currently near
     this.contactCandidate = false;
     this.contactOpen = false;
+    this.skillCandidate = false;
     this.resumeCandidate = false;
     this.resumeOpen = false;
     this.zooming = false;
@@ -162,24 +165,26 @@ export class Interaction {
     this._onKey = (e) => {
       if (this.zooming) return;
       if (e.code === "KeyE") {
-        if (this.contactOpen || this.resumeOpen) return;
+        if (this.contactOpen || this.resumeOpen || this.skillOpen) return;
         if (this.activeIndex === -1) {
           // Resume is a smaller proximity than contact, so when both fire
           // (shouldn't happen — different anchors — but be defensive), the
           // resume lectern wins.
           if (this.resumeCandidate) this.openResume();
           else if (this.contactCandidate) this.openContact();
+          else if (this.skillCandidate) this.openSkills();
           else if (this.candidate) this.focus(this.candidate.index);
         }
       } else if (e.code === "KeyF") {
-        if (this.activeIndex !== -1 || this.contactOpen || this.resumeOpen) return;
+        if (this.activeIndex !== -1 || this.contactOpen || this.resumeOpen || this.skillOpen) return;
         if (document.body.classList.contains("is-mobile")) return;
         const torchOn = this.player?.character?.torchMesh?.visible === true;
         const night = this.timeOfDay?.mode === "night";
         if (!torchOn || !night) return;
         this.toggleTorchAim();
       } else if (e.code === "Escape") {
-        if (this.resumeOpen) this.closeResume();
+        if (this.skillOpen) this.closeSkills();
+        else if (this.resumeOpen) this.closeResume();
         else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
         else if (this.torchAiming) this.exitTorchAim();
@@ -202,7 +207,7 @@ export class Interaction {
       this._lastTodMode = tod;
       if (tod !== "night" && this.torchAiming) this.exitTorchAim();
     }
-    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen) {
+    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen) {
       this.#hidePrompt();
       return;
     }
@@ -220,18 +225,24 @@ export class Interaction {
       this.signs && this.signs.nearContact?.(playerPosition, CONTACT_PROXIMITY);
     const nearResume =
       this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
+    const nearSkills = this.skillSphere?.near?.(playerPosition);
     this.candidate = nearBillboard;
     // Resume has the smallest proximity radius — when both fire, prefer it.
     this.resumeCandidate = !!nearResume && !nearBillboard;
     this.contactCandidate = !!nearContact && !nearBillboard && !nearResume;
+    this.skillCandidate = !!nearSkills && !nearBillboard && !nearResume && !nearContact;
 
     // Defer to ActionPrompts — if it's about to show its own E prompt at the
     // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
     // ours. The action prompt is more specific to the player's current state.
     const ap = this.actionPrompts;
-    const apOwnsPrompt =
-      ap && (ap.candidate || ap.activeZoneLoop || ap.activeHoldLoop);
-    if (apOwnsPrompt) {
+    const apActionActive = ap && (ap.activeZoneLoop || ap.activeHoldLoop);
+    if (apActionActive) {
+      this.#hidePrompt();
+      return;
+    }
+    const apOwnsPrompt = ap && ap.candidate;
+    if (apOwnsPrompt && !this.skillCandidate) {
       this.#hidePrompt();
       return;
     }
@@ -239,6 +250,7 @@ export class Interaction {
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
     else if (this.resumeCandidate) this.#showPrompt("Résumé");
     else if (this.contactCandidate) this.#showPrompt("Contact");
+    else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
     else this.#hidePrompt();
   }
 
@@ -256,8 +268,10 @@ export class Interaction {
     return fx * dx + fz * dz > 0;
   }
 
-  #showPrompt(name) {
+  #showPrompt(name, verb = "View") {
     this.promptEl.classList.remove("hidden");
+    const label = this.promptEl.querySelector(".label");
+    if (label?.childNodes?.[0]) label.childNodes[0].nodeValue = `${verb} `;
     this.promptEl.querySelector(".project-name").textContent = name;
   }
   #hidePrompt() {
@@ -468,6 +482,23 @@ export class Interaction {
     this.resumeEl.classList.add("hidden");
   }
 
+  // ── Skills sphere ────────────────────────────────────────────────────────
+
+  get skillOpen() {
+    return !!(this.skillSphere?.active || this.skillSphere?.zooming);
+  }
+
+  openSkills() {
+    if (!this.skillSphere || this.skillOpen) return;
+    if (this.torchAiming) this.exitTorchAim();
+    this.#hidePrompt();
+    this.skillSphere.enter();
+  }
+
+  closeSkills() {
+    this.skillSphere?.exit?.();
+  }
+
   #populatePanel(item) {
     const p = item.project;
     this.panelEl.querySelector(".panel-title").textContent = p.name;
@@ -525,7 +556,7 @@ export class Interaction {
     const torchOn = this.player?.character?.torchMesh?.visible === true;
     const night = this.timeOfDay?.mode === "night";
     const modalOpen =
-      this.activeIndex !== -1 || this.contactOpen || this.resumeOpen || this.zooming;
+      this.activeIndex !== -1 || this.contactOpen || this.resumeOpen || this.skillOpen || this.zooming;
     // Same gate every other corner toggle / HUD uses — stay hidden while the
     // loading + welcome overlays are up. main.js strips `booting` from <body>
     // the moment the user starts the journey.

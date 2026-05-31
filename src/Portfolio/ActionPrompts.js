@@ -356,6 +356,7 @@ export class ActionPrompts {
     this._onKeyDown = (e) => {
       if (this.billboardInteraction && this.billboardInteraction.activeIndex >= 0) return;
       if (this.billboardInteraction && this.billboardInteraction.contactOpen) return;
+      if (this.billboardInteraction && this.billboardInteraction.skillOpen) return;
       if (this.billboardInteraction && this.billboardInteraction.zooming) return;
 
       // Ignore key presses with modifier keys so we don't conflict with
@@ -535,19 +536,19 @@ export class ActionPrompts {
 
   triggerBackflip() {
     if (!this._canStartGlobalAction()) return;
-    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.zooming)) return;
+    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.skillOpen || this.billboardInteraction.zooming)) return;
     this._triggerGlobalAction('backflip', 'Not enough space to backflip');
   }
 
   triggerCartwheel() {
     if (!this._canStartGlobalAction()) return;
-    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.zooming)) return;
+    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.skillOpen || this.billboardInteraction.zooming)) return;
     this._triggerGlobalAction('cartwheel', 'Not enough space to cartwheel');
   }
 
   startPush() {
     if (this.globalPushActive || this.activeHoldLoop || this.oneShotActive || this.activeZoneLoop) return;
-    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.zooming)) return;
+    if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.skillOpen || this.billboardInteraction.zooming)) return;
     // Realism: P only fires when the player is actually facing a real
     // pushable in range. currentPushSpot is set by tick() after the
     // proximity-and-facing filter, so its presence is the gate.
@@ -680,7 +681,9 @@ export class ActionPrompts {
       this._hidePushJoke();
       const billboardFocused = this.billboardInteraction && this.billboardInteraction.activeIndex >= 0;
       const contactOpen = this.billboardInteraction && this.billboardInteraction.contactOpen;
-      const otherActive = this.activeHoldLoop || this.activeZoneLoop || this.oneShotActive || billboardFocused || contactOpen;
+      const skillOpen = this.billboardInteraction && this.billboardInteraction.skillOpen;
+      const skillNearby = this.billboardInteraction?.skillSphere?.near?.(this.player.position);
+      const otherActive = this.activeHoldLoop || this.activeZoneLoop || this.oneShotActive || billboardFocused || contactOpen || skillOpen || skillNearby;
       if (nearestSpot && !otherActive) this._showPushHint();
       else this._hidePushHint();
     }

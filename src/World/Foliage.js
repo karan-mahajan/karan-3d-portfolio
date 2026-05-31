@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { MeshLambertNodeMaterial } from 'three/webgpu';
 import {
-  Fn, uniform, texture, uv, rotateUV, vec2, vec3, color,
-  mix, normalWorld, positionLocal,
+  Fn, uniform, texture, uv, rotateUV, vec2, vec3, float, color,
+  mix, normalWorld, normalLocal, positionGeometry, attribute,
+  length, smoothstep, max, sin, cos, normalize, clamp,
 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -17,18 +18,27 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
  *   1. CORE — an opaque low-poly icosphere, two-tone lit. Guarantees a rounded
  *      filled silhouette with no see-through and no "edge-on flat card = thin
  *      line" artefact (the bug the leaf-cards-only version showed from the side).
- *   2. SHELL — ~110 small alpha-cut leaf cards scattered on a slightly larger
+ *   2. SHELL — ~150 small alpha-cut leaf cards scattered on a slightly larger
  *      sphere (radius = 1 − rng³ so they clump toward the surface), each spun
- *      randomly with its normals lerped 85 % toward the outward sphere normal.
- *      The SDF cutout (UV rotated by the wind) gives the ragged leafy edge that
- *      breaks the core's smooth outline into foliage.
+ *      randomly in 3D with its normals lerped 85 % toward the outward sphere
+ *      normal. The SDF cutout (UV rotated by the wind) gives the ragged leafy
+ *      edge that breaks the core's smooth outline into foliage.
  *
- * Both layers share the same two-tone mix(colorA, colorB) by normal·sunDir, lit
- * by MeshLambertNodeMaterial (scene sun/ambient/hemi + fog) so canopies darken
- * at night through the same rig as the trunks. One InstancedMesh per layer per
- * cloud, one instance per reference (world position + scale + deterministic
- * spin). Bruno's see-through-near-vehicle fade is dropped (no vehicle); colliders
- * already exist on trunks + bushes, so this adds none.
+ * Both layers are a `Mesh` over an `InstancedBufferGeometry` (NOT InstancedMesh)
+ * so the vertex node can rebuild each leaf's world position from per-instance
+ * attributes (aCenter / aScale / aRot) — the same trick Grass.js uses. That in
+ * turn powers the player interaction: as the avatar moves through a bush the
+ * near-side leaves push away and press down (you "part" it), and jumping up into
+ * a low canopy makes those leaves flutter — a cheap shader-side "soft physics"
+ * driven purely by the player's 3D distance to each leaf (no Rapier bodies; the
+ * thousands of cards would be far too many to simulate). Bushes react because
+ * they sit at walking height; canopies only react when you jump up near them,
+ * because the test is full 3D distance including Y.
+ *
+ * Two-tone albedo (mix(colorA, colorB) by normal·sunDir) is lit by
+ * MeshLambertNodeMaterial (scene sun/ambient/hemi + fog) so canopies darken at
+ * night through the same rig as the trunks. Colliders already exist on trunks +
+ * bushes, so this adds none.
  */
 
 // Deterministic RNG (mulberry32) so the blob + per-instance spins are stable
@@ -66,6 +76,23 @@ const CORE_RADIUS = 0.82;
 const CORE_DETAIL = 2;
 // Wind-driven UV rotation strength (Bruno: wind.offset.length() × 2.2).
 const WIND_FLUTTER = 2.2;
+// Gentle positional wind sway of the whole blob (m), sampled per-instance so
+// each canopy/bush breathes a little out of phase with its neighbours.
+const WIND_SWAY = 0.16;
+
+// Player interaction ("soft physics"). The player is treated as a VERTICAL BODY
+// COLUMN (feet→head), not a single point — leaves react wherever the body OR head
+// brushes them, so on short trees you part the canopy just by walking through, no
+// jump required (player.position is feet-height; spawn is y≈0.02). Reaction is
+// the leaf's 3D distance to the NEAREST point on that column.
+const BODY_BELOW = 0.3;          // column bottom below the feet anchor (m)
+const BODY_ABOVE = 2.0;          // column top above the feet anchor (head + reach, m)
+const REACT_RADIUS = 1.2;        // leaves within this of the body column react (m)
+const REACT_INNER = 0.2;         // full strength once this close
+const PART_STRENGTH = 0.5;       // how far leaves shove away from the body (m)
+const PART_DOWN = 0.12;          // press the parted leaves down a touch (m)
+const FLUTTER_FREQ = 6.0;        // shimmer speed of disturbed leaves
+const FLUTTER_AMP = 0.09;        // shimmer amplitude (m)
 
 export class Foliage {
   /**
@@ -85,6 +112,10 @@ export class Foliage {
     // frame from TimeOfDay.sunOffset via setSunDirection(). Seeded to a daytime
     // down-sun so the first frame isn't flat.
     this.sunDir = uniform(vec3(0.4, 0.7, 0.3));
+    // Player world position (incl. Y) for the part/flutter interaction; pushed
+    // each frame from App.tick via setPlayerPos(). Parked far below the world so
+    // nothing reacts until the first real update.
+    this.uPlayerPos = uniform(vec3(0, -9999, 0));
 
     this.#buildShellGeometry();
     this.#buildCoreGeometry();
@@ -151,6 +182,72 @@ export class Foliage {
     })();
   }
 
+  // ── World-position vertex node shared by both layers ────────────────────────
+  // Rebuilds each instance's leaf vertex in world space from aCenter/aScale/aRot
+  // (the mesh itself sits at the origin with an identity transform, like Grass),
+  // then layers wind sway + the player part/flutter on top.
+  #positionNode() {
+    const rotX = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x, p.y.mul(c).sub(p.z.mul(s)), p.y.mul(s).add(p.z.mul(c))); };
+    const rotY = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).add(p.z.mul(s)), p.y, p.z.mul(c).sub(p.x.mul(s))); };
+    const rotZ = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c)), p.z); };
+
+    return Fn(() => {
+      const local = positionGeometry;
+      const center = attribute('aCenter');     // instance world position
+      const scl = attribute('aScale');         // instance uniform scale
+      const rot = attribute('aRot');           // instance spin (tiltX, yaw, tiltZ)
+
+      // local → scale → spin (z,y,x to match Euler 'XYZ') → translate to center.
+      let p = local.mul(scl);
+      p = rotZ(p, rot.z);
+      p = rotY(p, rot.y);
+      p = rotX(p, rot.x);
+      const world = center.add(p).toVar();
+
+      // Gentle whole-blob wind sway, sampled at the instance center so blobs
+      // breathe out of phase.
+      const sway = this.wind.offsetNode(center.xz).mul(WIND_SWAY);
+      world.x.addAssign(sway.x);
+      world.z.addAssign(sway.y);
+
+      // Player interaction: leaves react to the nearest point on the player's
+      // vertical body column (feet→head), so a head/torso brush parts them just
+      // like walking through a bush — no jump needed. Push the near-side leaves
+      // away + down with a per-vertex flutter so they shimmer instead of sliding
+      // as a slab; near-side verts get a stronger env than the far side, so the
+      // blob squishes/parts rather than translating whole.
+      const feet = this.uPlayerPos;
+      const colY = clamp(world.y, feet.y.sub(BODY_BELOW), feet.y.add(BODY_ABOVE));
+      const closest = vec3(feet.x, colY, feet.z);
+      const delta = world.sub(closest).toVar();
+      const dist = length(delta).toVar();
+      const env = smoothstep(REACT_RADIUS, REACT_INNER, dist).toVar();
+      const dir = delta.div(max(dist, 0.001));
+      const phase = world.x.add(world.z).mul(2.3);
+      const flutter = sin(this.wind.nodes.time.mul(FLUTTER_FREQ).add(phase)).mul(FLUTTER_AMP).mul(env);
+      const part = env.mul(PART_STRENGTH);
+      world.x.addAssign(dir.x.mul(part).add(flutter));
+      world.z.addAssign(dir.z.mul(part).add(flutter.mul(0.6)));
+      world.y.subAssign(env.mul(PART_DOWN));
+
+      return world;
+    })();
+  }
+
+  // ── Object-space normal node (spin the baked normal so lighting follows) ────
+  #normalNode() {
+    const rotX = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x, p.y.mul(c).sub(p.z.mul(s)), p.y.mul(s).add(p.z.mul(c))); };
+    const rotY = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).add(p.z.mul(s)), p.y, p.z.mul(c).sub(p.x.mul(s))); };
+    const rotZ = (p, a) => { const c = cos(a), s = sin(a); return vec3(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c)), p.z); };
+    return Fn(() => {
+      const rot = attribute('aRot');
+      let n = rotZ(normalLocal, rot.z);
+      n = rotY(n, rot.y);
+      n = rotX(n, rot.x);
+      return normalize(n);
+    })();
+  }
+
   // ── One cloud = a solid core + a leaf-card shell, both instanced ────────────
   #buildCloud(cloud) {
     const refs = cloud.refs ?? [];
@@ -159,13 +256,17 @@ export class Foliage {
     const colorANode = uniform(color(cloud.colorA));
     const colorBNode = uniform(color(cloud.colorB));
 
-    // Per-instance matrices (shared by core + shell so they stay co-located).
-    const matrices = this.#buildMatrices(refs, cloud.key);
+    // Per-instance attributes (shared between core + shell so they stay glued).
+    const attribs = this.#instanceAttribs(refs, cloud.key);
+    const coreGeom = this.#instanced(this.coreGeometry, attribs, refs.length);
+    const shellGeom = this.#instanced(this.shellGeometry, attribs, refs.length);
 
     // 1. Opaque core — fills the interior so the blob is never see-through.
     const coreMat = new MeshLambertNodeMaterial({ side: THREE.FrontSide });
+    coreMat.positionNode = this.#positionNode();
+    coreMat.normalNode = this.#normalNode();
     coreMat.colorNode = this.#colorNode(colorANode, colorBNode);
-    const core = new THREE.InstancedMesh(this.coreGeometry, coreMat, refs.length);
+    const core = new THREE.Mesh(coreGeom, coreMat);
     core.name = `foliage:${cloud.key}:core`;
     core.frustumCulled = false;
     core.castShadow = false;
@@ -174,52 +275,68 @@ export class Foliage {
 
     // 2. Leaf-card shell — ragged SDF edge over the core.
     const shellMat = new MeshLambertNodeMaterial({ side: THREE.DoubleSide });
+    shellMat.positionNode = this.#positionNode();
+    shellMat.normalNode = this.#normalNode();
     shellMat.opacityNode = Fn(() => {
-      const angle = this.wind.offsetNode(positionLocal.xz).length().mul(WIND_FLUTTER);
+      const angle = this.wind.offsetNode(attribute('aCenter').xz).length().mul(WIND_FLUTTER);
       const rotated = rotateUV(uv(), angle, vec2(0.5));
       return texture(this.sdf, rotated).r;
     })();
     shellMat.alphaTest = SDF_THRESHOLD;
     shellMat.colorNode = this.#colorNode(colorANode, colorBNode);
-    const shell = new THREE.InstancedMesh(this.shellGeometry, shellMat, refs.length);
+    const shell = new THREE.Mesh(shellGeom, shellMat);
     shell.name = `foliage:${cloud.key}`;
     shell.frustumCulled = false;
     shell.castShadow = false;
     shell.receiveShadow = true;
     shell.userData.noTorchRaycast = true;
 
-    for (let i = 0; i < refs.length; i++) {
-      core.setMatrixAt(i, matrices[i]);
-      shell.setMatrixAt(i, matrices[i]);
-    }
-    core.instanceMatrix.needsUpdate = true;
-    shell.instanceMatrix.needsUpdate = true;
     this.scene.add(core);
     this.scene.add(shell);
 
     this.clouds.push({
-      key: cloud.key, mesh: shell, core, material: shellMat, coreMat,
-      colorANode, colorBNode,
+      key: cloud.key, mesh: shell, core, coreGeom, shellGeom,
+      material: shellMat, coreMat, colorANode, colorBNode,
     });
   }
 
+  // InstancedBufferGeometry over a shared base (position/normal/uv/index by
+  // reference) plus this cloud's per-instance attributes. Mirrors Grass.
+  #instanced(base, attribs, count) {
+    const geom = new THREE.InstancedBufferGeometry();
+    geom.index = base.index;
+    geom.attributes.position = base.attributes.position;
+    geom.attributes.normal = base.attributes.normal;
+    geom.attributes.uv = base.attributes.uv;
+    geom.instanceCount = count;
+    geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(attribs.center, 3));
+    geom.setAttribute('aScale', new THREE.InstancedBufferAttribute(attribs.scale, 1));
+    geom.setAttribute('aRot', new THREE.InstancedBufferAttribute(attribs.rot, 3));
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    return geom;
+  }
+
   // Per-instance transforms: ref world position + scale + deterministic spin
-  // (refs carry no usable rotation of their own).
-  #buildMatrices(refs, key) {
-    const out = [];
-    const pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion();
-    const scl = new THREE.Vector3();
-    const euler = new THREE.Euler();
+  // (refs carry no usable rotation of their own). Same RNG draw order as the
+  // old #buildMatrices so blobs keep their established look.
+  #instanceAttribs(refs, key) {
+    const n = refs.length;
+    const center = new Float32Array(n * 3);
+    const scale = new Float32Array(n);
+    const rot = new Float32Array(n * 3);
     const rng = mulberry32(0xc10d ^ this.#hashKey(key));
-    for (const r of refs) {
-      pos.copy(r.position);
-      euler.set((rng() - 0.5) * 0.6, rng() * Math.PI * 2, (rng() - 0.5) * 0.6);
-      quat.setFromEuler(euler);
-      scl.setScalar(r.scale || 1);
-      out.push(new THREE.Matrix4().compose(pos, quat, scl));
+    for (let i = 0; i < n; i++) {
+      const r = refs[i];
+      center[i * 3] = r.position.x;
+      center[i * 3 + 1] = r.position.y;
+      center[i * 3 + 2] = r.position.z;
+      // Match the prior euler.set((rng-0.5)*0.6, rng*2π, (rng-0.5)*0.6) order.
+      rot[i * 3] = (rng() - 0.5) * 0.6;        // tilt X
+      rot[i * 3 + 1] = rng() * Math.PI * 2;    // yaw
+      rot[i * 3 + 2] = (rng() - 0.5) * 0.6;    // tilt Z
+      scale[i] = r.scale || 1;
     }
-    return out;
+    return { center, scale, rot };
   }
 
   #hashKey(key) {
@@ -228,7 +345,7 @@ export class Foliage {
     return h >>> 0;
   }
 
-  // ── Public API (matches the hook App.tick already calls) ────────────────────
+  // ── Public API (matches the hooks App.tick already calls) ───────────────────
 
   /** Two-tone lit/shaded mix follows the sun. App passes TimeOfDay.sunOffset. */
   setSunDirection(offset) {
@@ -237,10 +354,20 @@ export class Foliage {
     this.sunDir.value.set(offset.x / len, offset.y / len, offset.z / len);
   }
 
+  /** Player world position for the part/flutter interaction (App passes the
+   *  player position each frame; the second arg is unused — kept so the call
+   *  signature matches Grass.setPlayerPos). */
+  setPlayerPos(pos) {
+    if (!pos) return;
+    this.uPlayerPos.value.set(pos.x, pos.y, pos.z);
+  }
+
   dispose() {
     for (const c of this.clouds) {
       this.scene.remove(c.mesh);
       this.scene.remove(c.core);
+      c.coreGeom?.dispose();
+      c.shellGeom?.dispose();
       c.material.dispose();
       c.coreMat.dispose();
     }

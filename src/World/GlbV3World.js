@@ -15,6 +15,17 @@ const TREE_SYSTEMS = { oakTrees: 'oak' };
 const CANOPY_ANCHOR_SPACING = 1.25;   // m between blobs
 const CANOPY_SCALE_FACTOR = 0.62;     // blob scale = spacing × this (× jitter)
 const CANOPY_SCALE_JITTER = 0.2;      // ±fraction deterministic size variation
+// Tree trunks need runtime Rapier colliders — the baked colliders.glb ships
+// NONE for trees, so the player walks straight through them. Each tree is a
+// separate mesh (oak_trunk_karan / birch_*_bark_karan / cherry_trunk_dark_brown),
+// so we size one static cylinder per trunk mesh from its base slice (branch/leaf
+// spread higher up must NOT fatten the cylinder).
+const TREE_TRUNK_SYSTEMS = new Set(['oakTrees', 'birchTrees', 'cherryTrees']);
+const TRUNK_MATERIAL_RE = /trunk|bark/i;   // trunk/bark mesh → gets a collider
+const TRUNK_BASE_SLICE = 0.25;             // sample the bottom 25% for the radius
+const TRUNK_RADIUS_MIN = 0.16;
+const TRUNK_RADIUS_MAX = 0.7;
+const TRUNK_RADIUS_SHRINK = 0.85;          // visible bark sits a touch inside bbox
 const DYNAMIC_BRICK_SCALE = 0.5;
 const DYNAMIC_BRICK_TEMPLATES = new Set(['brickKerbMesh', 'brickPileMesh']);
 const TITLE_LETTER_COLOR = '#24345a';
@@ -236,6 +247,8 @@ export class GlbV3World {
       // Trees: strip the solid green canopy → SDF foliage anchors in its form.
       const treeSpecies = TREE_SYSTEMS[entry.system];
       if (treeSpecies) this.#extractTreeFoliage(group, treeSpecies);
+      // Trees: give every trunk a static collider (colliders.glb has none).
+      if (TREE_TRUNK_SYSTEMS.has(entry.system)) this._addTreeTrunkColliders(group, physics);
       if (entry.system === 'miscFx') this.#extractDynamicTitleLetters(group, physics);
     }
 
@@ -1069,6 +1082,64 @@ export class GlbV3World {
     if (letters.length) {
       console.log(`[GlbV3World] dynamic title letters: ${letters.length}`);
     }
+  }
+
+  // ── Tree trunk colliders (runtime — colliders.glb ships none for trees) ─────
+
+  /**
+   * Add one static cylinder collider per trunk/bark mesh in a tree group so the
+   * player can't walk through trees. The baked colliders.glb only covers
+   * structures/statue/props — every oak/birch/cherry trunk was left
+   * non-collidable. Each tree is its own mesh, so we size a cylinder from the
+   * trunk's BASE SLICE (bottom TRUNK_BASE_SLICE of its height): branch + leaf
+   * spread higher up must not fatten the cylinder into an invisible wall. Uses
+   * the same y-convention as #loadColliders (pass bbox-bottom; the helper lifts
+   * the body by height/2 so it spans [ymin, ymax]).
+   */
+  _addTreeTrunkColliders(group, physics) {
+    if (!physics?.ready) return;
+    group.updateMatrixWorld(true);
+    const v = new THREE.Vector3();
+    let count = 0;
+    group.traverse((o) => {
+      if (!o.isMesh || !TRUNK_MATERIAL_RE.test(o.material?.name || '')) return;
+      const posAttr = o.geometry?.attributes?.position;
+      if (!posAttr) return;
+
+      // Pass 1 — world-space vertical extent.
+      let ymin = Infinity;
+      let ymax = -Infinity;
+      for (let i = 0; i < posAttr.count; i++) {
+        v.fromBufferAttribute(posAttr, i).applyMatrix4(o.matrixWorld);
+        if (v.y < ymin) ymin = v.y;
+        if (v.y > ymax) ymax = v.y;
+      }
+      const height = Math.max(ymax - ymin, 0.1);
+
+      // Pass 2 — XZ spread of the base slice only → trunk radius + centre.
+      const sliceTop = ymin + height * TRUNK_BASE_SLICE;
+      let minX = Infinity; let maxX = -Infinity;
+      let minZ = Infinity; let maxZ = -Infinity;
+      for (let i = 0; i < posAttr.count; i++) {
+        v.fromBufferAttribute(posAttr, i).applyMatrix4(o.matrixWorld);
+        if (v.y > sliceTop) continue;
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.z < minZ) minZ = v.z;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+      if (minX === Infinity) return; // degenerate slice
+
+      const cx = (minX + maxX) / 2;
+      const cz = (minZ + maxZ) / 2;
+      const radius = THREE.MathUtils.clamp(
+        (Math.max(maxX - minX, maxZ - minZ) / 2) * TRUNK_RADIUS_SHRINK,
+        TRUNK_RADIUS_MIN, TRUNK_RADIUS_MAX,
+      );
+      physics.addStaticCylinder(cx, ymin, cz, radius, height);
+      count++;
+    });
+    if (count > 0) console.log(`[GlbV3World] ${group.name} trunk colliders: ${count}`);
   }
 
   // ── Tree foliage from the green canopy (Phase E) ────────────────────────────

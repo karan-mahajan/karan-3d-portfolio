@@ -464,13 +464,14 @@ export class UIController {
     const ix = this.interaction;
     // While a focused panel is open, the pill should be hidden — the panel
     // owns the screen and has its own × close.
-    if (ix && (ix.activeIndex !== -1 || ix.contactOpen)) {
+    if (ix && (ix.activeIndex !== -1 || ix.contactOpen || ix.skillOpen)) {
       this._interactBtn.classList.add('hidden');
       return;
     }
     let label = null;
     if (ix?.candidate) label = `View ${ix.candidate.project?.name || ''}`.trim();
     else if (ix?.contactCandidate) label = 'Contact';
+    else if (ix?.skillCandidate) label = 'Enter Skills';
     else if (this.actionPrompts?.activeZoneLoop) {
       const t = this.actionPrompts.activeZoneLoop;
       label = (t.cycleActions && t.cycleActions.length)
