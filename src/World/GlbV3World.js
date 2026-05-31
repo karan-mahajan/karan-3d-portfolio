@@ -1,6 +1,17 @@
-import * as THREE from 'three/webgpu';
-import { MeshLambertNodeMaterial } from 'three/webgpu';
-import { Fn, positionWorld, texture, uv, vec2, vec3, mix, color, uniform, clamp } from 'three/tsl';
+import {
+  clamp,
+  color,
+  Fn,
+  mix,
+  positionWorld,
+  texture,
+  uniform,
+  uv,
+  vec2,
+  vec3,
+} from "three/tsl";
+import * as THREE from "three/webgpu";
+import { MeshLambertNodeMaterial } from "three/webgpu";
 
 // Tree GLB systems that ship a solid low-poly GREEN canopy primitive (material
 // `*_canopy_*`) alongside their trunk → foliage species key. ONLY oak does:
@@ -9,32 +20,32 @@ import { Fn, positionWorld, texture, uv, vec2, vec3, mix, color, uniform, clamp 
 // from the treeLeaves ref empties instead. The canopy is just the placement
 // GUIDE — we sample anchors across it (in its form), delete the green primitive,
 // and grow SDF leaf blobs there, leaving the trunk. See #extractTreeFoliage.
-const TREE_SYSTEMS = { oakTrees: 'oak' };
+const TREE_SYSTEMS = { oakTrees: "oak" };
 // Canopy → foliage-anchor sampling. Poisson-thin the canopy verts to this world
 // spacing; each surviving point grows one SDF blob scaled to fill the gap.
-const CANOPY_ANCHOR_SPACING = 1.25;   // m between blobs
-const CANOPY_SCALE_FACTOR = 0.62;     // blob scale = spacing × this (× jitter)
-const CANOPY_SCALE_JITTER = 0.2;      // ±fraction deterministic size variation
+const CANOPY_ANCHOR_SPACING = 1.25; // m between blobs
+const CANOPY_SCALE_FACTOR = 0.62; // blob scale = spacing × this (× jitter)
+const CANOPY_SCALE_JITTER = 0.2; // ±fraction deterministic size variation
 // Tree trunks need runtime Rapier colliders — the baked colliders.glb ships
 // NONE for trees, so the player walks straight through them. Each tree is a
 // separate mesh (oak_trunk_karan / birch_*_bark_karan / cherry_trunk_dark_brown),
 // so we size one static cylinder per trunk mesh from its base slice (branch/leaf
 // spread higher up must NOT fatten the cylinder).
-const TREE_TRUNK_SYSTEMS = new Set(['oakTrees', 'birchTrees', 'cherryTrees']);
-const TRUNK_MATERIAL_RE = /trunk|bark/i;   // trunk/bark mesh → gets a collider
-const TRUNK_BASE_SLICE = 0.25;             // sample the bottom 25% for the radius
+const TREE_TRUNK_SYSTEMS = new Set(["oakTrees", "birchTrees", "cherryTrees"]);
+const TRUNK_MATERIAL_RE = /trunk|bark/i; // trunk/bark mesh → gets a collider
+const TRUNK_BASE_SLICE = 0.25; // sample the bottom 25% for the radius
 const TRUNK_RADIUS_MIN = 0.16;
 const TRUNK_RADIUS_MAX = 0.7;
-const TRUNK_RADIUS_SHRINK = 0.85;          // visible bark sits a touch inside bbox
+const TRUNK_RADIUS_SHRINK = 0.85; // visible bark sits a touch inside bbox
 const DYNAMIC_BRICK_SCALE = 0.5;
-const DYNAMIC_BRICK_TEMPLATES = new Set(['brickKerbMesh', 'brickPileMesh']);
+const DYNAMIC_BRICK_TEMPLATES = new Set(["brickKerbMesh", "brickPileMesh"]);
 
 // Instanced systems whose templates are SOLID props the player must not walk
 // through → one static box per instance, sized to the visible world AABB
 // (CLAUDE.md rule 5). colliders.glb ships NO rock proxies (verified: 67 tube_ +
 // 6 cuboid_ + 10 Footprint_, zero rock/basalt), so rocks collide at runtime.
 // Flowers are walk-through accents (not in this set) → no collider.
-const SOLID_INSTANCE_SYSTEMS = new Set(['rocks']);
+const SOLID_INSTANCE_SYSTEMS = new Set(["rocks"]);
 const INSTANCE_COLLIDER_HALF_MIN = 0.05;
 const BENCH_MESH_RE = /^bench_/i;
 const BENCH_PROXY_RE = /^cuboid_bench_/i;
@@ -45,13 +56,13 @@ const SHADOW_RECEIVER_RE = /slab|foundation|path|pave|stone|brick/i;
 // linking ADJACENT posts. Real spans run 3.1–4.5 m (projects is the widest);
 // the next-closest non-adjacent pair is 6.8 m (a run's end-posts, already
 // bridged by the middle post) — so FENCE_MAX_SPAN sits between the two.
-const FENCE_MIN_POST_HEIGHT = 0.8;     // posts ~1.21 m tall; skips the ~0.46 m rope mesh
-const FENCE_POST_CLUSTER_R2 = 0.35 * 0.35;  // XZ radius² grouping verts into one post
-const FENCE_MAX_SPAN = 5.5;            // link posts ≤ this apart; bigger = opening/non-adjacent
-const FENCE_POST_HALF = 0.15;          // extend each wall end to bury into its posts
-const FENCE_HALF_THICK = 0.12;         // wall ~0.24 m thick — hugs the post line
-const FENCE_RIDGE_RISE = 0.22;         // pitched-roof cap height; > ~1.2× halfThick so
-                                       // the roof beats the 50° climb angle → not standable
+const FENCE_MIN_POST_HEIGHT = 0.8; // posts ~1.21 m tall; skips the ~0.46 m rope mesh
+const FENCE_POST_CLUSTER_R2 = 0.35 * 0.35; // XZ radius² grouping verts into one post
+const FENCE_MAX_SPAN = 5.5; // link posts ≤ this apart; bigger = opening/non-adjacent
+const FENCE_POST_HALF = 0.15; // extend each wall end to bury into its posts
+const FENCE_HALF_THICK = 0.12; // wall ~0.24 m thick — hugs the post line
+const FENCE_RIDGE_RISE = 0.22; // pitched-roof cap height; > ~1.2× halfThick so
+// the roof beats the 50° climb angle → not standable
 // `*Footprint_*` collider proxies are full-height ZONE volumes (section/structure
 // /misc areas), NOT visible props — baking them as boxes walls off the statue,
 // sections, pool and small props so the player can't approach. They're skipped at
@@ -59,8 +70,8 @@ const FENCE_RIDGE_RISE = 0.22;         // pitched-roof cap height; > ~1.2× half
 // The exception: solid BUILDINGS whose footprint IS the visible wall — kept (as a
 // tight oriented box) so the player can't walk through them.
 const SOLID_FOOTPRINT_RE = /Footprint_(cabin|outhouse)/i;
-const TITLE_LETTER_COLOR = '#24345a';
-const TITLE_LETTER_EMISSIVE = '#080d18';
+const TITLE_LETTER_COLOR = "#24345a";
+const TITLE_LETTER_EMISSIVE = "#080d18";
 const TITLE_LETTER_FLOAT_CLEARANCE = 1.15;
 const TITLE_LETTER_FLOAT_AMPLITUDE = 0.12;
 const TITLE_LETTER_FLOAT_SPEED = 1.6;
@@ -97,15 +108,15 @@ const TITLE_LETTER_RETURN_DURATION = 1.25;
  * boots unchanged; sections + interactions are rebuilt in Phase C.
  */
 export class GlbV3World {
-  static MANIFEST_PATH = '/world/manifest.json';
-  static ASSET_BASE = '/world/';
+  static MANIFEST_PATH = "/world/manifest.json";
+  static ASSET_BASE = "/world/";
 
   constructor(scene, loader) {
     this.scene = scene;
     this.loader = loader;
 
     this.root = new THREE.Group();
-    this.root.name = 'glb-v3-world';
+    this.root.name = "glb-v3-world";
     this.scene.add(this.root);
 
     this.manifest = null;
@@ -124,7 +135,7 @@ export class GlbV3World {
     // Tint multiplier over the whole grass-ground colour chain — defaults to
     // white (no-op) so the runtime matches the Blender material exactly; kept as
     // a uniform so day/night can later dim the ground alongside the blades.
-    this.groundGrassColor = uniform(color('#ffffff'));
+    this.groundGrassColor = uniform(color("#ffffff"));
     this.dynamicBrickPiles = [];
     this.dynamicTitleLetters = [];
     // Flower template geometry + colours + baked placements, collected during
@@ -188,10 +199,10 @@ export class GlbV3World {
     // the sectionRef_* interaction contract by section key; `markers` holds the
     // areas/* section-structure roots (projectsHut/skillsSphere/contactBoard).
     this.refs = {
-      byName: new Map(),       // name → { name, position, object3d, extras }
-      sections: {},            // section key → entry (from sectionRef_*)
-      markers: {},             // marker name → Object3D (areas section roots)
-      all: [],                 // every ref entry, in load order
+      byName: new Map(), // name → { name, position, object3d, extras }
+      sections: {}, // section key → entry (from sectionRef_*)
+      markers: {}, // marker name → Object3D (areas section roots)
+      all: [], // every ref entry, in load order
     };
 
     this._runtimeBenchCollidersAdded = false;
@@ -201,12 +212,14 @@ export class GlbV3World {
   async load(physics, opts = {}) {
     this.audio = opts.audio ?? null;
     const manifest = await fetch(GlbV3World.MANIFEST_PATH).then((r) => {
-      if (!r.ok) throw new Error(`GlbV3World: manifest fetch failed (${r.status})`);
+      if (!r.ok)
+        throw new Error(`GlbV3World: manifest fetch failed (${r.status})`);
       return r.json();
     });
     this.manifest = manifest;
 
-    if (manifest.grassGrid?.bounds) this.grassGrid.bounds = manifest.grassGrid.bounds;
+    if (manifest.grassGrid?.bounds)
+      this.grassGrid.bounds = manifest.grassGrid.bounds;
 
     // 0. Grass mask (EXR) — needed by the terrain ground material below + the
     // runtime Grass field. Load in parallel with geometry; tolerate failure
@@ -226,13 +239,16 @@ export class GlbV3World {
             this.grassMask = tex;
           })
           .catch((err) => {
-            console.warn('[GlbV3World] grass mask load failed:', err?.message || err);
+            console.warn(
+              "[GlbV3World] grass mask load failed:",
+              err?.message || err,
+            );
           })
       : Promise.resolve();
 
     // 0b. Tile/slab art for the painted paths. Sampled by world XZ in the
     // terrain ground material; tolerate failure (paths fall back to flat stone).
-    const tileFile = manifest.tileTexture ?? 'tiles.png';
+    const tileFile = manifest.tileTexture ?? "tiles.png";
     const tilePromise = this.loader
       .loadTexture(GlbV3World.ASSET_BASE + tileFile)
       .then((tex) => {
@@ -244,7 +260,10 @@ export class GlbV3World {
         this.tileTexture = tex;
       })
       .catch((err) => {
-        console.warn('[GlbV3World] tile texture load failed:', err?.message || err);
+        console.warn(
+          "[GlbV3World] tile texture load failed:",
+          err?.message || err,
+        );
       });
 
     await Promise.all([maskPromise, tilePromise]);
@@ -257,7 +276,10 @@ export class GlbV3World {
           .loadGLTF(GlbV3World.ASSET_BASE + entry.file)
           .then((gltf) => ({ entry, gltf }))
           .catch((err) => {
-            console.warn(`[GlbV3World] failed to load ${entry.file}:`, err?.message || err);
+            console.warn(
+              `[GlbV3World] failed to load ${entry.file}:`,
+              err?.message || err,
+            );
             return null;
           }),
       ),
@@ -277,25 +299,28 @@ export class GlbV3World {
       }
       if (entry.markers) {
         for (const markerName of entry.markers) {
-          const obj = group.getObjectByName(markerName)
-            ?? group.getObjectByName(`root_${markerName}`);
+          const obj =
+            group.getObjectByName(markerName) ??
+            group.getObjectByName(`root_${markerName}`);
           if (obj) this.refs.markers[markerName] = obj;
         }
       }
-      if (entry.system === 'benches') {
+      if (entry.system === "benches") {
         this.#configureBenchShadows(group);
         this.#addBenchColliders(group, physics);
       }
-      if (entry.system === 'scenery' || entry.system === 'areas') {
+      if (entry.system === "scenery" || entry.system === "areas") {
         this.#configureShadowReceivers(group);
       }
       // Trees: strip the solid green canopy → SDF foliage anchors in its form.
       const treeSpecies = TREE_SYSTEMS[entry.system];
       if (treeSpecies) this.#extractTreeFoliage(group, treeSpecies);
       // Trees: give every trunk a static collider (colliders.glb has none).
-      if (TREE_TRUNK_SYSTEMS.has(entry.system)) this._addTreeTrunkColliders(group, physics);
-      if (entry.system === 'fences') this.#addFenceColliders(group, physics);
-      if (entry.system === 'miscFx') this.#extractDynamicTitleLetters(group, physics);
+      if (TREE_TRUNK_SYSTEMS.has(entry.system))
+        this._addTreeTrunkColliders(group, physics);
+      if (entry.system === "fences") this.#addFenceColliders(group, physics);
+      if (entry.system === "miscFx")
+        this.#extractDynamicTitleLetters(group, physics);
     }
 
     if (physics?.ready) this.#registerBridgeColliders(physics);
@@ -303,32 +328,47 @@ export class GlbV3World {
     // 1b. Instanced bricks — the authored stone paving (pave/kerb/pile). Other
     // instanced systems (rocks/flowers) stay deferred; only bricks are wired so
     // the walkable path reads as paving + footsteps register stone zones.
-    const bricksEntry = (manifest.instanced ?? []).find((e) => e.system === 'bricks');
+    const bricksEntry = (manifest.instanced ?? []).find(
+      (e) => e.system === "bricks",
+    );
     if (bricksEntry) {
-      this._pathTilePositions = await this.#loadInstancedSystem(bricksEntry, physics);
+      this._pathTilePositions = await this.#loadInstancedSystem(
+        bricksEntry,
+        physics,
+      );
     }
 
     // 1c. Instanced rocks (SOLID — exact trimesh colliders added inside
     // #loadInstancedSystem). The reference empties carry baked world matrices, so
     // the decomposed transforms land at the authored Blender positions + height —
     // no terrain.heightAt re-grounding needed.
-    const rocksEntry = (manifest.instanced ?? []).find((e) => e.system === 'rocks');
+    const rocksEntry = (manifest.instanced ?? []).find(
+      (e) => e.system === "rocks",
+    );
     if (rocksEntry) await this.#loadInstancedSystem(rocksEntry, physics);
 
     // Flowers are NOT static InstancedMeshes — the Flowers class (App.boot, needs
     // the shared Wind) builds them as wind-swaying, player-parting clumps. Collect
     // their geometry + colours + baked placements here for App to consume.
-    const flowersEntry = (manifest.instanced ?? []).find((e) => e.system === 'flowers');
-    if (flowersEntry) this.flowerGroups = await this.#collectFlowerGroups(flowersEntry);
+    const flowersEntry = (manifest.instanced ?? []).find(
+      (e) => e.system === "flowers",
+    );
+    if (flowersEntry)
+      this.flowerGroups = await this.#collectFlowerGroups(flowersEntry);
 
     // 2. Colliders — parse the proxy GLB, build Rapier shapes, discard meshes.
     if (manifest.colliders?.file && physics) {
-      await this.#loadColliders(GlbV3World.ASSET_BASE + manifest.colliders.file, physics);
+      await this.#loadColliders(
+        GlbV3World.ASSET_BASE + manifest.colliders.file,
+        physics,
+      );
     }
 
     // 3. References — typed empties map (kept live under root for pivots).
     if (manifest.references?.file) {
-      await this.#loadReferences(GlbV3World.ASSET_BASE + manifest.references.file);
+      await this.#loadReferences(
+        GlbV3World.ASSET_BASE + manifest.references.file,
+      );
     }
 
     this.#assertBootInvariants();
@@ -343,7 +383,9 @@ export class GlbV3World {
 
   #updateFloatingTitleLetters(delta, playerPos) {
     const dt = Math.min(Math.max(delta || 1 / 60, 0), 1 / 30);
-    const touchedLetter = playerPos ? this.#closestTouchedFloatingTitleLetter(playerPos) : null;
+    const touchedLetter = playerPos
+      ? this.#closestTouchedFloatingTitleLetter(playerPos)
+      : null;
     for (const letter of this.dynamicTitleLetters) {
       const { body } = letter;
       if (!body) continue;
@@ -372,13 +414,18 @@ export class GlbV3World {
       }
 
       letter.floatTime += dt;
-      const bobY = Math.sin(letter.floatTime * TITLE_LETTER_FLOAT_SPEED + letter.floatPhase)
-        * TITLE_LETTER_FLOAT_AMPLITUDE;
-      body.setTranslation({
-        x: letter.startCenter.x,
-        y: letter.startCenter.y + bobY,
-        z: letter.startCenter.z,
-      }, false);
+      const bobY =
+        Math.sin(
+          letter.floatTime * TITLE_LETTER_FLOAT_SPEED + letter.floatPhase,
+        ) * TITLE_LETTER_FLOAT_AMPLITUDE;
+      body.setTranslation(
+        {
+          x: letter.startCenter.x,
+          y: letter.startCenter.y + bobY,
+          z: letter.startCenter.z,
+        },
+        false,
+      );
       body.setRotation(letter.startRotation, false);
       body.setLinvel({ x: 0, y: 0, z: 0 }, false);
       body.setAngvel({ x: 0, y: 0, z: 0 }, false);
@@ -407,8 +454,10 @@ export class GlbV3World {
   #isPlayerTouchingFloatingLetter(letter, playerPos, bodyPos) {
     const dx = playerPos.x - bodyPos.x;
     const dz = playerPos.z - bodyPos.z;
-    const radius = Math.hypot(letter.halfExtents.x, letter.halfExtents.z) + TITLE_LETTER_TOUCH_PADDING;
-    if ((dx * dx + dz * dz) > radius * radius) return false;
+    const radius =
+      Math.hypot(letter.halfExtents.x, letter.halfExtents.z) +
+      TITLE_LETTER_TOUCH_PADDING;
+    if (dx * dx + dz * dz > radius * radius) return false;
 
     const playerBottom = playerPos.y ?? 0;
     const playerTop = playerBottom + 1.7;
@@ -426,16 +475,22 @@ export class GlbV3World {
     const pushX = dx / len;
     const pushZ = dz / len;
     letter.body.wakeUp();
-    letter.body.applyImpulse({
-      x: pushX * TITLE_LETTER_DROP_IMPULSE,
-      y: 0.035,
-      z: pushZ * TITLE_LETTER_DROP_IMPULSE,
-    }, true);
-    letter.body.applyTorqueImpulse?.({
-      x: pushZ * 0.025,
-      y: 0.018,
-      z: -pushX * 0.025,
-    }, true);
+    letter.body.applyImpulse(
+      {
+        x: pushX * TITLE_LETTER_DROP_IMPULSE,
+        y: 0.035,
+        z: pushZ * TITLE_LETTER_DROP_IMPULSE,
+      },
+      true,
+    );
+    letter.body.applyTorqueImpulse?.(
+      {
+        x: pushZ * 0.025,
+        y: 0.018,
+        z: -pushX * 0.025,
+      },
+      true,
+    );
   }
 
   #isDroppedTitleLetterOnGround(letter) {
@@ -444,7 +499,10 @@ export class GlbV3World {
     letter.mesh.updateMatrixWorld(true);
     letter._groundBox.setFromObject(letter.mesh);
     const bottomY = letter._groundBox.min.y;
-    return bottomY <= groundY + 0.08 || (letter.body.isSleeping() && bottomY <= groundY + 0.18);
+    return (
+      bottomY <= groundY + 0.08 ||
+      (letter.body.isSleeping() && bottomY <= groundY + 0.18)
+    );
   }
 
   #startTitleLetterReturn(letter) {
@@ -462,9 +520,7 @@ export class GlbV3World {
   #animateTitleLetterReturn(letter, dt) {
     letter.returnTime += dt;
     const t = Math.min(1, letter.returnTime / TITLE_LETTER_RETURN_DURATION);
-    const ease = t < 0.5
-      ? 4 * t * t * t
-      : 1 - ((-2 * t + 2) ** 3) / 2;
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
     const center = letter._returnCenter
       .copy(letter.returnFromCenter)
       .lerp(letter.startCenter, ease);
@@ -511,7 +567,10 @@ export class GlbV3World {
 
   #findTerrainMesh(group) {
     group.traverse((obj) => {
-      if (obj.isMesh && (obj.name === 'terrain' || obj.name.startsWith('terrain'))) {
+      if (
+        obj.isMesh &&
+        (obj.name === "terrain" || obj.name.startsWith("terrain"))
+      ) {
         this.terrain.mesh = obj;
       }
     });
@@ -525,7 +584,8 @@ export class GlbV3World {
    */
   #bakeHeightfield() {
     const mesh = this.terrain.mesh;
-    if (!mesh) throw new Error('GlbV3World: terrain mesh missing from terrain.glb');
+    if (!mesh)
+      throw new Error("GlbV3World: terrain mesh missing from terrain.glb");
 
     mesh.updateMatrixWorld(true);
     const geometry = mesh.geometry;
@@ -548,9 +608,15 @@ export class GlbV3World {
     for (let i = 0; i < pos.count; i++) {
       vec.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
       const u = THREE.MathUtils.clamp(
-        Math.round(((vec.x - bboxMin.x) / sizeX) * segments), 0, segments);
+        Math.round(((vec.x - bboxMin.x) / sizeX) * segments),
+        0,
+        segments,
+      );
       const w = THREE.MathUtils.clamp(
-        Math.round(((vec.z - bboxMin.z) / sizeZ) * segments), 0, segments);
+        Math.round(((vec.z - bboxMin.z) / sizeZ) * segments),
+        0,
+        segments,
+      );
       heights[u * verts + w] = vec.y;
     }
 
@@ -579,10 +645,12 @@ export class GlbV3World {
       const h10 = heights[u1 * verts + w0];
       const h01 = heights[u0 * verts + w1];
       const h11 = heights[u1 * verts + w1];
-      return (1 - tu) * (1 - tw) * h00
-           + tu       * (1 - tw) * h10
-           + (1 - tu) * tw       * h01
-           + tu       * tw       * h11;
+      return (
+        (1 - tu) * (1 - tw) * h00 +
+        tu * (1 - tw) * h10 +
+        (1 - tu) * tw * h01 +
+        tu * tw * h11
+      );
     };
   }
 
@@ -618,10 +686,10 @@ export class GlbV3World {
     if (!mesh) return;
 
     // Blender RGB-node default_values (scene-linear) from the terrain material.
-    const olive = vec3(0.5, 0.54, 0.05);     // RGB.001 — bare/partial grass
+    const olive = vec3(0.5, 0.54, 0.05); // RGB.001 — bare/partial grass
     const midGreen = vec3(0.31, 0.39, 0.16); // RGB
     const darkGreen = vec3(0.07, 0.14, 0.06); // RGB.004 — densest grass
-    const stone = color('#b3a489'); // warm fallback if the tile art fails to load
+    const stone = color("#b3a489"); // warm fallback if the tile art fails to load
     // Blender samples the slabs image off a Geometry Position × 0.2 vector under
     // FLAT projection (world X/Y). Blender Y → runtime -Z, so the runtime UV is
     // (worldX, -worldZ) × 0.2 → ~5 m tile repeat, matching the .blend exactly.
@@ -643,20 +711,26 @@ export class GlbV3World {
         // Mask is authored in Blender XY; Blender Y → runtime -Z, so negate Z
         // (same as the slabs sampling below). Without this the grass mask reads
         // Z-mirrored — grass/clears land on the opposite side from authoring.
-        const guv = vec2(positionWorld.x, positionWorld.z.negate()).mul(invSpan).add(0.5);
+        const guv = vec2(positionWorld.x, positionWorld.z.negate())
+          .mul(invSpan)
+          .add(0.5);
         // Blender's Mix nodes have clamp_factor=True; clamp G to match. G is fed
         // straight into both mix factors (no scaling) exactly as the .blend does.
         const g = clamp(texture(this.grassMask, guv).g, 0, 1);
         if (globalThis.__grassMaskDebug) return vec3(g, g, g);
-        const grassGround = mix(mix(olive, midGreen, g), darkGreen, g)
-          .mul(this.groundGrassColor);
+        const grassGround = mix(mix(olive, midGreen, g), darkGreen, g).mul(
+          this.groundGrassColor,
+        );
         if (!furnMask) return grassGround;
         // terrainFurnitures.R (mesh UVs): 1 at path centre → 0 at edge.
         const pathR = clamp(texture(furnMask, uv()).r, 0, 1);
         // Paint the real tile art over the path, sampled by world XZ (Blender
         // parity). Fall back to the flat warm stone if the PNG didn't load.
         const paving = this.tileTexture
-          ? texture(this.tileTexture, vec2(positionWorld.x, positionWorld.z.negate()).mul(TILE_SCALE)).rgb
+          ? texture(
+              this.tileTexture,
+              vec2(positionWorld.x, positionWorld.z.negate()).mul(TILE_SCALE),
+            ).rgb
           : stone;
         return mix(grassGround, paving, pathR);
       })();
@@ -670,17 +744,18 @@ export class GlbV3World {
   #configureBenchShadows(group) {
     let count = 0;
     group.traverse((obj) => {
-      if (!obj.isMesh || !BENCH_MESH_RE.test(obj.name || '')) return;
+      if (!obj.isMesh || !BENCH_MESH_RE.test(obj.name || "")) return;
       obj.castShadow = true;
       obj.receiveShadow = true;
       count++;
     });
-    if (count > 0) console.log(`[GlbV3World] benches: ${count} mesh shadows enabled`);
+    if (count > 0)
+      console.log(`[GlbV3World] benches: ${count} mesh shadows enabled`);
   }
 
   #configureShadowReceivers(group) {
     group.traverse((obj) => {
-      if (!obj.isMesh || !SHADOW_RECEIVER_RE.test(obj.name || '')) return;
+      if (!obj.isMesh || !SHADOW_RECEIVER_RE.test(obj.name || "")) return;
       obj.receiveShadow = true;
     });
   }
@@ -691,7 +766,7 @@ export class GlbV3World {
     group.updateMatrixWorld(true);
     const meshes = [];
     group.traverse((obj) => {
-      if (obj.isMesh && BENCH_MESH_RE.test(obj.name || '')) meshes.push(obj);
+      if (obj.isMesh && BENCH_MESH_RE.test(obj.name || "")) meshes.push(obj);
     });
 
     let count = 0;
@@ -701,7 +776,9 @@ export class GlbV3World {
 
     if (count > 0) {
       this._runtimeBenchCollidersAdded = true;
-      console.log(`[GlbV3World] benches: ${count} visible-mesh trimesh colliders`);
+      console.log(
+        `[GlbV3World] benches: ${count} visible-mesh trimesh colliders`,
+      );
     }
   }
 
@@ -723,7 +800,8 @@ export class GlbV3World {
     let indices;
     if (geometry.index) {
       indices = new Uint32Array(geometry.index.count);
-      for (let i = 0; i < geometry.index.count; i++) indices[i] = geometry.index.getX(i);
+      for (let i = 0; i < geometry.index.count; i++)
+        indices[i] = geometry.index.getX(i);
     } else {
       indices = new Uint32Array(posAttr.count);
       for (let i = 0; i < posAttr.count; i++) indices[i] = i;
@@ -744,16 +822,18 @@ export class GlbV3World {
       if (obj.isMesh) meshes.push(obj);
     });
 
-    let cyl = 0, box = 0, skipped = 0;
+    let cyl = 0,
+      box = 0,
+      skipped = 0;
     const _pos = new THREE.Vector3();
     const _quat = new THREE.Quaternion();
     const _scl = new THREE.Vector3();
     const _euler = new THREE.Euler();
 
     for (const obj of meshes) {
-      const name = obj.name || '';
+      const name = obj.name || "";
 
-      if (name.startsWith('tube_')) {
+      if (name.startsWith("tube_")) {
         // Upright cylinder — its world-AABB radius is yaw-invariant, so the box
         // measurement already hugs the trunk/post. Keep as-is.
         const wbox = new THREE.Box3().setFromObject(obj);
@@ -763,7 +843,13 @@ export class GlbV3World {
         const height = Math.max(size.y, 0.05);
         // addStaticCylinder lifts the body by height/2 internally; pass
         // center.y - height/2 so the cylinder centres on the bbox centre.
-        physics.addStaticCylinder(center.x, center.y - height / 2, center.z, radius, height);
+        physics.addStaticCylinder(
+          center.x,
+          center.y - height / 2,
+          center.z,
+          radius,
+          height,
+        );
         cyl++;
         continue;
       }
@@ -776,7 +862,7 @@ export class GlbV3World {
       // `*Footprint_*` zone volumes → skip (see SOLID_FOOTPRINT_RE). Only solid
       // buildings keep a footprint collider; everything else is freed so the
       // player can walk right up to the real prop's own collider.
-      if (name.includes('Footprint_') && !SOLID_FOOTPRINT_RE.test(name)) {
+      if (name.includes("Footprint_") && !SOLID_FOOTPRINT_RE.test(name)) {
         skipped++;
         continue;
       }
@@ -794,9 +880,11 @@ export class GlbV3World {
       const localSize = lbb.getSize(new THREE.Vector3());
       obj.matrixWorld.decompose(_pos, _quat, _scl);
       const worldCenter = localCenter.applyMatrix4(obj.matrixWorld);
-      const yaw = _euler.setFromQuaternion(_quat, 'YXZ').y;
+      const yaw = _euler.setFromQuaternion(_quat, "YXZ").y;
       physics.addStaticCuboid(
-        worldCenter.x, worldCenter.y, worldCenter.z,
+        worldCenter.x,
+        worldCenter.y,
+        worldCenter.z,
         Math.max(Math.abs(localSize.x * _scl.x) / 2, 0.02),
         Math.max(Math.abs(localSize.y * _scl.y) / 2, 0.02),
         Math.max(Math.abs(localSize.z * _scl.z) / 2, 0.02),
@@ -806,14 +894,16 @@ export class GlbV3World {
     }
 
     // Proxy meshes are never added to the scene — physics owns them now.
-    console.log(`[GlbV3World] colliders: ${cyl} cylinders, ${box} oriented boxes, ${skipped} footprint zones skipped`);
+    console.log(
+      `[GlbV3World] colliders: ${cyl} cylinders, ${box} oriented boxes, ${skipped} footprint zones skipped`,
+    );
   }
 
   #registerBridgeColliders(physics) {
     const bridgeMeshes = [];
     this.root.traverse((obj) => {
       if (!obj.isMesh) return;
-      if (!this.#isBridgeColliderMesh(obj.name || '')) return;
+      if (!this.#isBridgeColliderMesh(obj.name || "")) return;
       bridgeMeshes.push(obj);
     });
 
@@ -821,12 +911,12 @@ export class GlbV3World {
     for (const mesh of bridgeMeshes) {
       if (this.#addBridgeDeckCollider(physics, mesh)) count++;
     }
-    if (count > 0) console.log(`[GlbV3World] bridge colliders: ${count} deck slabs`);
+    if (count > 0)
+      console.log(`[GlbV3World] bridge colliders: ${count} deck slabs`);
   }
 
   #isBridgeColliderMesh(name) {
-    return name === 'bridge01'
-      || name.startsWith('bridge02_deck_slats');
+    return name === "bridge01" || name.startsWith("bridge02_deck_slats");
   }
 
   #addBridgeDeckCollider(physics, mesh) {
@@ -844,9 +934,12 @@ export class GlbV3World {
     const scl = new THREE.Vector3();
     mesh.matrixWorld.decompose(_pos, quat, scl);
 
-    const thickness = mesh.name === 'bridge01' ? 0.24 : 0.18;
-    const deckTop = this.#meshWorldYPercentile(mesh, mesh.name === 'bridge01' ? 0.75 : 0.9);
-    const yaw = new THREE.Euler().setFromQuaternion(quat, 'YXZ').y;
+    const thickness = mesh.name === "bridge01" ? 0.24 : 0.18;
+    const deckTop = this.#meshWorldYPercentile(
+      mesh,
+      mesh.name === "bridge01" ? 0.75 : 0.9,
+    );
+    const yaw = new THREE.Euler().setFromQuaternion(quat, "YXZ").y;
 
     physics.addStaticCuboid(
       worldCenter.x,
@@ -870,7 +963,10 @@ export class GlbV3World {
       ys.push(v.y);
     }
     ys.sort((a, b) => a - b);
-    const index = Math.min(ys.length - 1, Math.max(0, Math.floor((ys.length - 1) * percentile)));
+    const index = Math.min(
+      ys.length - 1,
+      Math.max(0, Math.floor((ys.length - 1) * percentile)),
+    );
     return ys[index];
   }
 
@@ -879,14 +975,14 @@ export class GlbV3World {
   async #loadReferences(url) {
     const gltf = await this.loader.loadGLTF(url);
     const refScene = gltf.scene;
-    refScene.name = 'references';
+    refScene.name = "references";
     refScene.updateMatrixWorld(true);
     // Keep the empties live under root so Phase F can animate pivots by name.
     // Empties carry no geometry, so nothing renders.
     this.root.add(refScene);
 
     refScene.traverse((obj) => {
-      const name = obj.name || '';
+      const name = obj.name || "";
       if (!name || obj === refScene) return;
       // Refs are empties (no mesh). Skip any stray mesh children.
       if (obj.isMesh) return;
@@ -899,12 +995,12 @@ export class GlbV3World {
       this.refs.byName.set(name, entry);
       this.refs.all.push(entry);
 
-      if (name.startsWith('sectionRef_')) {
-        const key = extras.section || name.slice('sectionRef_'.length);
+      if (name.startsWith("sectionRef_")) {
+        const key = extras.section || name.slice("sectionRef_".length);
         this.refs.sections[key] = entry;
         // Surface the legacy positions the achievement/teleport code reads.
-        if (key === 'skills') this.signs.skillsPosition = position;
-        else if (key === 'contact') this.signs.contactPosition = position;
+        if (key === "skills") this.signs.skillsPosition = position;
+        else if (key === "contact") this.signs.contactPosition = position;
       }
     });
   }
@@ -928,7 +1024,9 @@ export class GlbV3World {
       const node = visual.scene.getObjectByName(name);
       if (!node) return [];
       const meshes = [];
-      node.traverse((o) => { if (o.isMesh) meshes.push(o); });
+      node.traverse((o) => {
+        if (o.isMesh) meshes.push(o);
+      });
       return meshes;
     };
 
@@ -954,21 +1052,27 @@ export class GlbV3World {
       const primitives = protos.map((p) => {
         p.geometry.computeBoundingBox();
         clumpHeight = Math.max(clumpHeight, p.geometry.boundingBox.max.y);
-        const color = p.material?.color ? p.material.color.clone() : new THREE.Color(0xffffff);
+        const color = p.material?.color
+          ? p.material.color.clone()
+          : new THREE.Color(0xffffff);
         return { geometry: p.geometry, color };
       });
       const placed = placements.map((o) => {
         o.matrixWorld.decompose(pos, quat, scl);
         return {
-          x: pos.x, y: pos.y, z: pos.z,
-          yaw: euler.setFromQuaternion(quat, 'YXZ').y,
+          x: pos.x,
+          y: pos.y,
+          z: pos.z,
+          yaw: euler.setFromQuaternion(quat, "YXZ").y,
           scale: scl.x,
         };
       });
       groups.push({ key: tmpl, clumpHeight, primitives, placements: placed });
     }
     const total = groups.reduce((s, g) => s + g.placements.length, 0);
-    console.log(`[GlbV3World] flowers: ${groups.length} groups, ${total} placements (Flowers builds these)`);
+    console.log(
+      `[GlbV3World] flowers: ${groups.length} groups, ${total} placements (Flowers builds these)`,
+    );
     return groups;
   }
 
@@ -1008,7 +1112,9 @@ export class GlbV3World {
       const node = visual.scene.getObjectByName(name);
       if (!node) return [];
       const meshes = [];
-      node.traverse((o) => { if (o.isMesh) meshes.push(o); });
+      node.traverse((o) => {
+        if (o.isMesh) meshes.push(o);
+      });
       return meshes;
     };
 
@@ -1023,8 +1129,9 @@ export class GlbV3World {
       byTemplate.get(tmpl).push(obj);
     });
 
-    const PATH_TEMPLATES = new Set(['brickPaveMesh', 'brickKerbMesh']);
-    const dynamicTemplates = entry.system === 'bricks' ? DYNAMIC_BRICK_TEMPLATES : new Set();
+    const PATH_TEMPLATES = new Set(["brickPaveMesh", "brickKerbMesh"]);
+    const dynamicTemplates =
+      entry.system === "bricks" ? DYNAMIC_BRICK_TEMPLATES : new Set();
     const pathXZ = [];
     let total = 0;
 
@@ -1032,13 +1139,16 @@ export class GlbV3World {
     const quat = new THREE.Quaternion();
     const scl = new THREE.Vector3();
     const _c = new THREE.Vector3();
-    const solidColliders = SOLID_INSTANCE_SYSTEMS.has(entry.system) && !!physics?.ready;
+    const solidColliders =
+      SOLID_INSTANCE_SYSTEMS.has(entry.system) && !!physics?.ready;
     let colliderCount = 0;
 
     for (const [tmpl, placements] of byTemplate) {
       const protos = protoMeshesFor(tmpl);
       if (!protos.length) {
-        console.warn(`[GlbV3World] ${entry.system}: no visual template "${tmpl}" — skipped`);
+        console.warn(
+          `[GlbV3World] ${entry.system}: no visual template "${tmpl}" — skipped`,
+        );
         continue;
       }
       total += placements.length;
@@ -1046,10 +1156,19 @@ export class GlbV3World {
       if (dynamicTemplates.has(tmpl)) {
         // Dynamic templates (brick piles) are single-primitive — use protos[0].
         const proto = protos[0];
-        const transforms = this.#buildScaledBrickPileTransforms(proto, placements);
+        const transforms = this.#buildScaledBrickPileTransforms(
+          proto,
+          placements,
+        );
         for (let i = 0; i < transforms.length; i++) {
-          this.#createDynamicBrickPile(proto, transforms[i], physics, `${entry.system}_${tmpl}_${i}`);
-          if (PATH_TEMPLATES.has(tmpl)) pathXZ.push(transforms[i].pos.x, transforms[i].pos.z);
+          this.#createDynamicBrickPile(
+            proto,
+            transforms[i],
+            physics,
+            `${entry.system}_${tmpl}_${i}`,
+          );
+          if (PATH_TEMPLATES.has(tmpl))
+            pathXZ.push(transforms[i].pos.x, transforms[i].pos.z);
         }
         continue;
       }
@@ -1074,7 +1193,9 @@ export class GlbV3World {
         }
         const idx = geom.index;
         solidIndices = idx
-          ? (idx.array instanceof Uint32Array ? idx.array : new Uint32Array(idx.array))
+          ? idx.array instanceof Uint32Array
+            ? idx.array
+            : new Uint32Array(idx.array)
           : Uint32Array.from({ length: a.count }, (_, n) => n);
       }
 
@@ -1090,8 +1211,14 @@ export class GlbV3World {
           // there is no invisible wall and the player can get right up to it.
           const verts = new Float32Array(localVerts.length);
           for (let j = 0; j < localVerts.length; j += 3) {
-            _c.set(localVerts[j], localVerts[j + 1], localVerts[j + 2]).applyMatrix4(matrices[i]);
-            verts[j] = _c.x; verts[j + 1] = _c.y; verts[j + 2] = _c.z;
+            _c.set(
+              localVerts[j],
+              localVerts[j + 1],
+              localVerts[j + 2],
+            ).applyMatrix4(matrices[i]);
+            verts[j] = _c.x;
+            verts[j + 1] = _c.y;
+            verts[j + 2] = _c.z;
           }
           if (physics.addStaticTrimesh(verts, solidIndices)) colliderCount++;
         }
@@ -1100,18 +1227,28 @@ export class GlbV3World {
       // One InstancedMesh per primitive (each its own geometry + material).
       for (let pi = 0; pi < protos.length; pi++) {
         const proto = protos[pi];
-        const inst = new THREE.InstancedMesh(proto.geometry, proto.material, placements.length);
-        inst.name = protos.length > 1 ? `${entry.system}_${tmpl}_${pi}` : `${entry.system}_${tmpl}`;
+        const inst = new THREE.InstancedMesh(
+          proto.geometry,
+          proto.material,
+          placements.length,
+        );
+        inst.name =
+          protos.length > 1
+            ? `${entry.system}_${tmpl}_${pi}`
+            : `${entry.system}_${tmpl}`;
         inst.castShadow = true;
         inst.receiveShadow = true;
-        for (let i = 0; i < placements.length; i++) inst.setMatrixAt(i, matrices[i]);
+        for (let i = 0; i < placements.length; i++)
+          inst.setMatrixAt(i, matrices[i]);
         inst.instanceMatrix.needsUpdate = true;
         this.root.add(inst);
       }
     }
 
-    console.log(`[GlbV3World] ${entry.system}: ${total} instances across ${byTemplate.size} templates`
-      + (solidColliders ? `, ${colliderCount} colliders` : ''));
+    console.log(
+      `[GlbV3World] ${entry.system}: ${total} instances across ${byTemplate.size} templates` +
+        (solidColliders ? `, ${colliderCount} colliders` : ""),
+    );
     return new Float32Array(pathXZ);
   }
 
@@ -1128,13 +1265,18 @@ export class GlbV3World {
       const scl = new THREE.Vector3();
       placement.matrixWorld.decompose(pos, quat, scl);
 
-      const key = (placement.name || '').replace(/_\d+$/u, '') || 'brickPile';
+      const key = (placement.name || "").replace(/_\d+$/u, "") || "brickPile";
       const halfY = Math.abs(localSize.y * scl.y) / 2;
       const bottomY = pos.y - halfY;
       const item = { pos, quat, scl, key, bottomY };
       raw.push(item);
 
-      const group = groups.get(key) ?? { count: 0, x: 0, z: 0, baseY: Infinity };
+      const group = groups.get(key) ?? {
+        count: 0,
+        x: 0,
+        z: 0,
+        baseY: Infinity,
+      };
       group.count++;
       group.x += pos.x;
       group.z += pos.z;
@@ -1243,7 +1385,7 @@ export class GlbV3World {
       body.resetTorques?.(false);
       body.sleep();
     }
-    if (item.kind === 'titleLetter') {
+    if (item.kind === "titleLetter") {
       item.floating = true;
       item.floatTime = 0;
       item.groundedTime = 0;
@@ -1331,7 +1473,7 @@ export class GlbV3World {
       }
 
       this.dynamicTitleLetters.push({
-        kind: 'titleLetter',
+        kind: "titleLetter",
         mesh,
         body,
         centerOffset,
@@ -1378,7 +1520,7 @@ export class GlbV3World {
     const v = new THREE.Vector3();
     let count = 0;
     group.traverse((o) => {
-      if (!o.isMesh || !TRUNK_MATERIAL_RE.test(o.material?.name || '')) return;
+      if (!o.isMesh || !TRUNK_MATERIAL_RE.test(o.material?.name || "")) return;
       const posAttr = o.geometry?.attributes?.position;
       if (!posAttr) return;
 
@@ -1394,8 +1536,10 @@ export class GlbV3World {
 
       // Pass 2 — XZ spread of the base slice only → trunk radius + centre.
       const sliceTop = ymin + height * TRUNK_BASE_SLICE;
-      let minX = Infinity; let maxX = -Infinity;
-      let minZ = Infinity; let maxZ = -Infinity;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minZ = Infinity;
+      let maxZ = -Infinity;
       for (let i = 0; i < posAttr.count; i++) {
         v.fromBufferAttribute(posAttr, i).applyMatrix4(o.matrixWorld);
         if (v.y > sliceTop) continue;
@@ -1410,12 +1554,14 @@ export class GlbV3World {
       const cz = (minZ + maxZ) / 2;
       const radius = THREE.MathUtils.clamp(
         (Math.max(maxX - minX, maxZ - minZ) / 2) * TRUNK_RADIUS_SHRINK,
-        TRUNK_RADIUS_MIN, TRUNK_RADIUS_MAX,
+        TRUNK_RADIUS_MIN,
+        TRUNK_RADIUS_MAX,
       );
       physics.addStaticCylinder(cx, ymin, cz, radius, height);
       count++;
     });
-    if (count > 0) console.log(`[GlbV3World] ${group.name} trunk colliders: ${count}`);
+    if (count > 0)
+      console.log(`[GlbV3World] ${group.name} trunk colliders: ${count}`);
   }
 
   // ── Fence colliders (runtime — fences.glb ships none) ───────────────────────
@@ -1449,7 +1595,9 @@ export class GlbV3World {
       let ymin = Infinity;
       let ymax = -Infinity;
       for (let i = 0; i < posAttr.count; i++) {
-        const y = v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld).y;
+        const y = v
+          .fromBufferAttribute(posAttr, i)
+          .applyMatrix4(mesh.matrixWorld).y;
         if (y < ymin) ymin = y;
         if (y > ymax) ymax = y;
       }
@@ -1463,10 +1611,16 @@ export class GlbV3World {
         for (const p of posts) {
           const dx = p.x / p.n - v.x;
           const dz = p.z / p.n - v.z;
-          if (dx * dx + dz * dz < FENCE_POST_CLUSTER_R2) { hit = p; break; }
+          if (dx * dx + dz * dz < FENCE_POST_CLUSTER_R2) {
+            hit = p;
+            break;
+          }
         }
-        if (hit) { hit.x += v.x; hit.z += v.z; hit.n++; }
-        else posts.push({ x: v.x, z: v.z, n: 1 });
+        if (hit) {
+          hit.x += v.x;
+          hit.z += v.z;
+          hit.n++;
+        } else posts.push({ x: v.x, z: v.z, n: 1 });
       }
       const centres = posts.map((p) => ({ x: p.x / p.n, z: p.z / p.n }));
 
@@ -1484,16 +1638,21 @@ export class GlbV3World {
           // the segment direction so the wall's length runs post-to-post.
           const yaw = Math.atan2(-dz, dx);
           physics.addStaticRidgeWall(
-            (centres[a].x + centres[b].x) / 2, (centres[a].z + centres[b].z) / 2,
-            ymin, shoulderY, ymax,
-            len / 2 + FENCE_POST_HALF, FENCE_HALF_THICK,
+            (centres[a].x + centres[b].x) / 2,
+            (centres[a].z + centres[b].z) / 2,
+            ymin,
+            shoulderY,
+            ymax,
+            len / 2 + FENCE_POST_HALF,
+            FENCE_HALF_THICK,
             yaw,
           );
           walls++;
         }
       }
     });
-    if (walls > 0) console.log(`[GlbV3World] ${group.name} fence walls: ${walls}`);
+    if (walls > 0)
+      console.log(`[GlbV3World] ${group.name} fence walls: ${walls}`);
   }
 
   // ── Tree foliage from the green canopy (Phase E) ────────────────────────────
@@ -1514,7 +1673,8 @@ export class GlbV3World {
     group.updateMatrixWorld(true);
     const canopyMeshes = [];
     group.traverse((o) => {
-      if (o.isMesh && (o.material?.name || '').includes('canopy')) canopyMeshes.push(o);
+      if (o.isMesh && (o.material?.name || "").includes("canopy"))
+        canopyMeshes.push(o);
     });
 
     const anchors = this.treeCanopyAnchors.get(species) ?? [];
@@ -1531,17 +1691,29 @@ export class GlbV3World {
           v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
           let ok = true;
           for (const a of accepted) {
-            if (a.distanceToSquared(v) < spacing2) { ok = false; break; }
+            if (a.distanceToSquared(v) < spacing2) {
+              ok = false;
+              break;
+            }
           }
           if (ok) accepted.push(v.clone());
         }
         if (accepted.length === 0 && posAttr.count > 0) {
-          accepted.push(v.fromBufferAttribute(posAttr, 0).applyMatrix4(mesh.matrixWorld).clone());
+          accepted.push(
+            v
+              .fromBufferAttribute(posAttr, 0)
+              .applyMatrix4(mesh.matrixWorld)
+              .clone(),
+          );
         }
         for (const p of accepted) {
           // Deterministic ±jitter on blob size (hashed from rounded position) so
           // neighbouring blobs vary without breaking reload stability.
-          const key = (Math.round(p.x * 13.1) ^ Math.round(p.y * 3.3) ^ Math.round(p.z * 7.7)) >>> 0;
+          const key =
+            (Math.round(p.x * 13.1) ^
+              Math.round(p.y * 3.3) ^
+              Math.round(p.z * 7.7)) >>>
+            0;
           const h = (Math.imul(key | 1, 2654435761) >>> 0) / 4294967296;
           const jitter = 1 + (h - 0.5) * 2 * CANOPY_SCALE_JITTER;
           anchors.push({
@@ -1556,7 +1728,9 @@ export class GlbV3World {
     }
 
     this.treeCanopyAnchors.set(species, anchors);
-    console.log(`[GlbV3World] tree foliage ${species}: ${anchors.length} canopy anchors (solid green canopy removed)`);
+    console.log(
+      `[GlbV3World] tree foliage ${species}: ${anchors.length} canopy anchors (solid green canopy removed)`,
+    );
   }
 
   // ── Foliage references (Phase E) ────────────────────────────────────────────
@@ -1587,9 +1761,14 @@ export class GlbV3World {
       // Oak's leaves come from its green canopy geometry instead (#extractTreeFoliage).
       let gltf;
       try {
-        gltf = await this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.references);
+        gltf = await this.loader.loadGLTF(
+          GlbV3World.ASSET_BASE + entry.references,
+        );
       } catch (err) {
-        console.warn(`[GlbV3World] foliage "${entry.system}" load failed:`, err?.message || err);
+        console.warn(
+          `[GlbV3World] foliage "${entry.system}" load failed:`,
+          err?.message || err,
+        );
         continue;
       }
       gltf.scene.updateMatrixWorld(true);
@@ -1606,8 +1785,10 @@ export class GlbV3World {
       });
 
       out.push({ system: entry.system, groups });
-      console.log(`[GlbV3World] foliage ${entry.system}: ${count} refs across`,
-        [...groups.keys()]);
+      console.log(
+        `[GlbV3World] foliage ${entry.system}: ${count} refs across`,
+        [...groups.keys()],
+      );
     }
 
     // Oak (and any tree with a baked solid green canopy): leaves grown "in the
@@ -1616,9 +1797,11 @@ export class GlbV3World {
     // the SAME group shape so App's foliage loop builds an oak SDF cloud with no
     // special-casing. (treeLeaves refs above cover birch/cherry; oak isn't there.)
     if (this.treeCanopyAnchors.size > 0) {
-      out.push({ system: 'treeCanopy', groups: this.treeCanopyAnchors });
+      out.push({ system: "treeCanopy", groups: this.treeCanopyAnchors });
       for (const [species, anchors] of this.treeCanopyAnchors) {
-        console.log(`[GlbV3World] foliage treeCanopy: ${anchors.length} ${species} canopy anchors`);
+        console.log(
+          `[GlbV3World] foliage treeCanopy: ${anchors.length} ${species} canopy anchors`,
+        );
       }
     }
     return out;
@@ -1628,16 +1811,21 @@ export class GlbV3World {
 
   #assertBootInvariants() {
     const required = {
-      'terrain mesh + heightfield': !!this.terrain.mesh && !!this.terrain.heights,
-      'sectionRef_projects': !!this.refs.sections.projects,
-      'sectionRef_skills': !!this.refs.sections.skills,
-      'sectionRef_contact': !!this.refs.sections.contact,
+      "terrain mesh + heightfield":
+        !!this.terrain.mesh && !!this.terrain.heights,
+      sectionRef_projects: !!this.refs.sections.projects,
+      sectionRef_skills: !!this.refs.sections.skills,
+      sectionRef_contact: !!this.refs.sections.contact,
     };
-    const failures = Object.entries(required).filter(([, ok]) => !ok).map(([k]) => k);
+    const failures = Object.entries(required)
+      .filter(([, ok]) => !ok)
+      .map(([k]) => k);
     if (failures.length > 0) {
-      throw new Error(`GlbV3World boot assertions failed:\n  - ${failures.join('\n  - ')}`);
+      throw new Error(
+        `GlbV3World boot assertions failed:\n  - ${failures.join("\n  - ")}`,
+      );
     }
-    console.log('[GlbV3World] load: OK', {
+    console.log("[GlbV3World] load: OK", {
       heightfieldSize: this.terrain.size.toFixed(2),
       segments: this.terrain.segments,
       sections: Object.keys(this.refs.sections),

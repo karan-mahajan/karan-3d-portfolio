@@ -1,10 +1,10 @@
-import * as THREE from 'three/webgpu';
+import * as THREE from "three/webgpu";
 
 // When the player lands on a fence rope, shove them sideways off the thin top
 // instead of letting them balance. Speed × time must clear half-thickness +
 // capsule radius (~0.12 + 0.3) so they actually fall off.
-const FENCE_EJECT_SPEED = 2.5;   // m/s sideways push
-const FENCE_EJECT_TIME = 0.25;   // seconds the push lasts (~0.6 m of travel)
+const FENCE_EJECT_SPEED = 2.5; // m/s sideways push
+const FENCE_EJECT_TIME = 0.25; // seconds the push lasts (~0.6 m of travel)
 
 /**
  * Rapier physics manager.
@@ -35,7 +35,7 @@ export class Physics {
   }
 
   async init() {
-    const RAPIER = await import('@dimforge/rapier3d-compat');
+    const RAPIER = await import("@dimforge/rapier3d-compat");
     // Compat package ships WASM inlined as base64 — init() decodes + boots it.
     await RAPIER.init();
     this.RAPIER = RAPIER;
@@ -108,7 +108,9 @@ export class Physics {
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.heightfield(
-      nrows, ncols, heights,
+      nrows,
+      ncols,
+      heights,
       { x: size, y: 1, z: size },
     );
     world.createCollider(colliderDesc, body);
@@ -118,7 +120,11 @@ export class Physics {
   /** Vertical cylinder collider for trees, posts, bushes. */
   addStaticCylinder(x, y, z, radius, height) {
     const { RAPIER, world } = this;
-    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y + height / 2, z);
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(
+      x,
+      y + height / 2,
+      z,
+    );
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.cylinder(height / 2, radius);
     world.createCollider(colliderDesc, body);
@@ -134,7 +140,8 @@ export class Physics {
    */
   addKinematicCylinder(x, y, z, radius, halfHeight) {
     const { RAPIER, world } = this;
-    const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
+    const bodyDesc =
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.cylinder(halfHeight, radius);
     world.createCollider(colliderDesc, body);
@@ -152,7 +159,12 @@ export class Physics {
     if (yaw) {
       // Quaternion for rotation around Y by `yaw`.
       const half = yaw / 2;
-      bodyDesc.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
+      bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(half),
+        z: 0,
+        w: Math.cos(half),
+      });
     }
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz);
@@ -203,12 +215,26 @@ export class Physics {
    * ridge runs the length; `yaw` rotates it to the segment direction. Y is baked
    * absolute (yaw rotation preserves Y), so `(x, z)` is the wall's ground centre.
    */
-  addStaticRidgeWall(x, z, baseY, shoulderY, topY, halfLen, halfThick, yaw = 0) {
+  addStaticRidgeWall(
+    x,
+    z,
+    baseY,
+    shoulderY,
+    topY,
+    halfLen,
+    halfThick,
+    yaw = 0,
+  ) {
     const { RAPIER, world } = this;
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, 0, z);
     if (yaw) {
       const half = yaw / 2;
-      bodyDesc.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
+      bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(half),
+        z: 0,
+        w: Math.cos(half),
+      });
     }
     const body = world.createRigidBody(bodyDesc);
     const pts = [];
@@ -223,7 +249,10 @@ export class Physics {
     // Perpendicular (thin) axis of the wall = local +Z rotated by yaw → the
     // direction to slide the player off if they land on the rope.
     this.fenceColliders.set(collider.handle, {
-      nx: Math.sin(yaw), nz: Math.cos(yaw), cx: x, cz: z,
+      nx: Math.sin(yaw),
+      nz: Math.cos(yaw),
+      cx: x,
+      cz: z,
     });
     return body;
   }
@@ -238,7 +267,13 @@ export class Physics {
    * to rest naturally over ~3-4 seconds, matching the old custom rolling
    * feel without needing per-frame friction math.
    */
-  addDynamicBall(x, y, z, radius, { density = 0.6, restitution = 0.25, friction = 0.75 } = {}) {
+  addDynamicBall(
+    x,
+    y,
+    z,
+    radius,
+    { density = 0.6, restitution = 0.25, friction = 0.75 } = {},
+  ) {
     const { RAPIER, world } = this;
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, y, z)
@@ -259,8 +294,12 @@ export class Physics {
    * collider centre; half-extents must match the visible mesh.
    */
   addDynamicCuboid(
-    x, y, z,
-    hx, hy, hz,
+    x,
+    y,
+    z,
+    hx,
+    hy,
+    hz,
     rotation = { x: 0, y: 0, z: 0, w: 1 },
     {
       mass = 0.1,
@@ -289,9 +328,12 @@ export class Physics {
     let colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
       .setRestitution(restitution)
       .setFriction(friction);
-    colliderDesc = density === null ? colliderDesc.setMass(mass) : colliderDesc.setDensity(density);
+    colliderDesc =
+      density === null
+        ? colliderDesc.setMass(mass)
+        : colliderDesc.setDensity(density);
 
-    if (typeof onCollision === 'function' || contactThreshold !== null) {
+    if (typeof onCollision === "function" || contactThreshold !== null) {
       colliderDesc = colliderDesc
         .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
         .setContactForceEventThreshold(contactThreshold ?? 15);
@@ -311,18 +353,27 @@ export class Physics {
       const body2 = collider2?.parent();
       const callback1 = body1?.userData?.onCollision;
       const callback2 = body2?.userData?.onCollision;
-      if (typeof callback1 !== 'function' && typeof callback2 !== 'function') return;
+      if (typeof callback1 !== "function" && typeof callback2 !== "function")
+        return;
 
-      const mass = Math.max((body1?.mass?.() ?? 0) + (body2?.mass?.() ?? 0), 0.001);
+      const mass = Math.max(
+        (body1?.mass?.() ?? 0) + (body2?.mass?.() ?? 0),
+        0.001,
+      );
       const force = event.maxForceMagnitude() / mass;
       const p1 = body1?.translation?.();
       const p2 = body2?.translation?.();
-      const position = p1 && p2
-        ? { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 }
-        : (p1 ?? p2 ?? { x: 0, y: 0, z: 0 });
+      const position =
+        p1 && p2
+          ? {
+              x: (p1.x + p2.x) * 0.5,
+              y: (p1.y + p2.y) * 0.5,
+              z: (p1.z + p2.z) * 0.5,
+            }
+          : (p1 ?? p2 ?? { x: 0, y: 0, z: 0 });
 
-      if (typeof callback1 === 'function') callback1(force, position);
-      if (typeof callback2 === 'function') callback2(force, position);
+      if (typeof callback1 === "function") callback1(force, position);
+      if (typeof callback2 === "function") callback2(force, position);
     });
   }
 
@@ -342,7 +393,14 @@ export class Physics {
    * (caller should lift the origin so the capsule's bottom hemisphere
    * sits just above the ground).
    */
-  clearanceFor(origin, dir, distance, radius, halfHeight, excludeCollider = null) {
+  clearanceFor(
+    origin,
+    dir,
+    distance,
+    radius,
+    halfHeight,
+    excludeCollider = null,
+  ) {
     if (!this.ready) return true;
     const { RAPIER, world } = this;
     const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
@@ -356,10 +414,14 @@ export class Physics {
       z: (dir.z / len) * distance,
     };
     const hit = world.castShape(
-      shapePos, shapeRot, shapeVel, shape,
+      shapePos,
+      shapeRot,
+      shapeVel,
+      shape,
       1.0,
       true,
-      undefined, undefined,
+      undefined,
+      undefined,
       excludeCollider || undefined,
     );
     return hit === null;
@@ -377,8 +439,12 @@ export class Physics {
     // Capsule half-height excludes the two hemispherical caps.
     const halfHeight = Math.max(0.001, (height - radius * 2) / 2);
 
-    const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-      .setTranslation(spawnPos.x, spawnPos.y + height / 2, spawnPos.z);
+    const bodyDesc =
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
+        spawnPos.x,
+        spawnPos.y + height / 2,
+        spawnPos.z,
+      );
     const body = world.createRigidBody(bodyDesc);
 
     const colliderDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius);
@@ -492,7 +558,8 @@ class PlayerBody {
       this._grounded = false;
       // Slide along the wall's thin axis, away from its centre line.
       const t = this.body.translation();
-      const side = (t.x - info.cx) * info.nx + (t.z - info.cz) * info.nz >= 0 ? 1 : -1;
+      const side =
+        (t.x - info.cx) * info.nx + (t.z - info.cz) * info.nz >= 0 ? 1 : -1;
       this._fenceSlideX = info.nx * side * FENCE_EJECT_SPEED;
       this._fenceSlideZ = info.nz * side * FENCE_EJECT_SPEED;
       this._fenceSlideT = FENCE_EJECT_TIME;
