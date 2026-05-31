@@ -1352,16 +1352,31 @@ export class GlbV3World {
       bridgeMeshes.push(obj);
     });
 
+    // Trimesh per deck mesh so the collider traces the REAL plank surface:
+    // flat for bridge01, following bridge02's 2.6m arch across its 42 slats.
+    // The old single oriented box put its TOP at the mesh Y-percentile (0.9 for
+    // bridge02) — i.e. a flat slab floated up near the arch CROWN, spanning the
+    // whole footprint. That stood the player's feet in the air above the planks
+    // and turned both ends into a crown-height lip you had to jump onto. A
+    // trimesh matches the visual deck exactly, so the ends meet the banks inside
+    // the controller's 0.4m autostep and you walk straight on. (Only the deck
+    // surface collides — supports/rails/covers stay visual, as before.)
     let count = 0;
     for (const mesh of bridgeMeshes) {
-      if (this.#addBridgeDeckCollider(physics, mesh)) count++;
+      if (this.#addMeshTrimeshCollider(mesh, physics)) count++;
     }
     if (count > 0)
-      console.log(`[GlbV3World] bridge colliders: ${count} deck slabs`);
+      console.log(`[GlbV3World] bridge colliders: ${count} deck trimeshes`);
   }
 
   #isBridgeColliderMesh(name) {
-    return name === "bridge01" || name.startsWith("bridge02_deck_slats");
+    // Every bridge sub-mesh is solid structure — deck, slats, supports, end-cap
+    // rails/posts, and the middle/entrance pillar covers. Collide them all (not
+    // just the deck slats) so the player can't walk into the side beams/railings
+    // or stand half-inside them, and so the rails act as guards along the edges.
+    // Cherry-tree props named *_bridge01_* start with "cherry_", so the prefix
+    // test below never catches them.
+    return name.startsWith("bridge01") || name.startsWith("bridge02");
   }
 
   #addBridgeDeckCollider(physics, mesh) {

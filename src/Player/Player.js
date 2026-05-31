@@ -139,7 +139,11 @@ export class Player {
     const distFromCenter = Math.hypot(dx, dz);
     const groundY = this.terrain ? this.terrain.heightAt(dx, dz) : 0;
     const waterDepth = Player.WATER_SURFACE_Y - groundY;
-    if (waterDepth > 0) {
+    // Only wade-slow when actually down in the water — feet at/below the
+    // surface. On a bridge deck over the river the feet are up on the planks
+    // (the deck collider, not the terrain, is the floor), so skip the slowdown.
+    const submergedFeet = this.group.position.y <= Player.WATER_SURFACE_Y + 0.1;
+    if (waterDepth > 0 && submergedFeet) {
       const slow = waterDepth * Player.WATER_SLOWDOWN_PER_M;
       this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - slow);
     } else {

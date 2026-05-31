@@ -612,7 +612,13 @@ export class Water {
 
     if (playerPos) {
       this.uPlayerPos.value.set(playerPos.x, playerPos.z);
-      const inWater = this.playerOverWater(playerPos.x, playerPos.z) ? 1.0 : 0.0;
+      // "In water" only when the player is actually DOWN in it — feet at/below
+      // the water surface. The XZ test alone fired on the bridges, whose decks
+      // sit over the pond/river (terrain below the water line) while the player
+      // is up on the planks: phantom splashes, ripples and wade slowdown.
+      const submerged = playerPos.y <= this.waterLevel + 0.1;
+      const inWater =
+        submerged && this.playerOverWater(playerPos.x, playerPos.z) ? 1.0 : 0.0;
       this.uPlayerInWater.value = inWater;
       const rawSpeed = sample && sample.moving ? sample.speed : 0;
       this.uPlayerSpeed.value = Math.min(1, rawSpeed / 8.0);

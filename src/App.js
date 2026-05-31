@@ -1328,7 +1328,10 @@ export class App extends EventTarget {
         ? this.world.terrain.heightAt(ppos.x, ppos.z)
         : 0;
       const waterDepth = Math.max(0, Player.WATER_SURFACE_Y - groundY);
-      const inWater = waterDepth > 0;
+      // Gate on the player's feet height (ppos.y is feet) so standing on a
+      // bridge deck over the pond/river doesn't register as in-water.
+      const inWater =
+        waterDepth > 0 && ppos.y <= Player.WATER_SURFACE_Y + 0.1;
       this.achievements.tick(frameDelta, {
         playerPos: ppos,
         moving: !!sample?.moving,
