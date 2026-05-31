@@ -9,6 +9,9 @@ import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Foliage } from './World/Foliage.js';
 import { Flowers } from './World/Flowers.js';
+import { Lights } from './World/Lights.js';
+import { Lava } from './World/Lava.js';
+import { AnimatedProps } from './World/AnimatedProps.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
 import { Player } from './Player/Player.js';
@@ -393,6 +396,17 @@ export class App extends EventTarget {
     if (this.world.glb?.flowerGroups?.length) {
       this.flowers = new Flowers(this.scene, this.wind, this.world.glb.flowerGroups);
       this.world.flowers = this.flowers;
+    }
+
+    // Phase F — point lights, lava glow, and animated props from the Blender
+    // reference anchors (refPoleLight_*/refBonfire_* lights, lavaRef_pool glow,
+    // animalPivot_*/airDancerPivot_* motion). The geometry already loaded with
+    // the monolithic GLBs; these classes light / animate it in place.
+    const v3refs = this.world.glb?.refs;
+    if (v3refs) {
+      this.worldLights = new Lights(this.scene, v3refs);
+      this.lava = new Lava(this.scene, this.wind, v3refs);
+      this.animatedProps = new AnimatedProps(this.scene, this.world.terrain, v3refs, this.physics);
     }
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
@@ -940,6 +954,13 @@ export class App extends EventTarget {
     // canopies when jumped into) — driven by the player's 3D position.
     if (this.world.foliage) this.world.foliage.setPlayerPos(this.player.position);
     if (this.world.flowers) this.world.flowers.setPlayerPos(this.player.position);
+    // Phase F — day/night lamp + bonfire intensity, lava glow, animated props.
+    if (this.worldLights) this.worldLights.update(frameDelta, this.timeOfDay.mode, elapsed);
+    if (this.lava) this.lava.update(elapsed);
+    if (this.animatedProps) {
+      this.animatedProps.setPlayerPos(this.player.position);
+      this.animatedProps.update(elapsed, frameDelta);
+    }
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, frameDelta);

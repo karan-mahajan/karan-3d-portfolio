@@ -72,8 +72,8 @@ This is a standing rule, in addition to the per-prompt rules below.
   wired in App.boot (birch green / cherry pink / bushes yellow-green). Trees grow
   canopies; oak stays bare by design. `npm run build` green; runtime visual verify
   pending (user verifies manually).
-- *(pending commit — awaiting approval)* — **Phase E instancing remainder (rocks
-  + flowers)**: `load()` now loads `rocks` (204: boulderCluster ×199 /
+- `2c143f8` — **Phase E instancing remainder (rocks + flowers)** ✅ shipped (rocks
+  EXACT trimesh colliders, flowers wind+walk-through bend soft-physics + shadows): `load()` now loads `rocks` (204: boulderCluster ×199 /
   volcanicShards ×5) + `flowers` (36 across 8 zone templates, each 3 primitives →
   24 InstancedMeshes) after the bricks block via `#loadInstancedSystem`, extended
   to handle MULTI-primitive templates (flowers load as named Groups). Rocks SOLID
@@ -86,6 +86,15 @@ This is a standing rule, in addition to the per-prompt rules below.
   shader) — blocked this session by a harness read-corruption on the reference
   shaders; do in a fresh session (see the learnings bullet). Awaiting QA + the
   flower shader before this commits.
+- *(this commit)* — **Phase F lights + FX + animated props** ✅: new
+  `src/World/Lights.js` (12 `refPoleLight_*` warm PointLights + 4 `refBonfire_*`
+  orange flicker lights, day/night-driven off `timeOfDay.mode`),
+  `src/World/Lava.js` (animated emissive `lavaSurface_pool`/`_core` TSL node
+  materials + GPU ember billboards), `src/World/AnimatedProps.js` (4 animals
+  wander+bob with FOLLOWING kinematic-cylinder colliders + light player-
+  avoidance; 2 air dancers = 5-segment chain sway + static base collider).
+  `Physics.addKinematicCylinder` added for moving obstacles. Wired in App.boot
+  (after flowers) + App.tick. `npm run build` green.
 
 **STATE RECONCILED against git log (HEAD `c6eae11`)** — the per-commit lines above
 drifted across parallel sessions; this is the authoritative current status:
@@ -101,12 +110,11 @@ drifted across parallel sessions; this is the authoritative current status:
     colliders) + `flowers` (36, walk-through) now load via `#loadInstancedSystem`.
   - **Phase C remainder** — `projectsHut` + `contactBoard` interactions (Skills
     sphere already done; projects/contact markers load but aren't interactive).
-  - **Phase F remainder** — point lights from `refPoleLight_*`/`refBonfire_*`,
-    animated `animalPivot_*`/`airDancerPivot_*`, `lavaRef_pool` glow.
+  - **Phase F remainder** — ✅ DONE (this commit): point lights, lava glow +
+    embers, animal + air-dancer motion, all with colliders. See learnings.
   - **Phase G** — calibration + cleanup.
-- **Recommended next → Phase F lights/FX/animated props** (refPoleLight_*/
-  refBonfire_* point lights, animalPivot_*/airDancerPivot_* motion, lavaRef_pool
-  glow), then Phase C projects/contact interactions, then Phase G cleanup.
+- **Recommended next → Phase C** (projects/contact interactions; Skills sphere
+  already done), then Phase G calibration + cleanup.
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
@@ -597,6 +605,50 @@ the learning wins — but re-verify from the actual file before relying on it.
   `flowers.setPlayerPos(player.position)` next to the foliage hook. Flower meshes
   are named `flowers:<tmpl>:<primIndex>`; the probe reads `geometry.instanceCount`
   (plain Mesh, not InstancedMesh). `npm run build` green; probe 17/17.
+
+### Phase F lights + FX + animated props (this session — build-green; user-QA'd live)
+- **The Phase F GEOMETRY is plain monolithic GLBs; only the empties are anchors.**
+  Verified (parsed the GLBs): lava = `lava/lava.glb` (meshes `lavaSurface_pool`
+  mat `lava_surface_glow` + `lavaSurface_core` mat `lava_core_glow`, both children
+  of empty `root_lavaPool`); animals + air dancers BOTH live in `miscFx/miscFx.glb`
+  (no `decorations`/`wildlife`/`animals` system). `references.glb` empties confirmed:
+  12 `refPoleLight_*` (Y 2.86), 4 `refBonfire_*` (Y 0.58), `animalPivot_{cat,dog,
+  deer,rabbit}`, `airDancerPivot_{00,01}`, `lavaRef_pool` — all in
+  `world.glb.refs.byName`/`.all` with `.position` (world Vector3) + `.extras`.
+- **Animals are NOT parented to their pivot.** Each animal is 10–15 LOOSE part
+  meshes named `animal_<species>_*` directly under scene ROOT, at absolute world
+  positions matching the pivot XZ. Runtime: collect by name prefix, `group.attach()`
+  them into one rig Group at the body's ground position (attach preserves world
+  transform → parts become local offsets), then CPU wander+bob the group.
+- **Air dancers are a parent→child CHAIN, not flat siblings.** `airDancerSeg_NN_0`
+  (base, world pos) → `_1`→`_2`→`_3`→`_4`, each local +0.64 m Y; arms parent to `_4`.
+  Sway = set `rotation.x/z` on segs `_1.._4` (cumulative whip because chained); base
+  `_0` stays planted. Do NOT shader-bend — they're discrete meshes.
+- **Lights: read `timeOfDay.mode` each frame, lerp a 0→1 factor — no TimeOfDay edit.**
+  `Lights.update(delta, mode, elapsed)` ramps intensity (lamps off by day, full at
+  night; bonfires keep a day floor) + a cheap multi-sine flicker. `castShadow=false`
+  on all (only the sun casts). Snapped to target on first update so night boots lit.
+- **Lava + embers = TSL with a self-advanced `uTime` uniform** (the Grass/Water
+  pattern; don't rely on a TSL clock node). Surface materials swapped to
+  `MeshStandardNodeMaterial` (emissive blooms) with a scrolling-heat `emissiveNode`;
+  embers are looping instanced billboards (`fract(uTime/life+seed)`) drifting in
+  `Wind.offsetNode`. GOTCHA: a per-instance vertex→fragment value MUST be a
+  `varying(float(0),'name')` + `.assign()` — a plain `let` node leaked across the
+  two graphs throws `MathNode.generate ... null` at first frame (cost a QA cycle).
+- **Colliders for the props (user-required — they were walk-through):** added
+  `Physics.addKinematicCylinder(x,y,z,radius,halfHeight)` (kinematicPositionBased,
+  same body type as the player so the character controller resolves against it).
+  Animals get one sized from the assembled bbox (`Box3.setFromObject(group)`),
+  repositioned every frame via `body.setNextKinematicTranslation` to follow the
+  wander; air dancers get a STATIC base pole (`addStaticCylinder`). Animals also do
+  light player-avoidance (target away when player <2 m) so they don't bulldoze.
+  GOTCHA: `#buildAnimal` already declared `let body` (the body MESH) — the collider
+  rigid body must use a different name (`colBody`) or the build fails "already
+  declared". NOTE: `Physics` has NO remove API, so `dispose()` can't free these.
+- **App `this.lights` is the lighting RIG (`{ambient,hemi,sun,rim}`)** — the new
+  PointLight manager is `this.worldLights` (clobbering `this.lights` crashed
+  `this.lights.sun.position` in tick every frame). `this.lava` / `this.animatedProps`
+  are free names.
 
 ---
 

@@ -126,6 +126,22 @@ export class Physics {
   }
 
   /**
+   * Kinematic vertical cylinder — a MOVING obstacle the character controller
+   * collides with (e.g. a wandering animal). Unlike the fixed helpers the caller
+   * drives it each frame with `body.setNextKinematicTranslation({x,y,z})`.
+   * `(x, y, z)` is the cylinder CENTRE (no internal lift — caller positions it
+   * at the visible bbox centre and follows the mesh). Returns the RigidBody.
+   */
+  addKinematicCylinder(x, y, z, radius, halfHeight) {
+    const { RAPIER, world } = this;
+    const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
+    const body = world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cylinder(halfHeight, radius);
+    world.createCollider(colliderDesc, body);
+    return body;
+  }
+
+  /**
    * Box collider — used for rocks, billboard screens, signs.
    * `(x, y, z)` is the CENTRE of the box. `yaw` (radians) rotates around Y.
    * Caller passes the centre directly (no internal lift).
