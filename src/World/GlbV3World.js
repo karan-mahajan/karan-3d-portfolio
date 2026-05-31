@@ -28,6 +28,13 @@ const TRUNK_RADIUS_MAX = 0.7;
 const TRUNK_RADIUS_SHRINK = 0.85;          // visible bark sits a touch inside bbox
 const DYNAMIC_BRICK_SCALE = 0.5;
 const DYNAMIC_BRICK_TEMPLATES = new Set(['brickKerbMesh', 'brickPileMesh']);
+// `*Footprint_*` collider proxies are full-height ZONE volumes (section/structure
+// /misc areas), NOT visible props — baking them as boxes walls off the statue,
+// sections, pool and small props so the player can't approach. They're skipped at
+// load; the real meshes inside carry their own tight `cuboid_`/`tube_` proxies.
+// The exception: solid BUILDINGS whose footprint IS the visible wall — kept (as a
+// tight oriented box) so the player can't walk through them.
+const SOLID_FOOTPRINT_RE = /Footprint_(cabin|outhouse)/i;
 const TITLE_LETTER_COLOR = '#24345a';
 const TITLE_LETTER_EMISSIVE = '#080d18';
 const TITLE_LETTER_FLOAT_CLEARANCE = 1.15;
@@ -620,37 +627,64 @@ export class GlbV3World {
       if (obj.isMesh) meshes.push(obj);
     });
 
-    let cyl = 0, box = 0, pad = 0;
+    let cyl = 0, box = 0, skipped = 0;
+    const _pos = new THREE.Vector3();
+    const _quat = new THREE.Quaternion();
+    const _scl = new THREE.Vector3();
+    const _euler = new THREE.Euler();
+
     for (const obj of meshes) {
       const name = obj.name || '';
-      const wbox = new THREE.Box3().setFromObject(obj);
-      const size = wbox.getSize(new THREE.Vector3());
-      const center = wbox.getCenter(new THREE.Vector3());
 
       if (name.startsWith('tube_')) {
+        // Upright cylinder — its world-AABB radius is yaw-invariant, so the box
+        // measurement already hugs the trunk/post. Keep as-is.
+        const wbox = new THREE.Box3().setFromObject(obj);
+        const size = wbox.getSize(new THREE.Vector3());
+        const center = wbox.getCenter(new THREE.Vector3());
         const radius = Math.max(size.x, size.z) / 2;
         const height = Math.max(size.y, 0.05);
         // addStaticCylinder lifts the body by height/2 internally; pass
         // center.y - height/2 so the cylinder centres on the bbox centre.
         physics.addStaticCylinder(center.x, center.y - height / 2, center.z, radius, height);
         cyl++;
-      } else {
-        // cuboid_* (props/statue) and *Footprint_* (flat walkable pads) — both
-        // map to an axis-aligned box from the world bbox. Footprints are thin
-        // slabs the player can stand on; props are full-height blockers.
-        physics.addStaticCuboid(
-          center.x, center.y, center.z,
-          Math.max(size.x / 2, 0.02),
-          Math.max(size.y / 2, 0.02),
-          Math.max(size.z / 2, 0.02),
-        );
-        if (name.endsWith('Footprint_') || name.includes('Footprint_')) pad++;
-        else box++;
+        continue;
       }
+
+      // `*Footprint_*` zone volumes → skip (see SOLID_FOOTPRINT_RE). Only solid
+      // buildings keep a footprint collider; everything else is freed so the
+      // player can walk right up to the real prop's own collider.
+      if (name.includes('Footprint_') && !SOLID_FOOTPRINT_RE.test(name)) {
+        skipped++;
+        continue;
+      }
+
+      // cuboid_* props + solid-building footprints → ORIENTED box hugging the
+      // proxy. `setFromObject`'s world AABB inflates every yaw-rotated proxy (a
+      // turned bench gains ~85% depth; the cabin ~33% width) which reads as an
+      // invisible wall well past the mesh. Decompose the proxy's world matrix
+      // instead: half-extents from the LOCAL bbox × scale, centre from the local
+      // bbox centre, and pass the yaw — same oriented-box recipe the bridge decks
+      // use (#addBridgeDeckCollider).
+      obj.geometry.computeBoundingBox();
+      const lbb = obj.geometry.boundingBox;
+      const localCenter = lbb.getCenter(new THREE.Vector3());
+      const localSize = lbb.getSize(new THREE.Vector3());
+      obj.matrixWorld.decompose(_pos, _quat, _scl);
+      const worldCenter = localCenter.applyMatrix4(obj.matrixWorld);
+      const yaw = _euler.setFromQuaternion(_quat, 'YXZ').y;
+      physics.addStaticCuboid(
+        worldCenter.x, worldCenter.y, worldCenter.z,
+        Math.max(Math.abs(localSize.x * _scl.x) / 2, 0.02),
+        Math.max(Math.abs(localSize.y * _scl.y) / 2, 0.02),
+        Math.max(Math.abs(localSize.z * _scl.z) / 2, 0.02),
+        yaw,
+      );
+      box++;
     }
 
     // Proxy meshes are never added to the scene — physics owns them now.
-    console.log(`[GlbV3World] colliders: ${cyl} cylinders, ${box} boxes, ${pad} pads`);
+    console.log(`[GlbV3World] colliders: ${cyl} cylinders, ${box} oriented boxes, ${skipped} footprint zones skipped`);
   }
 
   #registerBridgeColliders(physics) {

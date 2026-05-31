@@ -731,8 +731,84 @@ export class App extends EventTarget {
         this.mapOverlay.close();
       } else if (e.code === 'Backquote' && this.navmask) {
         this.#toggleNavmaskDebug();
+      } else if (e.code === 'KeyK') {
+        this.#toggleColliderDebug();
       }
     });
+    // Console helper: dump every Rapier collider (translation + half-extents),
+    // sorted by footprint width and by distance to the player, to spot oversized
+    // proxies. Available any time as window.__dumpColliders().
+    window.__dumpColliders = () => this.#dumpColliders();
+  }
+
+  // ── Collider debug overlay (press K) ──────────────────────────────────────
+
+  #toggleColliderDebug() {
+    if (this._colliderDebugLines) {
+      this.scene.remove(this._colliderDebugLines);
+      this._colliderDebugLines.geometry.dispose();
+      this._colliderDebugLines.material.dispose();
+      this._colliderDebugLines = null;
+      return;
+    }
+    const geometry = new THREE.BufferGeometry();
+    const lines = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        toneMapped: false,
+      }),
+    );
+    lines.name = 'collider-debug';
+    lines.renderOrder = 999;
+    lines.frustumCulled = false;
+    this.scene.add(lines);
+    this._colliderDebugLines = lines;
+    this.#updateColliderDebug();
+    this.#dumpColliders();
+  }
+
+  /** Rebuild the wireframe from Rapier's debug buffers (called per-frame while on). */
+  #updateColliderDebug() {
+    const lines = this._colliderDebugLines;
+    if (!lines || !this.physics?.world) return;
+    const { vertices, colors } = this.physics.world.debugRender();
+    lines.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    lines.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+  }
+
+  #dumpColliders() {
+    const world = this.physics?.world;
+    if (!world) return;
+    const ppos = this.player?.position ?? { x: 0, y: 0, z: 0 };
+    const rows = [];
+    world.forEachCollider((c) => {
+      const t = c.translation();
+      const he = c.halfExtents?.();      // cuboids only
+      const radius = c.radius?.();        // cylinders/balls
+      const footprint = he ? Math.max(he.x, he.z) : (radius ?? null);
+      rows.push({
+        shape: he ? 'cuboid' : (radius != null ? 'cylinder' : 'other'),
+        x: +t.x.toFixed(2), y: +t.y.toFixed(2), z: +t.z.toFixed(2),
+        hx: he ? +he.x.toFixed(2) : null,
+        hy: he ? +he.y.toFixed(2) : (c.halfHeight?.() != null ? +c.halfHeight().toFixed(2) : null),
+        hz: he ? +he.z.toFixed(2) : null,
+        radius: radius != null ? +radius.toFixed(2) : null,
+        footprint: footprint != null ? +footprint.toFixed(2) : null,
+        dist: +Math.hypot(t.x - ppos.x, t.z - ppos.z).toFixed(2),
+      });
+    });
+    console.log(`[colliders] ${rows.length} total — player at`,
+      `(${ppos.x.toFixed(1)}, ${ppos.z.toFixed(1)})`);
+    console.groupCollapsed('[colliders] by footprint width (widest first)');
+    console.table([...rows].sort((a, b) => (b.footprint ?? -1) - (a.footprint ?? -1)));
+    console.groupEnd();
+    console.groupCollapsed('[colliders] by distance to player (nearest first)');
+    console.table([...rows].sort((a, b) => a.dist - b.dist));
+    console.groupEnd();
   }
 
   #toggleNavmaskDebug() {
@@ -884,6 +960,7 @@ export class App extends EventTarget {
     if (this.mapOverlay) this.mapOverlay.update();
     if (this.compass) this.compass.update();
     this.world.update(elapsed, this.camera, frameDelta, this.player.position);
+    if (this._colliderDebugLines) this.#updateColliderDebug();
     this.wind.update(frameDelta);
     // Grass's wind sway is driven by the shared Wind clock; the per-frame work
     // here is feeding player position/speed so blades bend while walking and
