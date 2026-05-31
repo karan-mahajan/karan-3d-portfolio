@@ -121,6 +121,15 @@ export class Player {
   }
 
   update(delta) {
+    // While frozen (e.g. the lava sink sequence) skip input + normal motion so
+    // an external system can drive the group transform; still advance the
+    // character animation and keep the camera following.
+    if (this._frozen) {
+      this.character?.update?.(delta);
+      this.playerCamera?.follow?.(this.group.position);
+      return;
+    }
+
     // Wading slowdown — must be set before sample() so the velocity it returns
     // is already scaled. Depth is the terrain dipping below the water surface
     // (ponds, river, ocean falloff), so it engages wherever the water visibly
@@ -372,6 +381,31 @@ export class Player {
       const clip = this.character.actions[this._state];
       if (clip) clip.timeScale = sample.speed / naturalSpeed;
     }
+  }
+
+  /** Suspend input + normal motion so an external system can drive the group. */
+  freeze() {
+    this._frozen = true;
+    if (this.controller) this.controller.paused = true;
+  }
+
+  /** Resume normal player control after a freeze(). */
+  unfreeze() {
+    this._frozen = false;
+    if (this.controller) this.controller.paused = false;
+  }
+
+  /** Teleport back to spawn and reset facing/tilt (lava death, etc.). */
+  respawn() {
+    const y = (this.terrain ? this.terrain.heightAt(0, 0) : 0) + 0.1;
+    if (this.body?.teleport) this.body.teleport(0, y, 0);
+    this.group.position.set(0, y, 0);
+    this.group.rotation.set(0, 0, 0);
+    this._currentYaw = 0;
+    this._targetYaw = 0;
+    this._tiltX = 0;
+    this._tiltZ = 0;
+    this._verticalVelocity = 0;
   }
 
   /** Trigger context-specific gestures (called by Portfolio interactions). */

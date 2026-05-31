@@ -46,6 +46,8 @@ import { Flowers } from "./World/Flowers.js";
 import { Foliage } from "./World/Foliage.js";
 import { Grass } from "./World/Grass.js";
 import { Lava } from "./World/Lava.js";
+import { LavaHazard } from "./Systems/LavaHazard.js";
+import { Wasted } from "./UI/Wasted.js";
 import { Lights } from "./World/Lights.js";
 import { DUSK } from "./World/Palette.js";
 import { Sun } from "./World/Sun.js";
@@ -553,7 +555,18 @@ export class App extends EventTarget {
         v3refs,
         this.wind,
       ).load();
-      this.lava = new Lava(this.scene, this.wind, v3refs);
+      this.lava = new Lava(this.scene, this.wind, v3refs, this.physics);
+      // Lava death sequence — step in, sink, "WASTED", respawn at base. The
+      // hazard reads player.character lazily at sink time, so wiring it here
+      // (player already exists; avatar may still be loading) is fine.
+      if (this.player) {
+        this.wasted = new Wasted();
+        this.lavaHazard = new LavaHazard({
+          player: this.player,
+          lava: this.lava,
+          wasted: this.wasted,
+        });
+      }
       this.animatedProps = new AnimatedProps(
         this.scene,
         this.world.terrain,
@@ -1180,7 +1193,8 @@ export class App extends EventTarget {
         this.player.position,
         this.timeOfDay.mode,
       );
-    if (this.lava) this.lava.update(elapsed);
+    if (this.lava) this.lava.update(elapsed, this.timeOfDay?.nightFactor ?? 0);
+    if (this.lavaHazard) this.lavaHazard.update(frameDelta);
     if (this.animatedProps) {
       this.animatedProps.setPlayerPos(this.player.position);
       this.animatedProps.update(elapsed, frameDelta);
