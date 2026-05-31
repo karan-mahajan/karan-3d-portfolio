@@ -29,6 +29,17 @@ const TRUNK_RADIUS_SHRINK = 0.85;          // visible bark sits a touch inside b
 const DYNAMIC_BRICK_SCALE = 0.5;
 const DYNAMIC_BRICK_TEMPLATES = new Set(['brickKerbMesh', 'brickPileMesh']);
 
+// Instanced systems whose templates are SOLID props the player must not walk
+// through → one static box per instance, sized to the visible world AABB
+// (CLAUDE.md rule 5). colliders.glb ships NO rock proxies (verified: 67 tube_ +
+// 6 cuboid_ + 10 Footprint_, zero rock/basalt), so rocks collide at runtime.
+// Flowers are walk-through accents (not in this set) → no collider.
+const SOLID_INSTANCE_SYSTEMS = new Set(['rocks']);
+const INSTANCE_COLLIDER_HALF_MIN = 0.05;
+const BENCH_MESH_RE = /^bench_/i;
+const BENCH_PROXY_RE = /^cuboid_bench_/i;
+const SHADOW_RECEIVER_RE = /slab|foundation|path|pave|stone|brick/i;
+
 // Rope-and-post fences (fences.glb) ship no colliders. We rebuild thin wall
 // segments at runtime by clustering the posts mesh into post centres and
 // linking ADJACENT posts. Real spans run 3.1–4.5 m (projects is the widest);
@@ -76,8 +87,10 @@ const TITLE_LETTER_RETURN_DURATION = 1.25;
  *      worldspace position + extras), keeping the live Object3D so later phases
  *      can animate pivots by name.
  *
- * Instanced systems (rocks/bricks/flowers) and foliage (bushes/treeLeaves) are
- * deferred to Phase E — this loader is monolithic-geometry + collision only.
+ * Instanced systems (bricks paving, rocks, flowers) are built via
+ * #loadInstancedSystem (one InstancedMesh per template from a Visual+References
+ * GLB pair); rocks also get one static box collider each (solid props). Foliage
+ * clouds (bushes/treeLeaves) load via loadFoliageGroups (Phase E).
  *
  * Exposes the same facade surface App.js + downstream read off the old GlbWorld
  * (terrain / nature / paths / billboards / signs / refs) so the rest of the app
@@ -114,6 +127,9 @@ export class GlbV3World {
     this.groundGrassColor = uniform(color('#ffffff'));
     this.dynamicBrickPiles = [];
     this.dynamicTitleLetters = [];
+    // Flower template geometry + colours + baked placements, collected during
+    // load(); App.boot builds the swaying/player-parting Flowers field from these.
+    this.flowerGroups = [];
     this.audio = null;
 
     // Foliage anchors sampled from each tree's green canopy (then the canopy is
@@ -177,6 +193,8 @@ export class GlbV3World {
       markers: {},             // marker name → Object3D (areas section roots)
       all: [],                 // every ref entry, in load order
     };
+
+    this._runtimeBenchCollidersAdded = false;
   }
 
   /** Load + parse the world per the manifest, populate buckets, run assertions. */
@@ -264,6 +282,13 @@ export class GlbV3World {
           if (obj) this.refs.markers[markerName] = obj;
         }
       }
+      if (entry.system === 'benches') {
+        this.#configureBenchShadows(group);
+        this.#addBenchColliders(group, physics);
+      }
+      if (entry.system === 'scenery' || entry.system === 'areas') {
+        this.#configureShadowReceivers(group);
+      }
       // Trees: strip the solid green canopy → SDF foliage anchors in its form.
       const treeSpecies = TREE_SYSTEMS[entry.system];
       if (treeSpecies) this.#extractTreeFoliage(group, treeSpecies);
@@ -282,6 +307,19 @@ export class GlbV3World {
     if (bricksEntry) {
       this._pathTilePositions = await this.#loadInstancedSystem(bricksEntry, physics);
     }
+
+    // 1c. Instanced rocks (SOLID — exact trimesh colliders added inside
+    // #loadInstancedSystem). The reference empties carry baked world matrices, so
+    // the decomposed transforms land at the authored Blender positions + height —
+    // no terrain.heightAt re-grounding needed.
+    const rocksEntry = (manifest.instanced ?? []).find((e) => e.system === 'rocks');
+    if (rocksEntry) await this.#loadInstancedSystem(rocksEntry, physics);
+
+    // Flowers are NOT static InstancedMeshes — the Flowers class (App.boot, needs
+    // the shared Wind) builds them as wind-swaying, player-parting clumps. Collect
+    // their geometry + colours + baked placements here for App to consume.
+    const flowersEntry = (manifest.instanced ?? []).find((e) => e.system === 'flowers');
+    if (flowersEntry) this.flowerGroups = await this.#collectFlowerGroups(flowersEntry);
 
     // 2. Colliders — parse the proxy GLB, build Rapier shapes, discard meshes.
     if (manifest.colliders?.file && physics) {
@@ -629,6 +667,71 @@ export class GlbV3World {
     mesh.receiveShadow = true;
   }
 
+  #configureBenchShadows(group) {
+    let count = 0;
+    group.traverse((obj) => {
+      if (!obj.isMesh || !BENCH_MESH_RE.test(obj.name || '')) return;
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      count++;
+    });
+    if (count > 0) console.log(`[GlbV3World] benches: ${count} mesh shadows enabled`);
+  }
+
+  #configureShadowReceivers(group) {
+    group.traverse((obj) => {
+      if (!obj.isMesh || !SHADOW_RECEIVER_RE.test(obj.name || '')) return;
+      obj.receiveShadow = true;
+    });
+  }
+
+  #addBenchColliders(group, physics) {
+    if (!physics?.ready) return;
+
+    group.updateMatrixWorld(true);
+    const meshes = [];
+    group.traverse((obj) => {
+      if (obj.isMesh && BENCH_MESH_RE.test(obj.name || '')) meshes.push(obj);
+    });
+
+    let count = 0;
+    for (const mesh of meshes) {
+      if (this.#addMeshTrimeshCollider(mesh, physics)) count++;
+    }
+
+    if (count > 0) {
+      this._runtimeBenchCollidersAdded = true;
+      console.log(`[GlbV3World] benches: ${count} visible-mesh trimesh colliders`);
+    }
+  }
+
+  #addMeshTrimeshCollider(mesh, physics) {
+    const geometry = mesh.geometry;
+    const posAttr = geometry?.attributes?.position;
+    if (!posAttr || posAttr.count < 3) return false;
+
+    mesh.updateMatrixWorld(true);
+    const points = new Float32Array(posAttr.count * 3);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < posAttr.count; i++) {
+      v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
+      points[i * 3] = v.x;
+      points[i * 3 + 1] = v.y;
+      points[i * 3 + 2] = v.z;
+    }
+
+    let indices;
+    if (geometry.index) {
+      indices = new Uint32Array(geometry.index.count);
+      for (let i = 0; i < geometry.index.count; i++) indices[i] = geometry.index.getX(i);
+    } else {
+      indices = new Uint32Array(posAttr.count);
+      for (let i = 0; i < posAttr.count; i++) indices[i] = i;
+    }
+
+    return !!physics.addStaticTrimesh(points, indices);
+  }
+
   // ── Colliders ─────────────────────────────────────────────────────────────
 
   async #loadColliders(url, physics) {
@@ -662,6 +765,11 @@ export class GlbV3World {
         // center.y - height/2 so the cylinder centres on the bbox centre.
         physics.addStaticCylinder(center.x, center.y - height / 2, center.z, radius, height);
         cyl++;
+        continue;
+      }
+
+      if (this._runtimeBenchCollidersAdded && BENCH_PROXY_RE.test(name)) {
+        skipped++;
         continue;
       }
 
@@ -804,6 +912,67 @@ export class GlbV3World {
   // ── Instanced systems ─────────────────────────────────────────────────────
 
   /**
+   * Collect flower template geometry + colours + baked placements. Flowers are
+   * NOT built as static meshes here — the Flowers class (App.boot, with the
+   * shared Wind) instances them as swaying, player-parting clumps. One group per
+   * zone template; `clumpHeight` (local bbox max-Y across its primitives) drives
+   * the height-weighted bend. Each primitive keeps its GLB material colour.
+   */
+  async #collectFlowerGroups(entry) {
+    const [visual, refs] = await Promise.all([
+      this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.visual),
+      this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.references),
+    ]);
+    visual.scene.updateMatrixWorld(true);
+    const protoMeshesFor = (name) => {
+      const node = visual.scene.getObjectByName(name);
+      if (!node) return [];
+      const meshes = [];
+      node.traverse((o) => { if (o.isMesh) meshes.push(o); });
+      return meshes;
+    };
+
+    refs.scene.updateMatrixWorld(true);
+    const byTemplate = new Map();
+    refs.scene.traverse((obj) => {
+      if (obj.isMesh) return;
+      const tmpl = obj.userData?.template;
+      if (!tmpl) return;
+      if (!byTemplate.has(tmpl)) byTemplate.set(tmpl, []);
+      byTemplate.get(tmpl).push(obj);
+    });
+
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    const euler = new THREE.Euler();
+    const groups = [];
+    for (const [tmpl, placements] of byTemplate) {
+      const protos = protoMeshesFor(tmpl);
+      if (!protos.length) continue;
+      let clumpHeight = 0.1;
+      const primitives = protos.map((p) => {
+        p.geometry.computeBoundingBox();
+        clumpHeight = Math.max(clumpHeight, p.geometry.boundingBox.max.y);
+        const color = p.material?.color ? p.material.color.clone() : new THREE.Color(0xffffff);
+        return { geometry: p.geometry, color };
+      });
+      const placed = placements.map((o) => {
+        o.matrixWorld.decompose(pos, quat, scl);
+        return {
+          x: pos.x, y: pos.y, z: pos.z,
+          yaw: euler.setFromQuaternion(quat, 'YXZ').y,
+          scale: scl.x,
+        };
+      });
+      groups.push({ key: tmpl, clumpHeight, primitives, placements: placed });
+    }
+    const total = groups.reduce((s, g) => s + g.placements.length, 0);
+    console.log(`[GlbV3World] flowers: ${groups.length} groups, ${total} placements (Flowers builds these)`);
+    return groups;
+  }
+
+  /**
    * Load one `instanced` manifest entry into per-template InstancedMeshes.
    *
    * The split exporter writes a *visual* GLB (one mesh per template at identity,
@@ -825,11 +994,23 @@ export class GlbV3World {
       this.loader.loadGLTF(GlbV3World.ASSET_BASE + entry.references),
     ]);
 
-    // Template meshes by name (brickPaveMesh / brickKerbMesh / brickPileMesh).
-    const templates = new Map();
-    visual.scene.traverse((obj) => {
-      if (obj.isMesh) templates.set(obj.name, obj);
-    });
+    // Prototype mesh(es) per template, keyed by the template node name. The
+    // visual GLB holds each template at identity. Single-primitive templates
+    // (bricks, rocks) load as one Mesh named after the template. MULTI-primitive
+    // templates (flowers: 3 prims / 3 materials each) load as a GROUP named after
+    // the template with one child Mesh per primitive — so a template yields
+    // several proto meshes, each → its own InstancedMesh (own geometry+material).
+    // The flowers visual also carries many redundant identity-stacked nodes that
+    // all point at the same template mesh; getObjectByName returns the first, and
+    // the authoritative placements come from the references GLB regardless.
+    visual.scene.updateMatrixWorld(true);
+    const protoMeshesFor = (name) => {
+      const node = visual.scene.getObjectByName(name);
+      if (!node) return [];
+      const meshes = [];
+      node.traverse((o) => { if (o.isMesh) meshes.push(o); });
+      return meshes;
+    };
 
     // Reference empties grouped by their target template.
     refs.scene.updateMatrixWorld(true);
@@ -850,40 +1031,87 @@ export class GlbV3World {
     const pos = new THREE.Vector3();
     const quat = new THREE.Quaternion();
     const scl = new THREE.Vector3();
-    const m = new THREE.Matrix4();
+    const _c = new THREE.Vector3();
+    const solidColliders = SOLID_INSTANCE_SYSTEMS.has(entry.system) && !!physics?.ready;
+    let colliderCount = 0;
 
     for (const [tmpl, placements] of byTemplate) {
-      const proto = templates.get(tmpl);
-      if (!proto) {
+      const protos = protoMeshesFor(tmpl);
+      if (!protos.length) {
         console.warn(`[GlbV3World] ${entry.system}: no visual template "${tmpl}" — skipped`);
         continue;
       }
+      total += placements.length;
+
       if (dynamicTemplates.has(tmpl)) {
+        // Dynamic templates (brick piles) are single-primitive — use protos[0].
+        const proto = protos[0];
         const transforms = this.#buildScaledBrickPileTransforms(proto, placements);
         for (let i = 0; i < transforms.length; i++) {
           this.#createDynamicBrickPile(proto, transforms[i], physics, `${entry.system}_${tmpl}_${i}`);
           if (PATH_TEMPLATES.has(tmpl)) pathXZ.push(transforms[i].pos.x, transforms[i].pos.z);
         }
-        total += placements.length;
         continue;
       }
-      const inst = new THREE.InstancedMesh(proto.geometry, proto.material, placements.length);
-      inst.name = `${entry.system}_${tmpl}`;
-      inst.castShadow = true;
-      inst.receiveShadow = true;
+
       const isPath = PATH_TEMPLATES.has(tmpl);
+
+      // Solid systems (rocks): precompute the template's LOCAL vertices + index
+      // once so each instance can register an EXACT triangle-mesh collider — the
+      // player walks into every crevice with no convex bridging and no box
+      // phantom walls beside the rock. Rocks are single-primitive (protos[0]).
+      // Walk-through systems (flowers) skip this entirely.
+      let localVerts = null;
+      let solidIndices = null;
+      if (solidColliders) {
+        const geom = protos[0].geometry;
+        const a = geom.attributes.position;
+        localVerts = new Float32Array(a.count * 3);
+        for (let v = 0; v < a.count; v++) {
+          localVerts[v * 3] = a.getX(v);
+          localVerts[v * 3 + 1] = a.getY(v);
+          localVerts[v * 3 + 2] = a.getZ(v);
+        }
+        const idx = geom.index;
+        solidIndices = idx
+          ? (idx.array instanceof Uint32Array ? idx.array : new Uint32Array(idx.array))
+          : Uint32Array.from({ length: a.count }, (_, n) => n);
+      }
+
+      // Per-instance world matrices, shared across this template's primitives.
+      const matrices = new Array(placements.length);
       for (let i = 0; i < placements.length; i++) {
         placements[i].matrixWorld.decompose(pos, quat, scl);
-        m.compose(pos, quat, scl);
-        inst.setMatrixAt(i, m);
+        matrices[i] = new THREE.Matrix4().compose(pos, quat, scl);
         if (isPath) pathXZ.push(pos.x, pos.z);
+        if (solidColliders) {
+          // Transform this instance's verts to world space → EXACT trimesh
+          // collider (shares the template index). Hugs the real rock surface so
+          // there is no invisible wall and the player can get right up to it.
+          const verts = new Float32Array(localVerts.length);
+          for (let j = 0; j < localVerts.length; j += 3) {
+            _c.set(localVerts[j], localVerts[j + 1], localVerts[j + 2]).applyMatrix4(matrices[i]);
+            verts[j] = _c.x; verts[j + 1] = _c.y; verts[j + 2] = _c.z;
+          }
+          if (physics.addStaticTrimesh(verts, solidIndices)) colliderCount++;
+        }
       }
-      inst.instanceMatrix.needsUpdate = true;
-      this.root.add(inst);
-      total += placements.length;
+
+      // One InstancedMesh per primitive (each its own geometry + material).
+      for (let pi = 0; pi < protos.length; pi++) {
+        const proto = protos[pi];
+        const inst = new THREE.InstancedMesh(proto.geometry, proto.material, placements.length);
+        inst.name = protos.length > 1 ? `${entry.system}_${tmpl}_${pi}` : `${entry.system}_${tmpl}`;
+        inst.castShadow = true;
+        inst.receiveShadow = true;
+        for (let i = 0; i < placements.length; i++) inst.setMatrixAt(i, matrices[i]);
+        inst.instanceMatrix.needsUpdate = true;
+        this.root.add(inst);
+      }
     }
 
-    console.log(`[GlbV3World] ${entry.system}: ${total} instances across ${byTemplate.size} templates`);
+    console.log(`[GlbV3World] ${entry.system}: ${total} instances across ${byTemplate.size} templates`
+      + (solidColliders ? `, ${colliderCount} colliders` : ''));
     return new Float32Array(pathXZ);
   }
 

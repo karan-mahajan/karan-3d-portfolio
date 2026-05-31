@@ -145,6 +145,37 @@ export class Physics {
   }
 
   /**
+   * Static convex hull from a flat `[x,y,z,…]` Float32Array of WORLD-space
+   * points. The body sits at the origin so the hull lives directly in world
+   * space. Rapier reduces the point set to its convex hull internally (pass every
+   * mesh vertex — it keeps only the silhouette), giving a collider that hugs an
+   * irregular prop far tighter than an AABB/oriented box, whose corners jut past
+   * the mesh as an "invisible wall next to the rock". Use for rocks / boulders.
+   * Returns null if the points are degenerate (< 4 non-coplanar).
+   */
+  addStaticConvexHull(worldPoints) {
+    const { RAPIER, world } = this;
+    const colliderDesc = RAPIER.ColliderDesc.convexHull(worldPoints);
+    if (!colliderDesc) return null;
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(colliderDesc, body);
+    return body;
+  }
+
+  /**
+   * Static triangle mesh collider from WORLD-space vertices. Use for sparse
+   * props whose real silhouette matters more than an enclosing box.
+   */
+  addStaticTrimesh(worldPoints, indices) {
+    const { RAPIER, world } = this;
+    const colliderDesc = RAPIER.ColliderDesc.trimesh(worldPoints, indices);
+    if (!colliderDesc) return null;
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(colliderDesc, body);
+    return body;
+  }
+
+  /**
    * Thin wall capped by a sharp pitched ridge — used for rope-and-post fences.
    * The ridge keeps the silhouette tight, but a horizontal ridge LINE is still
    * balanceable, so a rope must not read as ground at all: this registers the

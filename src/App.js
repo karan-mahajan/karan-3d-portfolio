@@ -8,6 +8,7 @@ import { DUSK } from './World/Palette.js';
 import { Wind } from './World/Wind.js';
 import { Grass } from './World/Grass.js';
 import { Foliage } from './World/Foliage.js';
+import { Flowers } from './World/Flowers.js';
 import { Sun } from './World/Sun.js';
 import { TimeOfDay, detectAutoMode } from './World/TimeOfDay.js';
 import { Player } from './Player/Player.js';
@@ -384,6 +385,14 @@ export class App extends EventTarget {
       this.foliage = new Foliage(this.scene, this.wind, foliageSDF, foliageClouds);
       this.foliage.setSunDirection(this.timeOfDay.sunOffset);
       this.world.foliage = this.foliage;
+    }
+
+    // Flowers — authored flower clumps as wind-swaying, player-parting fields
+    // (walk-through, no collider; soft-physics like the foliage). Built from the
+    // groups GlbV3World collected during load (needs the shared Wind).
+    if (this.world.glb?.flowerGroups?.length) {
+      this.flowers = new Flowers(this.scene, this.wind, this.world.glb.flowerGroups);
+      this.world.flowers = this.flowers;
     }
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
@@ -930,6 +939,7 @@ export class App extends EventTarget {
     // Foliage parts/flutters around the player (bushes at walking height,
     // canopies when jumped into) — driven by the player's 3D position.
     if (this.world.foliage) this.world.foliage.setPlayerPos(this.player.position);
+    if (this.world.flowers) this.world.flowers.setPlayerPos(this.player.position);
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     if (this.actionPrompts) this.actionPrompts.tick(this.player.position, frameDelta);

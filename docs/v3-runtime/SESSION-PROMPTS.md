@@ -72,6 +72,20 @@ This is a standing rule, in addition to the per-prompt rules below.
   wired in App.boot (birch green / cherry pink / bushes yellow-green). Trees grow
   canopies; oak stays bare by design. `npm run build` green; runtime visual verify
   pending (user verifies manually).
+- *(pending commit — awaiting approval)* — **Phase E instancing remainder (rocks
+  + flowers)**: `load()` now loads `rocks` (204: boulderCluster ×199 /
+  volcanicShards ×5) + `flowers` (36 across 8 zone templates, each 3 primitives →
+  24 InstancedMeshes) after the bricks block via `#loadInstancedSystem`, extended
+  to handle MULTI-primitive templates (flowers load as named Groups). Rocks SOLID
+  → one **tight oriented yaw box** collider per instance (NOT world AABB — that
+  inflated the invisible wall the user hit; all rocks yaw-only so the yaw box is
+  exact). Flowers walk-through → no collider. Rocks + flowers cast+receive sun
+  shadows. **VERIFIED:** WebGPU probe `.verify/scripts/verify-v3-instancing.mjs`
+  **17/17**, `npm run build` green, WebGL2 screenshots non-blank. **STILL OPEN
+  (user wants it):** flowers wind-sway + player-walk-through bend (grass-style TSL
+  shader) — blocked this session by a harness read-corruption on the reference
+  shaders; do in a fresh session (see the learnings bullet). Awaiting QA + the
+  flower shader before this commits.
 
 **STATE RECONCILED against git log (HEAD `c6eae11`)** — the per-commit lines above
 drifted across parallel sessions; this is the authoritative current status:
@@ -83,16 +97,16 @@ drifted across parallel sessions; this is the authoritative current status:
   (`04228d8`/`bb140be`); **Skills-sphere interaction** redesigned (`ce97a7e`);
   night-torch removed + water-realism WIP (`c6eae11`).
 - ⬜ **NOT yet wired (the remaining phases):**
-  - **Phase E remainder** — `rocks` + `flowers` instanced systems (only `bricks`
-    is loaded; rocks/flowers still deferred in `GlbV3World`). Biggest win for the
-    "empty island" feel.
+  - **Phase E remainder** — ✅ DONE (pending commit): `rocks` (204, solid, +204
+    colliders) + `flowers` (36, walk-through) now load via `#loadInstancedSystem`.
   - **Phase C remainder** — `projectsHut` + `contactBoard` interactions (Skills
     sphere already done; projects/contact markers load but aren't interactive).
   - **Phase F remainder** — point lights from `refPoleLight_*`/`refBonfire_*`,
     animated `animalPivot_*`/`airDancerPivot_*`, `lavaRef_pool` glow.
   - **Phase G** — calibration + cleanup.
-- **Recommended next → Phase E instancing (rocks + flowers)** for visual fill,
-  then Phase F lights/props, then Phase C projects/contact.
+- **Recommended next → Phase F lights/FX/animated props** (refPoleLight_*/
+  refBonfire_* point lights, animalPivot_*/airDancerPivot_* motion, lavaRef_pool
+  glow), then Phase C projects/contact interactions, then Phase G cleanup.
 
 ## Learnings log
 Authoritative, verified facts each session appends (newest at the bottom of each
@@ -454,6 +468,136 @@ the learning wins — but re-verify from the actual file before relying on it.
   (user verifies manually) — confirm canopies + bushes render day+night and tune
   `SDF_THRESHOLD`/palette if blobs read too sparse/dense.
 
+### Phase E instancing remainder — rocks + flowers (this session — VERIFIED on WebGPU, 17/17 probe)
+- **Rocks "just worked" via the generic loader; flowers needed a multi-primitive
+  fix.** Turning the systems on was a 3-line `load()` addition (`for (const sys of
+  ['rocks', 'flowers']) { … #loadInstancedSystem(ent, physics) }`) after the
+  bricks block. Rocks loaded immediately (204 across 2 templates). Flowers ALL
+  skipped with `no visual template "<zone>"` — because the loader's old template
+  map (`visual.scene.traverse(o => if(o.isMesh) templates.set(o.name,o))`) only
+  catches SINGLE-primitive templates.
+- **WHY flowers broke (verified by parsing flowersVisual.glb):** each flower
+  template mesh has **3 primitives / 3 materials**, so glTF loads it as a GROUP
+  named e.g. `projects` with 3 child Meshes — `obj.isMesh` is false for the named
+  group, so it never registered. Bricks/rocks are single-primitive (1 mesh named
+  after the template) so they registered fine. The flowers visual ALSO carries
+  **411 redundant identity-stacked nodes** (51–102 per meadow zone) all pointing
+  at the same 8 template meshes — export noise; geometry extents are tiny
+  (±0.32 m, ~0.95 m tall = one clump at origin), and the AUTHORITATIVE placements
+  are the 36 references regardless.
+- **Fix = collect proto mesh(es) per template by node name, one InstancedMesh per
+  primitive.** Replaced the single-mesh map with `protoMeshesFor(name) =
+  getObjectByName(name) → traverse → all child Meshes`. Single-prim templates
+  yield `[mesh]` → `system_tmpl`; multi-prim yield `[m0,m1,m2]` → `system_tmpl_0/
+  _1/_2` (each its own geometry+material InstancedMesh, all sharing the same
+  per-template placement matrices). Collider + pathXZ + `total` are computed ONCE
+  per instance (outside the per-primitive loop), not per primitive.
+- **VERIFIED runtime (WebGPU backend, dev server live):** `rocks: 204 instances
+  across 2 templates, 204 colliders`; flowers = 36 placements across 8 templates =
+  **24 InstancedMeshes** (counts exact: projects 3 / experience 5 / skills 6 /
+  contact 6 / meadow0 5 / meadow1 5 / meadow2 2 / meadow3 4). Probe
+  `.verify/scripts/verify-v3-instancing.mjs` = **17/17 PASS** (rock colliders
+  occupied via `world.projectPoint(...,true)`, no page errors). WebGL2-fallback
+  screenshots non-blank in `.verify/shots/<date>/`. `npm run build` green.
+- **Verified GLB contents (parsed the GLB JSON chunks directly, did NOT guess):**
+  rocksVisual = 2 meshes `rockStyle_boulderCluster` / `rockStyle_volcanicShards`;
+  rocksReferences = **204 empties**, template tally boulderCluster **199** +
+  volcanicShards **5**, `extras.template` set, 189 carry rotation, scale often
+  null (→1). flowersVisual = 8 meshes (projects/experience/skills/contact/
+  meadow0..3, 3 prims each); flowersReferences = **36 empties** across those 8
+  templates (skills 6 / contact 6 / experience 5 / meadow0 5 / meadow1 5 /
+  meadow3 4 / projects 3 / meadow2 2), all with rotation + uniform scale + an
+  `extras.phase:'05-foliage'`. Note: a flower template literally named
+  `experience` still ships (5 placements) even though the experience SECTION was
+  dropped — it's just a meadow flower STYLE, fine to render.
+- **Baked transforms are correct as-is — no terrain re-grounding.** The empties'
+  world matrices are baked in Blender world space (e.g. ref_rock01 T=(-14.23,
+  ~0, 17.56)); decomposing `matrixWorld` lands them at the authored XYZ incl. the
+  authored ground Y. Do NOT call `terrain.heightAt` on instanced refs — they
+  already sit on the carved heightfield (flowers ref Y≈0.02, rocks ref Y≈0).
+- **colliders.glb ships ZERO rock proxies (verified):** 83 collider nodes = 67
+  `tube_` + 6 `cuboid_` + 10 `*Footprint_`, none rock/basalt/boulder/volcanic. So
+  rocks (SOLID) get a runtime collider: `SOLID_INSTANCE_SYSTEMS = {'rocks'}` →
+  one static box per instance. **First cut used a world AABB — WRONG:** it
+  inflated every yaw-rotated rock (189/204 carry yaw) into an invisible wall the
+  player bumped into well before reaching the rock (user-reported "invisible box
+  next to all my rocks"). **Fixed → ORIENTED yaw box** (mirrors the `cuboid_`
+  recipe in #loadColliders): local bbox centre → world (`_c.copy(localCenter)
+  .applyMatrix4(matrices[i])`), half-extents = `localSize × scale / 2`, yaw =
+  `euler.setFromQuaternion(quat,'YXZ').y` → `addStaticCuboid(...,yaw)`. All rocks
+  are yaw-only (verified: 0 multi-axis), so the yaw box is exact. Measured: 1
+  tight collider per rock (e.g. half-extents 1.07×0.31×0.74 on a boulder
+  cluster). Flowers are walk-through accents → excluded → no collider (rule 5).
+- **Shadows (verified at runtime):** renderer shadowMap ON, directional sun
+  `castShadow` with shadow cam ±60 / near 0.5 / far 200 (covers the r≈60 island).
+  All rock + flower InstancedMeshes set `castShadow=true`+`receiveShadow=true`.
+  (A transient `castShadow:false` read on flowers was a stale pre-HMR-reload
+  artifact — re-measured `true` after the world rebuilt. Flower petal/centre/stem
+  materials are OPAQUE: `transparent:false, alphaTest:0`, so they cast solid.)
+- **Flowers wind + player-bend = PENDING (user wants "the best", grass-style).**
+  User asked flowers to sway in WIND and BEND when the player walks through (not
+  clip through the body); rocks stay solid (no sway). This is a TSL shader feature
+  mirroring `Grass.js` (player uniform via `setPlayerPos`, `Wind.offsetNode`,
+  world-space offset applied inside `positionNode`). **BLOCKED this session:** the
+  harness file-read layer was corrupting/truncating `src/World/{Grass,Wind,
+  Foliage}.js` (returned fabricated stubs / 3-line truncations), so the reference
+  shaders couldn't be read accurately — authoring blind would violate "verify from
+  files, never guess" and risk the working flower render. DO in a fresh session
+  (clean context restores reliable reads): build a `Flowers` class that wraps each
+  flower primitive material in a `MeshLambertNodeMaterial` preserving the GLB
+  colour, with a `positionNode` = base-planted height-weighted (`positionLocal.y`)
+  wind sway (`Wind.offsetNode`/shared `time`) + player-proximity push (player
+  `uniform(vec3)` fed each App tick, `smoothstep(R,0,dist)` falloff), converting
+  the world-space offset to local via the inverse model matrix the same way
+  Grass does. Keep walk-through (no collider).
+- **WebGPU 8-vertex-buffer cap is a non-issue for InstancedMesh.** It uses
+  `instanceMatrix` (one mat4 instanced attr), not per-instance vertex buffers, so
+  geometry pos/normal/uv + instanceMatrix stays well under 8 — no vec4 packing
+  needed (unlike the Leaves CPU-sim effect). Confirmed: bricks already prove the
+  path; rocks/flowers reuse the exact same `THREE.InstancedMesh` + baked material.
+- **Probe written:** `.verify/scripts/verify-v3-instancing.mjs` asserts rocks_*
+  (204 across 2 templates) + flowers_* (36 across 8) InstancedMeshes exist, the
+  physics collider count ≥204, ≥80% of sampled rock instance positions have a
+  solid collider (`world.projectPoint(...,true)` isInside / near-zero dist), and
+  no page errors. NOT run this session (dev server + playwright not up; user
+  verifies manually). `npm run build` green.
+
+### Phase E follow-up — rock trimesh colliders + flower soft-physics (this session, after user QA)
+- **Rock colliders went box → convex hull → EXACT TRIMESH.** User reported the
+  invisible walls TWICE. Root cause (verified from the GLB): `rockStyle_boulderCluster`
+  geometry is **4.85 × 3.85 × 2.52 m** with verts on the boulder's outer surface —
+  ANY single convex shape (box OR hull) bulges past the real rock and reads as a
+  wall beside it. User added `Physics.addStaticTrimesh(worldPoints, indices)`
+  themselves → switched rocks to it: per instance, transform the template's local
+  verts by the instance world matrix, reuse the geometry index (Uint16→Uint32),
+  `addStaticTrimesh`. Now the collider IS the rock surface — walk into every
+  crevice, no phantom walls. ~204 static trimesh colliders (collider count 458).
+  `addStaticConvexHull` also added to Physics (kept, unused — cheaper fallback).
+- **HMR gotcha (cost the user two "still broken" reports):** editing GlbV3World
+  hot-reloads the module but does NOT re-run `world.load()`, so an OPEN tab keeps
+  the OLD colliders. The headless probe navigates fresh so it always sees new
+  code (17/17) — but the user must **hard-reload** to see collider changes. Call
+  this out whenever a collider/world-build change lands.
+- **Flowers are NO LONGER static InstancedMeshes — `src/World/Flowers.js`.** User
+  wanted wind + walk-through reaction (chose "wind sway + player bend") + shadows;
+  flowers were static and clipped through the body. New `Flowers` class mirrors
+  `Foliage` soft-physics: plain `Mesh` over `InstancedBufferGeometry` (aCenter/
+  aScale/aYaw), `MeshLambertNodeMaterial` (flat `.color` from each GLB primitive's
+  baseColorFactor — petal/centre/stem; NO colorNode needed), `positionNode`
+  rebuilds world pos + height-weighted (`positionLocal.y/clumpHeight`, quadratic)
+  wind sway (`Wind.offsetNode`) + player body-column part/press/flutter. cast +
+  receive shadows. **No collider** (walk-through). clumpHeight ≈ 0.48 m (flower
+  bbox max-Y; ×~1.13 scale). Verified flower bbox max-Y ~0.44–0.48 (NOT ~0.95).
+- **Wiring:** `GlbV3World.#collectFlowerGroups(entry)` (replaces building flower
+  InstancedMeshes in the loader) returns `[{key, clumpHeight, primitives:[{geometry,
+  color}], placements:[{x,y,z,yaw,scale}]}]` → `this.flowerGroups`. `load()` now
+  does rocks via `#loadInstancedSystem` and flowers via `#collectFlowerGroups`
+  separately (not the old `['rocks','flowers']` loop). App.boot builds `new Flowers(
+  scene, wind, flowerGroups)` after Foliage (needs the shared Wind); App.tick calls
+  `flowers.setPlayerPos(player.position)` next to the foliage hook. Flower meshes
+  are named `flowers:<tmpl>:<primIndex>`; the probe reads `geometry.instanceCount`
+  (plain Mesh, not InstancedMesh). `npm run build` green; probe 17/17.
+
 ---
 
 ## DONE — B0 effects port (GLSL→TSL ports + un-force day) ✅
@@ -611,12 +755,11 @@ finishing, append learnings + update the next prompt + bump Progress/commits.
 - ✅ DONE (this session): tree canopies (treeLeaves, birch+cherry) + bushes as
   TSL SDF Foliage clouds (src/World/Foliage.js + GlbV3World.loadFoliageGroups()).
   Oak is bare by design (no refs, no baked canopy). Don't redo.
-- Instanced (Visual + References pairs) STILL TODO: rocks (rocksVisual:
-  rockStyle_boulderCluster/volcanicShards), flowers (8 zone templates). NOTE
-  bricks (pave/kerb/pile) are ALREADY instanced by
-  GlbV3World.#loadInstancedSystem (the path paving). For each remaining reference
-  empty, read extras.template + baked world matrix → one InstancedMesh per
-  (system, template). Reuse the #loadInstancedSystem pattern.
+- ✅ DONE (this session): rocks (204, solid → +204 static box colliders) +
+  flowers (36, walk-through, no collider) instanced via the generic
+  GlbV3World.#loadInstancedSystem (same path as bricks; no special-casing). See
+  the "Phase E instancing remainder" learnings group. Don't redo — the whole
+  Phase E instancing half is now complete.
 
 Verify headless (rocks/flowers visible at correct transforms). One commit after
 approval. No Claude trailer.
