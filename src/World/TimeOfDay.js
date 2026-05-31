@@ -163,7 +163,7 @@ export class TimeOfDay {
    * @param {import('../Portfolio/Billboards.js').Billboards} opts.billboards
    * @param {import('../Portfolio/Signs.js').Signs}           opts.signs
    * @param {THREE.Object3D} opts.playerGroup - the visual player root (rotates with character)
-   * @param {import('../Player/Character.js').Character} [opts.character] - wired post-boot; receives setTorchVisible() on mode flip
+   * @param {import('../Player/Character.js').Character} [opts.character] - wired post-boot
    */
   constructor({
     scene,
@@ -227,7 +227,6 @@ export class TimeOfDay {
     // auto-detected mode clears the override so the live arc resumes.
     this._manualOverride = mode !== detectAutoMode();
     this.mode = mode;
-    this.character?.setTorchVisible?.(mode === "night");
     this.dispatchEvent?.("change", mode);
     this.#transition(mode, duration);
     if (mode === 'night') this.achievements?.onToggleNight?.();
@@ -715,8 +714,6 @@ export class TimeOfDay {
     // lamps) must leave the live offset alone — otherwise the sun
     // visibly jumps back to the static seed and then lerps out again.
     if (!this.sunOffset) this.sunOffset = p.sunOffset.clone();
-
-    this.character?.setTorchVisible?.(mode === "night");
   }
 
   #transition(mode, duration) {

@@ -28,6 +28,19 @@ const TRUNK_RADIUS_MAX = 0.7;
 const TRUNK_RADIUS_SHRINK = 0.85;          // visible bark sits a touch inside bbox
 const DYNAMIC_BRICK_SCALE = 0.5;
 const DYNAMIC_BRICK_TEMPLATES = new Set(['brickKerbMesh', 'brickPileMesh']);
+
+// Rope-and-post fences (fences.glb) ship no colliders. We rebuild thin wall
+// segments at runtime by clustering the posts mesh into post centres and
+// linking ADJACENT posts. Real spans run 3.1–4.5 m (projects is the widest);
+// the next-closest non-adjacent pair is 6.8 m (a run's end-posts, already
+// bridged by the middle post) — so FENCE_MAX_SPAN sits between the two.
+const FENCE_MIN_POST_HEIGHT = 0.8;     // posts ~1.21 m tall; skips the ~0.46 m rope mesh
+const FENCE_POST_CLUSTER_R2 = 0.35 * 0.35;  // XZ radius² grouping verts into one post
+const FENCE_MAX_SPAN = 5.5;            // link posts ≤ this apart; bigger = opening/non-adjacent
+const FENCE_POST_HALF = 0.15;          // extend each wall end to bury into its posts
+const FENCE_HALF_THICK = 0.12;         // wall ~0.24 m thick — hugs the post line
+const FENCE_RIDGE_RISE = 0.22;         // pitched-roof cap height; > ~1.2× halfThick so
+                                       // the roof beats the 50° climb angle → not standable
 // `*Footprint_*` collider proxies are full-height ZONE volumes (section/structure
 // /misc areas), NOT visible props — baking them as boxes walls off the statue,
 // sections, pool and small props so the player can't approach. They're skipped at
@@ -256,6 +269,7 @@ export class GlbV3World {
       if (treeSpecies) this.#extractTreeFoliage(group, treeSpecies);
       // Trees: give every trunk a static collider (colliders.glb has none).
       if (TREE_TRUNK_SYSTEMS.has(entry.system)) this._addTreeTrunkColliders(group, physics);
+      if (entry.system === 'fences') this.#addFenceColliders(group, physics);
       if (entry.system === 'miscFx') this.#extractDynamicTitleLetters(group, physics);
     }
 
@@ -1174,6 +1188,84 @@ export class GlbV3World {
       count++;
     });
     if (count > 0) console.log(`[GlbV3World] ${group.name} trunk colliders: ${count}`);
+  }
+
+  // ── Fence colliders (runtime — fences.glb ships none) ───────────────────────
+
+  /**
+   * Build thin "knee-wall" colliders along each rope-and-post fence so the
+   * player can't walk through it (fences.glb bakes no collider). Each fence is
+   * one merged group holding a tall posts mesh + a slung rope mesh forming a
+   * short run/L of evenly-spaced posts. We pick the posts mesh (the tall one),
+   * cluster its verts into post centres, then drop one thin oriented box
+   * between every pair of ADJACENT posts (≤ FENCE_MAX_SPAN). Larger gaps are
+   * the intentional openings facing each section's entrance → no wall there.
+   *
+   * Box height = the fence's real world height (post base→top), so a jump can
+   * clear it; the box is thin across the line and buried a touch into each post
+   * so the run reads as one continuous barrier.
+   */
+  #addFenceColliders(group, physics) {
+    if (!physics?.ready) return;
+    group.updateMatrixWorld(true);
+    const v = new THREE.Vector3();
+    let walls = 0;
+
+    group.traverse((mesh) => {
+      if (!mesh.isMesh) return;
+      const posAttr = mesh.geometry?.attributes?.position;
+      if (!posAttr) return;
+
+      // World-space vertical extent — the posts mesh is the tall one; the short
+      // slung-rope mesh fails the height gate and is skipped (posts define the run).
+      let ymin = Infinity;
+      let ymax = -Infinity;
+      for (let i = 0; i < posAttr.count; i++) {
+        const y = v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld).y;
+        if (y < ymin) ymin = y;
+        if (y > ymax) ymax = y;
+      }
+      if (ymax - ymin < FENCE_MIN_POST_HEIGHT) return;
+
+      // Cluster verts into post centres by XZ proximity (running mean).
+      const posts = [];
+      for (let i = 0; i < posAttr.count; i++) {
+        v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
+        let hit = null;
+        for (const p of posts) {
+          const dx = p.x / p.n - v.x;
+          const dz = p.z / p.n - v.z;
+          if (dx * dx + dz * dz < FENCE_POST_CLUSTER_R2) { hit = p; break; }
+        }
+        if (hit) { hit.x += v.x; hit.z += v.z; hit.n++; }
+        else posts.push({ x: v.x, z: v.z, n: 1 });
+      }
+      const centres = posts.map((p) => ({ x: p.x / p.n, z: p.z / p.n }));
+
+      // One ridge-capped wall per adjacent post pair within span. The roof
+      // ridge sits at the real fence top; its shoulder is RIDGE_RISE below, so
+      // the cap is too steep to stand on but the wall below still blocks walking.
+      const shoulderY = ymax - FENCE_RIDGE_RISE;
+      for (let a = 0; a < centres.length; a++) {
+        for (let b = a + 1; b < centres.length; b++) {
+          const dx = centres[b].x - centres[a].x;
+          const dz = centres[b].z - centres[a].z;
+          const len = Math.hypot(dx, dz);
+          if (len > FENCE_MAX_SPAN) continue;
+          // Rapier yaw about +Y maps local +X → (cos, 0, -sin); align it with
+          // the segment direction so the wall's length runs post-to-post.
+          const yaw = Math.atan2(-dz, dx);
+          physics.addStaticRidgeWall(
+            (centres[a].x + centres[b].x) / 2, (centres[a].z + centres[b].z) / 2,
+            ymin, shoulderY, ymax,
+            len / 2 + FENCE_POST_HALF, FENCE_HALF_THICK,
+            yaw,
+          );
+          walls++;
+        }
+      }
+    });
+    if (walls > 0) console.log(`[GlbV3World] ${group.name} fence walls: ${walls}`);
   }
 
   // ── Tree foliage from the green canopy (Phase E) ────────────────────────────

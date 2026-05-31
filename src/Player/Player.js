@@ -12,13 +12,15 @@ export class Player {
   static GRAVITY = -25;
   static JUMP_VELOCITY = 8.5;
   static IDLE_LOOK_AROUND_SECONDS = 8;
-  // Ocean interaction. TODO Phase 5: replace the radius check with a
-  // WorldWater raycast against the actual river/lake/ocean meshes from
-  // world.glb. These radii are interim values that just hold the player
-  // back from the void past the new world's far edge while we ship the
-  // procedural-water swap. Original v1 island used 45/52.
-  static WATER_ENTRY_RADIUS = 120;
-  static WATER_SLOWDOWN_PER_M = 0.1;
+  // Ocean/pond interaction. Wading is gated on actual terrain water-depth
+  // (ground dipping below the water surface), NOT a radial ring — the v3
+  // island is r≈60 and the legacy r=120 ring never triggered, so ponds/river
+  // read as dry to gameplay. WATER_SURFACE_Y mirrors Water.WATER_LEVEL_Y.
+  static WATER_SURFACE_Y = -0.15;
+  // Speed falloff per metre of water depth, clamped so the player can always
+  // wade back out. Ankle-deep shore (~0.2 m) barely slows; a full 1.35 m basin
+  // drops to ~40% speed.
+  static WATER_SLOWDOWN_PER_M = 0.45;
   static WATER_SLOWDOWN_MIN = 0.15;
 
   // Natural foot-speed of each locomotion clip in m/s (estimated from typical
@@ -119,16 +121,18 @@ export class Player {
   }
 
   update(delta) {
-    // Ocean wading slowdown — must be set before sample() so the velocity
-    // it returns is already scaled. Distance is XZ-only; depth grows by
-    // 0.1× per metre past the water entry radius and caps at 85% slowdown
-    // (15% original speed) so the player can't get fully stuck.
+    // Wading slowdown — must be set before sample() so the velocity it returns
+    // is already scaled. Depth is the terrain dipping below the water surface
+    // (ponds, river, ocean falloff), so it engages wherever the water visibly
+    // shows, capped at 85% slowdown (15% speed) so the player can't get stuck.
     const dx = this.group.position.x;
     const dz = this.group.position.z;
     const distFromCenter = Math.hypot(dx, dz);
-    if (distFromCenter > Player.WATER_ENTRY_RADIUS) {
-      const depth = (distFromCenter - Player.WATER_ENTRY_RADIUS) * Player.WATER_SLOWDOWN_PER_M;
-      this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - depth);
+    const groundY = this.terrain ? this.terrain.heightAt(dx, dz) : 0;
+    const waterDepth = Player.WATER_SURFACE_Y - groundY;
+    if (waterDepth > 0) {
+      const slow = waterDepth * Player.WATER_SLOWDOWN_PER_M;
+      this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - slow);
     } else {
       this.controller.speedMultiplier = 1.0;
     }

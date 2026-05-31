@@ -128,7 +128,6 @@ export class PortfolioMounts {
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
     const plank = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.2), mat);
     plank.name = `experience-plank-${entry.company ?? 'entry'}`;
-    plank.userData.noTorchRaycast = true;
     return plank;
   }
 
@@ -190,7 +189,6 @@ export class PortfolioMounts {
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.0), mat);
     panel.name = `skills-panel-${title || 'category'}`;
-    panel.userData.noTorchRaycast = true;
     return panel;
   }
 
@@ -245,7 +243,6 @@ export class PortfolioMounts {
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.0), mat);
     panel.name = 'contact-panel';
-    panel.userData.noTorchRaycast = true;
     return panel;
   }
 
@@ -276,7 +273,6 @@ export class PortfolioMounts {
     panel.name = 'resume-decal';
     panel.position.copy(pos).add(new THREE.Vector3(0, 1.4, 0));
     panel.lookAt(0, panel.position.y, 0);
-    panel.userData.noTorchRaycast = true;
     this.scene.add(panel);
   }
 

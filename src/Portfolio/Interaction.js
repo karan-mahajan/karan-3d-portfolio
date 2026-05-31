@@ -45,7 +45,6 @@ export class Interaction {
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
     this.achievements = achievements;
-    this.torchLight = null; // wired post-construction by App.js
 
     this.activeIndex = -1; // -1 = not focused
     this.candidate = null; // billboard the player is currently near
@@ -55,8 +54,6 @@ export class Interaction {
     this.resumeCandidate = false;
     this.resumeOpen = false;
     this.zooming = false;
-    this.torchAiming = false;
-    this._lastTodMode = this.timeOfDay?.mode ?? null;
 
     this.#installDom();
     this.#installKeyListeners();
@@ -149,14 +146,6 @@ export class Interaction {
     this.resumeEl
       .querySelector(".panel-close")
       .addEventListener("click", () => this.closeResume());
-
-    this.torchHintEl = document.createElement("div");
-    this.torchHintEl.className = "billboard-prompt torch-hint hidden";
-    this.torchHintEl.innerHTML = `
-      <span class="key">F</span>
-      <span class="label">Aim torch</span>
-    `;
-    document.body.appendChild(this.torchHintEl);
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -175,19 +164,11 @@ export class Interaction {
           else if (this.skillCandidate) this.openSkills();
           else if (this.candidate) this.focus(this.candidate.index);
         }
-      } else if (e.code === "KeyF") {
-        if (this.activeIndex !== -1 || this.contactOpen || this.resumeOpen || this.skillOpen) return;
-        if (document.body.classList.contains("is-mobile")) return;
-        const torchOn = this.player?.character?.torchMesh?.visible === true;
-        const night = this.timeOfDay?.mode === "night";
-        if (!torchOn || !night) return;
-        this.toggleTorchAim();
       } else if (e.code === "Escape") {
         if (this.skillOpen) this.closeSkills();
         else if (this.resumeOpen) this.closeResume();
         else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
-        else if (this.torchAiming) this.exitTorchAim();
       } else if (this.activeIndex !== -1) {
         if (e.code === "ArrowLeft") this.cycle(-1);
         else if (e.code === "ArrowRight") this.cycle(+1);
@@ -199,14 +180,6 @@ export class Interaction {
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   tick(playerPosition) {
-    this.#syncTorchHint();
-    // If the world flipped from night → day mid-aim, exit silently so the
-    // controller speed multiplier and locked anim don't linger.
-    const tod = this.timeOfDay?.mode ?? null;
-    if (tod !== this._lastTodMode) {
-      this._lastTodMode = tod;
-      if (tod !== "night" && this.torchAiming) this.exitTorchAim();
-    }
     if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen) {
       this.#hidePrompt();
       return;
@@ -285,7 +258,6 @@ export class Interaction {
     // slot is whatever the showcase is currently displaying. `index` is
     // the project index (0..projects.length-1) because the showcase
     // mutates items[0].index to track its current project.
-    if (this.torchAiming) this.exitTorchAim();
     this.billboards.setFocused?.(true);
     // Make sure the showcase is showing the project we're activating —
     // important if the auto-rotate had advanced past it between the
@@ -444,7 +416,6 @@ export class Interaction {
 
   openContact() {
     if (this.contactOpen) return;
-    if (this.torchAiming) this.exitTorchAim();
     this.contactOpen = true;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
@@ -465,7 +436,6 @@ export class Interaction {
 
   openResume() {
     if (this.resumeOpen) return;
-    if (this.torchAiming) this.exitTorchAim();
     this.resumeOpen = true;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
@@ -490,7 +460,6 @@ export class Interaction {
 
   openSkills() {
     if (!this.skillSphere || this.skillOpen) return;
-    if (this.torchAiming) this.exitTorchAim();
     this.#hidePrompt();
     this.skillSphere.enter();
   }
@@ -527,49 +496,5 @@ export class Interaction {
     const counter = this.panelEl.querySelector(".panel-counter");
     const total = this.billboards.projects?.length ?? this.billboards.items.length;
     counter.textContent = `${item.index + 1} / ${total}`;
-  }
-
-  // ── Torch aim ────────────────────────────────────────────────────────────
-
-  toggleTorchAim() {
-    if (this.torchAiming) this.exitTorchAim();
-    else this.enterTorchAim();
-  }
-
-  enterTorchAim() {
-    if (this.torchAiming) return;
-    if (!this.player?.character?.actions?.torchAim) return;
-    this.torchAiming = true;
-    this.controller.actionSpeedMultiplier = 0.5;
-    this.player.character.playTorchOverlay("torchAim", 0.35);
-    this.audio?.playInteract?.();
-  }
-
-  exitTorchAim() {
-    if (!this.torchAiming) return;
-    this.torchAiming = false;
-    this.controller.actionSpeedMultiplier = 1.0;
-    this.player?.character?.stopTorchOverlay?.(0.35);
-  }
-
-  #syncTorchHint() {
-    const torchOn = this.player?.character?.torchMesh?.visible === true;
-    const night = this.timeOfDay?.mode === "night";
-    const modalOpen =
-      this.activeIndex !== -1 || this.contactOpen || this.resumeOpen || this.skillOpen || this.zooming;
-    // Same gate every other corner toggle / HUD uses — stay hidden while the
-    // loading + welcome overlays are up. main.js strips `booting` from <body>
-    // the moment the user starts the journey.
-    const booting = document.body.classList.contains("booting");
-    const show = torchOn && night && !modalOpen && !booting;
-    if (!this.torchHintEl) return;
-    if (show) {
-      this.torchHintEl.classList.remove("hidden");
-      this.torchHintEl.querySelector(".label").textContent = this.torchAiming
-        ? "Lower torch"
-        : "Aim torch";
-    } else {
-      this.torchHintEl.classList.add("hidden");
-    }
   }
 }

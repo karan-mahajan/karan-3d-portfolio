@@ -271,7 +271,6 @@ export class Foliage {
     core.frustumCulled = false;
     core.castShadow = false;
     core.receiveShadow = true;
-    core.userData.noTorchRaycast = true;
 
     // 2. Leaf-card shell — ragged SDF edge over the core.
     const shellMat = new MeshLambertNodeMaterial({ side: THREE.DoubleSide });
@@ -289,7 +288,6 @@ export class Foliage {
     shell.frustumCulled = false;
     shell.castShadow = false;
     shell.receiveShadow = true;
-    shell.userData.noTorchRaycast = true;
 
     this.scene.add(core);
     this.scene.add(shell);

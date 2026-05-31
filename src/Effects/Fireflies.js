@@ -117,8 +117,7 @@ export class Fireflies {
     // TimeOfDay can keep mutating `.value` in place (and gsap can tween it).
     this.material.uniforms = { uTime, uIntensity };
 
-    // Kept named `points` for API parity with the old THREE.Points cloud
-    // (App + TorchLight reference `fireflies.points`).
+    // Kept named `points` for API parity with the old THREE.Points cloud.
     this.points = new THREE.Mesh(this.geometry, mat);
     this.points.name = 'fireflies';
     this.points.frustumCulled = false;

@@ -1,5 +1,11 @@
 import * as THREE from 'three/webgpu';
 
+// When the player lands on a fence rope, shove them sideways off the thin top
+// instead of letting them balance. Speed × time must clear half-thickness +
+// capsule radius (~0.12 + 0.3) so they actually fall off.
+const FENCE_EJECT_SPEED = 2.5;   // m/s sideways push
+const FENCE_EJECT_TIME = 0.25;   // seconds the push lasts (~0.6 m of travel)
+
 /**
  * Rapier physics manager.
  *
@@ -45,6 +51,11 @@ export class Physics {
     this.characterController.enableSnapToGround(0.5);
     this.characterController.enableAutostep(0.4, 0.2, true);
     this.characterController.setSlideEnabled(true);
+
+    // Fence colliders keyed by handle → the wall's perpendicular axis + centre.
+    // The player must be able to jump a fence but never balance on the rope, so
+    // PlayerBody.move() refuses to ground on these and slides the player off.
+    this.fenceColliders = new Map();
 
     this.ready = true;
     return true;
@@ -130,6 +141,43 @@ export class Physics {
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz);
     world.createCollider(colliderDesc, body);
+    return body;
+  }
+
+  /**
+   * Thin wall capped by a sharp pitched ridge — used for rope-and-post fences.
+   * The ridge keeps the silhouette tight, but a horizontal ridge LINE is still
+   * balanceable, so a rope must not read as ground at all: this registers the
+   * collider in `fenceColliders` and PlayerBody.move() refuses to stand on it
+   * (you can jump the fence, but never perch on the rope). The wall below the
+   * `shoulderY`→`topY` roof still blocks walking through.
+   *
+   * Local frame: length along X (±`halfLen`), thickness along Z (±`halfThick`),
+   * ridge runs the length; `yaw` rotates it to the segment direction. Y is baked
+   * absolute (yaw rotation preserves Y), so `(x, z)` is the wall's ground centre.
+   */
+  addStaticRidgeWall(x, z, baseY, shoulderY, topY, halfLen, halfThick, yaw = 0) {
+    const { RAPIER, world } = this;
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, 0, z);
+    if (yaw) {
+      const half = yaw / 2;
+      bodyDesc.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
+    }
+    const body = world.createRigidBody(bodyDesc);
+    const pts = [];
+    for (const sx of [-halfLen, halfLen]) {
+      pts.push(sx, baseY, -halfThick, sx, baseY, halfThick); // wall foot
+      pts.push(sx, shoulderY, -halfThick, sx, shoulderY, halfThick); // roof eaves
+      pts.push(sx, topY, 0); // ridge apex
+    }
+    const colliderDesc = RAPIER.ColliderDesc.convexHull(new Float32Array(pts));
+    if (!colliderDesc) return body;
+    const collider = world.createCollider(colliderDesc, body);
+    // Perpendicular (thin) axis of the wall = local +Z rotated by yaw → the
+    // direction to slide the player off if they land on the rope.
+    this.fenceColliders.set(collider.handle, {
+      nx: Math.sin(yaw), nz: Math.cos(yaw), cx: x, cz: z,
+    });
     return body;
   }
 
@@ -307,6 +355,11 @@ class PlayerBody {
     this.radius = radius;
     this._verticalVelocity = 0;
     this._grounded = true;
+    // Sideways slide applied for a few frames after landing on a fence rope, to
+    // shove the player off the thin top instead of letting them balance on it.
+    this._fenceSlideX = 0;
+    this._fenceSlideZ = 0;
+    this._fenceSlideT = 0;
   }
 
   get position() {
@@ -334,10 +387,19 @@ class PlayerBody {
     // Integrate vertical velocity (gravity + jump impulse).
     this._verticalVelocity += Physics.GRAVITY * delta;
 
+    // Carry an active fence-eject slide into this frame's desired motion.
+    let slideX = 0;
+    let slideZ = 0;
+    if (this._fenceSlideT > 0) {
+      slideX = this._fenceSlideX;
+      slideZ = this._fenceSlideZ;
+      this._fenceSlideT -= delta;
+    }
+
     const desired = {
-      x: horizontal.x * delta,
+      x: (horizontal.x + slideX) * delta,
       y: this._verticalVelocity * delta,
-      z: horizontal.z * delta,
+      z: (horizontal.z + slideZ) * delta,
     };
 
     const cc = this.physics.characterController;
@@ -345,6 +407,10 @@ class PlayerBody {
     const corrected = cc.computedMovement();
 
     this._grounded = cc.computedGrounded();
+    // A rope is not standable: if the support this frame is a fence top, drop
+    // grounded and kick the player sideways off the thin wall (they keep
+    // falling, so they slide down a roof face and land beside the fence).
+    if (this._grounded) this.#rejectFenceStanding(cc);
     if (this._grounded && this._verticalVelocity < 0) {
       this._verticalVelocity = 0;
     }
@@ -355,6 +421,36 @@ class PlayerBody {
       y: t.y + corrected.y,
       z: t.z + corrected.z,
     });
+  }
+
+  /**
+   * If the player is being supported FROM BELOW by a fence collider (rope top),
+   * un-ground them and start a short sideways slide so they can't perch on it.
+   * A side-on contact (walking into the fence) has a horizontal normal and is
+   * ignored — only an upward support normal counts as "standing on it".
+   */
+  #rejectFenceStanding(cc) {
+    const fences = this.physics.fenceColliders;
+    if (!fences || fences.size === 0) return;
+
+    const n = cc.numComputedCollisions();
+    for (let i = 0; i < n; i++) {
+      const col = cc.computedCollision(i);
+      const handle = col?.collider?.handle;
+      if (handle == null) continue;
+      const info = fences.get(handle);
+      if (!info) continue;
+      if (!col.normal1 || col.normal1.y < 0.5) continue; // not supporting from below
+
+      this._grounded = false;
+      // Slide along the wall's thin axis, away from its centre line.
+      const t = this.body.translation();
+      const side = (t.x - info.cx) * info.nx + (t.z - info.cz) * info.nz >= 0 ? 1 : -1;
+      this._fenceSlideX = info.nx * side * FENCE_EJECT_SPEED;
+      this._fenceSlideZ = info.nz * side * FENCE_EJECT_SPEED;
+      this._fenceSlideT = FENCE_EJECT_TIME;
+      return;
+    }
   }
 
   teleport(x, y, z) {

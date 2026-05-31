@@ -622,7 +622,6 @@ export class DistanceGame {
     });
     this.#line = new THREE.Line(this.#lineGeometry, this.#lineMaterial);
     this.#line.frustumCulled = false;
-    this.#line.userData.noTorchRaycast = true;
     this.#scene.add(this.#line);
 
     // Tracer = bright core sphere + larger additive halo. The halo gives
@@ -643,7 +642,6 @@ export class DistanceGame {
     );
     this.#tracer.frustumCulled = false;
     this.#tracer.position.copy(start);
-    this.#tracer.userData.noTorchRaycast = true;
     this.#scene.add(this.#tracer);
 
     // Outer glow halo — same colour, much larger, additive, low opacity.
@@ -662,7 +660,6 @@ export class DistanceGame {
       haloMat,
     );
     halo.frustumCulled = false;
-    halo.userData.noTorchRaycast = true;
     halo.userData.dgHalo = true; // tagged so #startFade can fade it
     this.#tracer.add(halo);
 
