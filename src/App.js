@@ -45,6 +45,7 @@ import { AnimatedProps } from "./World/AnimatedProps.js";
 import { Bonfires } from "./World/Bonfires.js";
 import { Flowers } from "./World/Flowers.js";
 import { Foliage } from "./World/Foliage.js";
+import { Environment } from "./World/Environment.js";
 import { Grass } from "./World/Grass.js";
 import { Lava } from "./World/Lava.js";
 import { LavaHazard } from "./Systems/LavaHazard.js";
@@ -138,6 +139,17 @@ export class App extends EventTarget {
       this.camera,
       this.sizes,
       this.quality.postfx,
+    );
+
+    // Sky-derived image-based lighting. Generates a PMREM from the gradient
+    // Sky so props get soft indirect light keyed to the world's own sky colours
+    // (fixes the flat, "pasted-on" look). update() is called each tick and
+    // rebuilds only when the sky colours actually move.
+    this.environment = new Environment(
+      this.renderer,
+      this.scene,
+      this.world.sky.material,
+      { intensity: 0.35 },
     );
 
     this.audio = new AudioManager();
@@ -245,47 +257,54 @@ export class App extends EventTarget {
     });
   }
 
-  /** Wires the HTML toggle button (#tod-toggle) to setMode. */
+  /** Wires the #tod-toggle button. The world runs a continuous 2-minute cycle
+   *  (dawn→day→dusk→night); clicking jumps the cycle FORWARD to the next phase
+   *  and the auto-advance carries on from there. The icon tracks the live
+   *  phase (updated from #tick), so it also changes on its own as time passes. */
   #bindTimeOfDayToggle() {
     const btn = document.getElementById("tod-toggle");
     if (!btn) return;
     btn.addEventListener("click", async () => {
       this.audio?.playToggle();
-      // The opposite mode's shader variants are only warm once the deferred
-      // prewarm resolves. If the user flips before then, await it so the
-      // toggle doesn't JIT-compile materials on screen (the night/morning
-      // hitch). Audio feedback above already fired, so the wait is invisible.
+      // Shader variants for the other phases are only warm once the deferred
+      // prewarm resolves. If the user clicks before then, await it so jumping
+      // phases doesn't JIT-compile materials on screen (the night/morning hitch).
       if (!this._shaderReady && this.shaderPrewarmPromise) {
         await this.shaderPrewarmPromise;
       }
-      this.timeOfDay.toggle();
+      this.timeOfDay.cyclePhase();
       this.#syncTimeOfDayButton();
     });
     this.#syncTimeOfDayButton();
   }
 
+  // Per-phase button icon (feather-style) + accent colour data-attr.
+  static #TOD_ICONS = {
+    day: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+    night: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>',
+    dawn: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="2" x2="12" y2="9"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="8 6 12 2 16 6"/></svg>',
+    dusk: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="9" x2="12" y2="2"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="16 5 12 9 8 5"/></svg>',
+  };
+
+  static #TOD_LABELS = {
+    dawn: "Dawn — click for day",
+    day: "Day — click for dusk",
+    dusk: "Dusk — click for night",
+    night: "Night — click for dawn",
+  };
+
   #syncTimeOfDayButton() {
     const btn = document.getElementById("tod-toggle");
     if (!btn) return;
-    const mode = this.timeOfDay.mode;
-    btn.dataset.mode = mode;
-    // Flip a body data-attr so the WASD HUD, rain/audio/wind toggles, and
-    // any other UI overlays can theme themselves to match the world mode.
-    document.body.dataset.tod = mode;
-    // Sun icon during day (click switches TO night) and a moon during
-    // night (click switches TO day) — the icon shows the CURRENT state.
-    btn.innerHTML =
-      mode === "day"
-        ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
-        : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>';
-    btn.setAttribute(
-      "aria-label",
-      mode === "day" ? "Switch to night mode" : "Switch to day mode",
-    );
-    btn.setAttribute(
-      "title",
-      mode === "day" ? "Switch to night" : "Switch to day",
-    );
+    const phase = this.timeOfDay.phase;
+    btn.dataset.phase = phase;
+    // Body data-attr (day|night) still themes the WASD HUD + other overlays;
+    // dawn reads as day, dusk as night for that coarse light/dark split.
+    document.body.dataset.tod = this.timeOfDay.mode;
+    btn.innerHTML = App.#TOD_ICONS[phase] ?? App.#TOD_ICONS.day;
+    const label = App.#TOD_LABELS[phase] ?? "Change time of day";
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
   }
 
   /**
@@ -309,18 +328,19 @@ export class App extends EventTarget {
     if (!this.renderer || !this.scene || !this.camera) return;
     if (typeof this.renderer.compileAsync !== "function") return; // r152+
     const original = this.timeOfDay.mode;
+    const originalProgress = this.timeOfDay.progress;
     const playerPos = this.player?.position ?? { x: 0, y: 0, z: 0 };
     const prewarmGroup = this.#createShaderPrewarmGroup();
     if (prewarmGroup) this.scene.add(prewarmGroup);
 
-    // Hard-snap via reapply() (which calls #applyInstant) instead of
-    // setMode(). setMode would kick off GSAP tweens that may not flush
-    // synchronously across an `await`, leaving lighting state mid-tween
-    // when compileAsync runs.
+    // Force a lighting config by writing `mode` (jumps the cycle to that
+    // phase's peak + applies instantly) so compileAsync warms both day and
+    // night shader variants. frameDelta 0 = the cycle doesn't advance during
+    // the settle tick.
     const applyAndSettle = (mode) => {
       this.timeOfDay.mode = mode;
       this.timeOfDay.reapply();
-      this.timeOfDay.tick(playerPos, this.camera, 0);
+      this.timeOfDay.tick(playerPos, this.camera, 0, 0);
     };
 
     try {
@@ -331,7 +351,10 @@ export class App extends EventTarget {
     } catch (err) {
       console.warn("[App] shader prewarm failed:", err);
     } finally {
-      applyAndSettle(original);
+      // Restore the real clock-based starting position so the cycle resumes
+      // where it would have been (not pinned to the day/night peak).
+      this.timeOfDay.progress = originalProgress;
+      this.timeOfDay.reapply();
       if (prewarmGroup) {
         this.scene.remove(prewarmGroup);
         const geometries = new Set();
@@ -929,6 +952,11 @@ export class App extends EventTarget {
         this.#toggleNavmaskDebug();
       } else if (e.code === "KeyK") {
         this.#toggleColliderDebug();
+      } else if (e.code === "KeyT") {
+        // Debug: cycle the tone-mapping operator (Neutral → AgX → ACES) so the
+        // look can be compared live, then locked in.
+        const label = this.postfx?.cycleToneMapping?.();
+        if (label) console.info(`[postfx] tone mapping → ${label}`);
       }
     });
     // Console helper: dump every Rapier collider (translation + half-extents),
@@ -1045,10 +1073,15 @@ export class App extends EventTarget {
     // read as "shadows broken". PCFSoft is a few-percent slower but the
     // 144fps machine has plenty of headroom.
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // 1.3 (was 1.2) — slight bump for the Quaternius nature overhaul so the
-    // warmer painted greens/browns read brighter under the same warm-sun rig.
-    this.renderer.toneMappingExposure = 1.3;
+    // Tone mapping is applied explicitly in PostFX's output node (switchable
+    // operator, default Khronos PBR Neutral) so the renderer must NOT also
+    // apply one — NoToneMapping prevents double application. The exposure is
+    // still read by PostFX's .toneMapping() node from renderer.toneMappingExposure.
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    // 1.05 under PBR Neutral — Neutral darkens midtones vs ACES, so a small
+    // lift keeps the painted greens/browns reading bright without blowing the
+    // warm sun. (ACES@1.3 was washing out the authored palette.)
+    this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Disable per-render auto-reset so renderer.info accumulates across the
     // frame's water pre-render + every composer pass. #tick resets once at
@@ -1080,9 +1113,12 @@ export class App extends EventTarget {
 
   /** Warm sunset rig — directional sun + warm ambient + hemisphere fill. */
   #initLighting() {
-    const ambient = new THREE.AmbientLight(DUSK.ambientColor, 0.45);
-    const hemi = new THREE.HemisphereLight(DUSK.hemiSky, DUSK.hemiGround, 0.55);
-    const sun = new THREE.DirectionalLight(DUSK.sunColor, 2.4);
+    // Seeds only — TimeOfDay overwrites these from its palette on construction.
+    // Tuned low (ambient/hemi) so the sun stays the dominant key once IBL adds
+    // the sky-coloured fill (see Environment.js + DAY_PALETTE).
+    const ambient = new THREE.AmbientLight(DUSK.ambientColor, 0.28);
+    const hemi = new THREE.HemisphereLight(DUSK.hemiSky, DUSK.hemiGround, 0.32);
+    const sun = new THREE.DirectionalLight(DUSK.sunColor, 2.1);
     // Initial position is overwritten by TimeOfDay on construction; this
     // just keeps the matrix sane for the first physics + shadow init.
     sun.position.set(36, 11, 22);
@@ -1104,7 +1140,7 @@ export class App extends EventTarget {
     sun.shadow.normalBias = 0.04;
 
     // Soft warm rim from the opposite side so trees aren't black silhouettes.
-    const rim = new THREE.DirectionalLight("#ff6b3d", 0.5);
+    const rim = new THREE.DirectionalLight("#ff6b3d", 0.18);
     rim.position.set(-30, 12, -20);
     rim.target.position.set(0, 0, 0);
     this.scene.add(rim.target, rim);
@@ -1269,6 +1305,11 @@ export class App extends EventTarget {
       this._lastAudioMode = this.timeOfDay.mode;
       this.audio.setMode(this.timeOfDay.mode);
     }
+    // Keep the time-of-day button icon in sync as the cycle drifts on its own.
+    if (this.timeOfDay && this._lastTodPhase !== this.timeOfDay.phase) {
+      this._lastTodPhase = this.timeOfDay.phase;
+      this.#syncTimeOfDayButton();
+    }
     // Ocean ambience volume rides player proximity to the shoreline. Inside
     // the island it falls off with distance; in the water it's at full level.
     if (this.audio && this.water) {
@@ -1323,8 +1364,13 @@ export class App extends EventTarget {
     if (this.world.foliage) {
       this.world.foliage.setSunDirection(off);
     }
-    this.sun.update(this.camera);
-    this.timeOfDay.tick(p, this.camera, elapsed);
+    this.timeOfDay.tick(p, this.camera, elapsed, frameDelta);
+    // Sun disc follows its OWN arc (set by TimeOfDay), not the shadow light, so
+    // it sets in the west while the moon rises in the east.
+    this.sun.update(this.camera, this.timeOfDay.sunDiscDir);
+
+    // Rebuild the sky-derived IBL when the sky colours move (no-op most frames).
+    if (this.environment) this.environment.update();
 
     // Refresh the shared water reflection + refraction RTs once per frame
     // BEFORE the composer renders. With one master Reflector / Refractor

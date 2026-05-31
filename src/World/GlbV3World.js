@@ -2,6 +2,8 @@ import {
   attribute,
   clamp,
   color,
+  dot,
+  float,
   Fn,
   mix,
   positionWorld,
@@ -791,12 +793,22 @@ export class GlbV3World {
         const pathR = clamp(texture(furnMask, uv()).r, 0, 1);
         // Paint the real tile art over the path, sampled by world XZ (Blender
         // parity). Fall back to the flat warm stone if the PNG didn't load.
-        const paving = this.tileTexture
-          ? texture(
-              this.tileTexture,
-              vec2(positionWorld.x, positionWorld.z.negate()).mul(TILE_SCALE),
-            ).rgb
-          : stone;
+        // The painted slab art reads flat/dull under Lambert (no normals), so
+        // punch it up: richer saturation + a gentle contrast curve about
+        // mid-grey deepens the cracks and lifts the tile faces. Hue-preserving
+        // so the authored slab palette is kept, just less muddy.
+        let paving;
+        if (this.tileTexture) {
+          const raw = texture(
+            this.tileTexture,
+            vec2(positionWorld.x, positionWorld.z.negate()).mul(TILE_SCALE),
+          ).rgb;
+          const luma = dot(raw, vec3(0.2126, 0.7152, 0.0722));
+          const saturated = mix(vec3(luma), raw, float(1.35));
+          paving = clamp(saturated.sub(0.5).mul(1.16).add(0.5), 0, 1.5);
+        } else {
+          paving = stone;
+        }
         return mix(grassGround, paving, pathR);
       })();
     } else {

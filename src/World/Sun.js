@@ -1,20 +1,16 @@
 import * as THREE from 'three/webgpu';
 import gsap from 'gsap';
-import { DUSK } from './Palette.js';
+import { makeCelestialSprite } from './celestialSprite.js';
 
 /**
- * Visible sun in the sky. A bright opaque disc plus an additive billboard
- * corona that always faces the camera. The whole group rides with the camera
- * each frame and re-aligns to whatever direction the shared DirectionalLight
- * is shining from, so the rendered sun is locked to the shadow source.
+ * Visible sun in the sky. A SINGLE camera-facing billboard with a soft glowing
+ * profile (hot core → smooth edge → warm skirt, all one continuous gradient),
+ * so it reads as a real glowing orb instead of a hard flat disc with a ring.
+ * The group rides with the camera each frame and re-aligns to the shared
+ * DirectionalLight's direction, locking the rendered sun to the shadow source.
  *
- * Pipeline notes:
- *   - Disc uses MeshBasicMaterial with toneMapped:false and a >1 HDR colour so
- *     the UnrealBloomPass (threshold 0.85 in linear space) picks it up.
- *   - Disc is opaque (renderOrder 10) and the corona is additive-blended
- *     (renderOrder 9, in transparent queue). Sky has renderOrder -1, so the
- *     sun draws over the sky sphere even though it sits inside it.
- *   - The corona texture is generated on the fly — no external image load.
+ * Additive + toneMapped:false so the core blooms to white-hot through the
+ * bloom pass; the sprite texture is generated on the fly (no image load).
  */
 export class Sun {
   // Sit inside the sky sphere (radius 250) but well past nearby props, so
@@ -22,8 +18,7 @@ export class Sun {
   #distance = 240;
   #light;
   #group;
-  #disc;
-  #corona;
+  #orb;
   #tmpDir = new THREE.Vector3();
 
   /**
@@ -34,29 +29,20 @@ export class Sun {
     this.#light = directionalLight;
     this.#group = new THREE.Group();
 
-    // HDR-boost the disc colour so it punches through the bloom threshold
-    // (0.85 linear). Tonemapping is off so this value reaches the bloom pass
-    // unsquashed; OutputPass tonemaps the composite at the end.
-    const discColor = new THREE.Color(DUSK.sunColor).multiplyScalar(1.8);
-    // transparent:true so TimeOfDay can fade the visible sun out at night.
-    // The disc still bloom-punches because Bloom samples emissive light
-    // pre-alpha at the threshold pass; alpha just controls the final
-    // composite. depthWrite stays false so the disc doesn't fight the sky.
-    const discMat = new THREE.MeshBasicMaterial({
-      color: discColor,
-      transparent: true,
-      fog: false,
-      depthWrite: false,
-      toneMapped: false,
+    // Soft sun sprite: white-hot core, warm golden skirt.
+    const tex = makeCelestialSprite({
+      coreRadius: 0.24,
+      feather: 0.16,
+      glowPow: 2.6,
+      glowStrength: 0.55,
+      coreColor: [1.0, 0.98, 0.92],
+      edgeColor: [1.0, 0.72, 0.42],
     });
-    this.#disc = new THREE.Mesh(new THREE.SphereGeometry(5.0, 24, 18), discMat);
-    this.#disc.frustumCulled = false;
-    this.#disc.renderOrder = 10;
-
-    const coronaTex = this.#buildCoronaTexture();
-    const coronaMat = new THREE.MeshBasicMaterial({
-      map: coronaTex,
-      color: new THREE.Color(DUSK.sunColor),
+    // HDR-ish colour boost so the core punches through the bloom threshold;
+    // tone mapping is off here, so this reaches the bloom pass unsquashed.
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      color: new THREE.Color(1.6, 1.5, 1.35),
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -64,28 +50,24 @@ export class Sun {
       toneMapped: false,
       side: THREE.DoubleSide,
     });
-    this.#corona = new THREE.Mesh(new THREE.PlaneGeometry(22, 22), coronaMat);
-    this.#corona.frustumCulled = false;
-    this.#corona.renderOrder = 9;
+    this.#orb = new THREE.Mesh(new THREE.PlaneGeometry(34, 34), mat);
+    this.#orb.frustumCulled = false;
+    this.#orb.renderOrder = 9;
 
-    this.#group.add(this.#corona, this.#disc);
+    this.#group.add(this.#orb);
     scene.add(this.#group);
   }
 
-  /** Hard-set the disc + corona alpha. Day = 1, night = 0. */
+  /** Hard-set the orb alpha. Day = 1, night = 0. */
   setOpacity(value) {
-    this.#disc.material.opacity = value;
-    this.#corona.material.opacity = value;
+    this.#orb.material.opacity = value;
     this.#group.visible = value > 0.001;
   }
 
   /** GSAP-tween the visible alpha. Used by TimeOfDay during mode transitions. */
   tweenOpacity(target, duration, ease = 'sine.inOut') {
-    // Keep the group visible across the entire tween (set to false only when
-    // the end value is ~0 and we've finished animating).
     this.#group.visible = true;
-    gsap.to(this.#disc.material, { opacity: target, duration, ease });
-    gsap.to(this.#corona.material, {
+    gsap.to(this.#orb.material, {
       opacity: target,
       duration,
       ease,
@@ -96,54 +78,27 @@ export class Sun {
   }
 
   /**
-   * Procedural 256² halo: white centre fading to transparent at the edge with
-   * a pow(1-d, 2.5) curve — sharp hot core, long soft skirt.
-   */
-  #buildCoronaTexture() {
-    const size = 256;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    const half = size / 2;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = (x - half) / half;
-        const dy = (y - half) / half;
-        const d = Math.min(Math.sqrt(dx * dx + dy * dy), 1);
-        const a = Math.pow(1 - d, 2.5);
-        const i = (y * size + x) * 4;
-        img.data[i] = 255;
-        img.data[i + 1] = 255;
-        img.data[i + 2] = 255;
-        img.data[i + 3] = Math.round(a * 255);
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.generateMipmaps = false;
-    tex.needsUpdate = true;
-    return tex;
-  }
-
-  /**
-   * Re-place the sun in the direction of the DirectionalLight (relative to its
-   * target) and push it #distance units from the camera. Corona quaternion is
-   * snapped to the camera each frame so the halo plane never edges-on.
+   * Re-place the sun #distance units from the camera along `dir` (the sun-arc
+   * display direction from TimeOfDay) so it follows its OWN arc independent of
+   * the shadow light — at dusk the sun sets west while the moon rises east.
+   * Falls back to the DirectionalLight direction if no dir is passed. The
+   * billboard faces the camera each frame so it never edges-on.
    *
    * @param {THREE.Camera} camera
+   * @param {THREE.Vector3} [dir] - normalised sun-disc direction
    */
-  update(camera) {
-    this.#tmpDir
-      .copy(this.#light.position)
-      .sub(this.#light.target.position)
-      .normalize();
+  update(camera, dir = null) {
+    if (dir) {
+      this.#tmpDir.copy(dir).normalize();
+    } else {
+      this.#tmpDir
+        .copy(this.#light.position)
+        .sub(this.#light.target.position)
+        .normalize();
+    }
     this.#group.position
       .copy(camera.position)
       .addScaledVector(this.#tmpDir, this.#distance);
-    this.#corona.quaternion.copy(camera.quaternion);
+    this.#orb.quaternion.copy(camera.quaternion);
   }
 }

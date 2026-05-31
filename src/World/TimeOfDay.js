@@ -1,6 +1,8 @@
 import gsap from "gsap";
 import * as THREE from "three/webgpu";
 import { MeshBasicNodeMaterial } from "three/webgpu";
+import { DUSK } from "./Palette.js";
+import { makeMoonSprite, randomMoonPhaseAngle } from "./celestialSprite.js";
 import {
   Fn, attribute, uniform, varying, vec3, vec4, float,
   positionGeometry, positionLocal, uv, sin, cos, length, smoothstep, pow, max,
@@ -31,7 +33,10 @@ const STAR_QUAD_SIZE = 0.7;
 
 export const DAY_PALETTE = Object.freeze({
   sunColor: "#ffeedd",
-  sunIntensity: 1.3,
+  // Dominant key (was 1.3). With sky-derived IBL now providing fill, the sun
+  // should clearly out-power the ambient/hemi so surfaces read with form
+  // (key:fill ≈ 3:1) instead of a flat even wash.
+  sunIntensity: 2.1,
   // Position chosen so the visible Sun.js disc falls inside the default
   // third-person camera frame (player at spawn, camera at -Z facing +Z,
   // FOV 45° vertical / ~67° horizontal). Direction (15, 9, 35) gives:
@@ -40,12 +45,19 @@ export const DAY_PALETTE = Object.freeze({
   // Shadow direction is fine at this elevation; cast length is moderate.
   sunOffset: new THREE.Vector3(15, 9, 35),
   rimColor: "#ff8855",
-  rimIntensity: 0.35,
-  ambientColor: "#ccbbaa",
-  ambientIntensity: 0.5,
+  // Faint edge separation only (was 0.35) — IBL + hemi now carry the fill, so
+  // a strong rim would just flatten contrast.
+  rimIntensity: 0.18,
+  // Ambient pulled down (was 0.5) and warmed slightly toward the shadow-purple
+  // family so unlit/shadowed surfaces drift to colour, not flat grey-black —
+  // this is the palette-safe half of the chromatic-shadow look (the other half
+  // is PostFX split-tone). IBL provides the real sky-coloured fill now.
+  ambientColor: "#b59bb0",
+  ambientIntensity: 0.28,
   hemiSky: "#88bbee",
-  hemiGround: "#886644",
-  hemiIntensity: 0.35,
+  // Warm-purple ground bounce so undersides catch a hint of the shadow tint.
+  hemiGround: "#7a5a6a",
+  hemiIntensity: 0.32,
   skyTop: "#4488cc",
   skyMid: "#88bbee",
   // Horizon === fog colour so the ocean fades seamlessly into the sky band
@@ -137,6 +149,101 @@ export const NIGHT_PALETTE = Object.freeze({
 });
 
 /**
+ * DUSK keyframe — golden hour. Colours are the user's authored dusk palette
+ * (Palette.DUSK), the warm sunset look the whole project is themed around. The
+ * intensities/opacities sit between DAY and NIGHT so the cycle reads as a real
+ * sunset: sun still warm and low, stars + lamps just beginning to appear.
+ * DAWN reuses the same warm colours (a sunrise looks like a sunset) — the EAST
+ * vs WEST sun position from the arc is what distinguishes them visually.
+ */
+export const DUSK_PALETTE = Object.freeze({
+  sunColor: DUSK.sunColor,          // #ffd58a
+  sunIntensity: 1.55,
+  rimColor: "#ff7a45",
+  rimIntensity: 0.3,
+  ambientColor: DUSK.ambientColor,  // #ffb088
+  ambientIntensity: 0.34,
+  hemiSky: DUSK.hemiSky,            // #a8c4ff
+  hemiGround: DUSK.hemiGround,      // #d4845a
+  hemiIntensity: 0.34,
+  skyTop: DUSK.skyTop,             // #6e95c7
+  skyMid: "#c79a86",               // warm band between zenith + horizon
+  skyHorizon: DUSK.skyHorizon,     // #ffb084
+  skyGround: DUSK.skyGround,       // #4a3528
+  fogColor: DUSK.fogColor,         // #ffb084 (=== skyHorizon)
+  fogNear: 45,
+  fogFar: 120,
+  grassColor: "#4a8a3a",
+  grassShadowStrength: 0.6,
+  fireflyIntensity: 0.7,
+  starsOpacity: 0.18,
+  moonOpacity: 0.3,
+  spotlightIntensity: 2.5,
+  fillColor: "#ffd9c0",
+  fillIntensity: 1.6,
+  sunMeshOpacity: 0.9,
+  billboardEmissiveBoost: 1.8,
+  streetLightIntensity: 0.6,
+  streetLightBulbEmissive: 0.9,
+  waterColor: "#3a6a8a",
+});
+
+/** DAWN keyframe — sunrise. Same warm dusk colours, slightly cooler sun + the
+ *  stars/moon/lamps a touch dimmer than dusk (night is ending, not starting). */
+export const DAWN_PALETTE = Object.freeze({
+  ...DUSK_PALETTE,
+  sunColor: "#ffd0a0",
+  rimColor: "#ff8a5a",
+  starsOpacity: 0.1,
+  moonOpacity: 0.18,
+  streetLightIntensity: 0.4,
+  streetLightBulbEmissive: 0.6,
+});
+
+// ── Continuous day/night cycle ────────────────────────────────────────────
+// One full revolution every CYCLE_SECONDS. progress 0..1 maps to a synthetic
+// clock via hoursFromProgress: p=0 → 06:00 (dawn), 0.30 → ~13:00 (day), 0.58
+// → ~20:00 (dusk), 0.75 → 00:00 (night), wrapping back to dawn at 1.0.
+const CYCLE_SECONDS = 150; // 2.5-minute full cycle
+// progress at which mode flips day↔night (hours 20:00 → (20-6)/24).
+const NIGHT_THRESHOLD = 0.5833;
+// The four selectable phases and the cycle position each one peaks at. The UI
+// lets the visitor jump to any of these; the cycle then keeps advancing.
+const PHASE_PROGRESS = Object.freeze({ dawn: 0.0, day: 0.3, dusk: 0.58, night: 0.75 });
+const PHASE_ORDER = ["dawn", "day", "dusk", "night"];
+// Keyframe stops around the cycle (sorted; DAWN repeats at 1.0 for the wrap).
+const CYCLE_STOPS = [
+  { at: 0.0, palette: DAWN_PALETTE },
+  { at: 0.3, palette: DAY_PALETTE },
+  { at: 0.58, palette: DUSK_PALETTE },
+  { at: 0.75, palette: NIGHT_PALETTE },
+  { at: 1.0, palette: DAWN_PALETTE },
+];
+// Palette fields interpolated each frame: colours (lerped in RGB) + scalars.
+const CYCLE_COLOR_FIELDS = [
+  "sunColor", "rimColor", "ambientColor", "hemiSky", "hemiGround",
+  "skyTop", "skyMid", "skyHorizon", "skyGround", "fogColor", "grassColor", "fillColor",
+];
+const CYCLE_SCALAR_FIELDS = [
+  "sunIntensity", "rimIntensity", "ambientIntensity", "hemiIntensity",
+  "fogNear", "fogFar", "fireflyIntensity", "starsOpacity", "moonOpacity",
+  "spotlightIntensity", "fillIntensity", "sunMeshOpacity", "billboardEmissiveBoost",
+];
+
+/** Synthetic clock hours [0,24) for a cycle progress. p=0 → 06:00. */
+function hoursFromProgress(progress) {
+  return (progress * 24 + 6) % 24;
+}
+
+/** Inverse: cycle progress for the real local clock, so first load matches
+ *  the actual time of day before the cycle takes over. */
+function progressFromClock() {
+  const now = new Date();
+  const hours = now.getHours() + now.getMinutes() / 60;
+  return (((hours - 6) % 24) + 24) % 24 / 24;
+}
+
+/**
  * Returns 'day' between 06:00 and 19:59, 'night' otherwise.
  * Boundary matches SUNSET in #calcSunPosition — keeps the moon-arc
  * domain continuous with the day-arc domain so a clock-driven mode
@@ -198,66 +305,179 @@ export class TimeOfDay {
     this.playerGroup = playerGroup;
     this.character = character;
 
-    this.mode = detectAutoMode();
-    // Real-time clock drives sun/moon position by default. Set true when
-    // the user clicks the toggle into a mode that disagrees with the
-    // current clock — then the arc pins to a fixed "noon" / "midnight"
-    // angle until they toggle back into the auto-detected mode.
-    this._manualOverride = false;
+    // ── Continuous-cycle state ──
+    // `_raw` is the raw progress accumulator (may run past 1.0 mid-tween); the
+    // public `progress` getter normalises it to [0,1). Init from the real
+    // clock so first load matches the actual time of day, then auto-advance.
+    this._raw = progressFromClock();
+    // When the user clicks the toggle the cycle pauses (and a gsap tween drives
+    // `_raw` to the target phase); auto-advance resumes only if unpaused.
+    this.paused = false;
+    this._mode = this.#modeAt(this.progress);
+    this._tween = null;
+
+    // Precompute per-keyframe Colors + the reusable "live" sampled palette.
+    this.#prepareCycle();
 
     this.#buildCharacterLights();
     this.#buildStars();
     this.#buildMoon();
 
-    // Apply the initial mode instantly so the world is rendered correctly
-    // on the very first frame.
-    this.#applyInstant(this.mode);
-    // Snap sunOffset to the time-of-day-derived direction immediately so
-    // the very first rendered frame already shows the real sun position,
-    // not the static palette seed.
-    this.sunOffset.copy(this.#calcOffset());
+    // Sample + apply the starting palette so the first frame is correct, and
+    // snap the sun/moon direction to the synthetic clock.
+    this.#sampleCycle(this.progress);
+    this.#applyContinuous();
+    this.sunOffset = this.#calcOffset();
+    // Separate DISPLAY directions for the sun disc (sun arc) and the moon
+    // (moon arc), so at dawn/dusk the sun sits WEST while the moon rises EAST —
+    // they never stack on top of each other the way they did when both used
+    // sunOffset. (sunOffset still drives the shadow-casting DirectionalLight.)
+    const hours = hoursFromProgress(this.progress);
+    this.sunDiscDir = this.#calcSunPosition(hours).normalize();
+    this.moonOffset = this.#calcMoonPosition(hours).normalize();
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
-  setMode(mode, duration = TRANSITION_SECONDS) {
-    if (mode !== "day" && mode !== "night") return;
-    if (mode === this.mode) return;
-    // If the requested mode disagrees with the real clock the user is
-    // overriding it — pin sun/moon to a peak angle. Returning to the
-    // auto-detected mode clears the override so the live arc resumes.
-    this._manualOverride = mode !== detectAutoMode();
-    this.mode = mode;
-    this.dispatchEvent?.("change", mode);
-    this.#transition(mode, duration);
-    if (mode === 'night') this.achievements?.onToggleNight?.();
+  /** Normalised cycle position in [0,1). 0 = dawn, 0.3 = day, 0.58 = dusk,
+   *  0.75 = night. */
+  get progress() {
+    return ((this._raw % 1) + 1) % 1;
+  }
+
+  set progress(value) {
+    this._raw = value;
+  }
+
+  /** 'day' | 'night', derived from progress. Settable from outside (the shader
+   *  prewarm sets it to force a lighting config) — a write jumps the cycle to
+   *  that phase's peak and applies it instantly. */
+  get mode() {
+    return this._mode;
+  }
+
+  set mode(value) {
+    if (value !== "day" && value !== "night") return;
+    this._raw = value === "night" ? 0.75 : 0.3;
+    this._mode = value;
+    this.#sampleCycle(this.progress);
+    this.#applyContinuous();
+  }
+
+  /** Continuous 0 (full day) → 1 (deep night) factor. Read by Lava for its
+   *  night glow. Tracks the interpolated moon opacity so it ramps with dusk. */
+  get nightFactor() {
+    return this._live.moonOpacity;
+  }
+
+  /** Current phase name ('dawn' | 'day' | 'dusk' | 'night') from progress —
+   *  drives the UI button icon. Boundaries sit midway between phase peaks. */
+  get phase() {
+    const p = this.progress;
+    if (p < 0.15 || p >= 0.85) return "dawn";
+    if (p < 0.44) return "day";
+    if (p < 0.665) return "dusk";
+    return "night";
+  }
+
+  /**
+   * Jump the cycle to a specific phase (dawn/day/dusk/night), easing FORWARD
+   * through time so the sky animates naturally (never runs backwards), then
+   * RESUME auto-advancing from there. This is what the UI selector calls — the
+   * visitor picks a starting mood and the 2-minute cycle carries on.
+   */
+  selectPhase(phase, duration = 2.0) {
+    const target = PHASE_PROGRESS[phase];
+    if (target === undefined) return;
+    this.paused = true; // hold auto-advance while the ease tween drives _raw
+    this._tween?.kill?.();
+    let to = target;
+    while (to <= this._raw) to += 1; // always forward in time
+    this._tween = gsap.to(this, {
+      _raw: to,
+      duration,
+      ease: "sine.inOut",
+      onComplete: () => {
+        this._raw = ((this._raw % 1) + 1) % 1;
+        this._tween = null;
+        this.paused = false; // resume the automatic cycle
+      },
+    });
+    if (phase === "night" || phase === "dusk") this.achievements?.onToggleNight?.();
     else this.achievements?.onToggleDay?.();
   }
 
-  toggle(duration = TRANSITION_SECONDS) {
-    this.setMode(this.mode === "day" ? "night" : "day", duration);
+  /** Advance the selector to the next phase in order (dawn→day→dusk→night→…). */
+  cyclePhase(duration = 2.0) {
+    const next = PHASE_ORDER[(PHASE_ORDER.indexOf(this.phase) + 1) % PHASE_ORDER.length];
+    this.selectPhase(next, duration);
+    return next;
   }
 
-  /** Hard-reset every uniform / light / lantern to match the current mode.
-   *  Called by App.js after async loads (Signs / Billboards) so freshly
-   *  created scene objects pick up the correct intensities without a
-   *  visible transition. */
+  /** Back-compat: a binary day/night request maps to the day or night phase. */
+  setMode(mode, duration = 2.0) {
+    this.selectPhase(mode === "night" ? "night" : "day", duration);
+  }
+
+  toggle(duration = 2.0) {
+    this.cyclePhase(duration);
+  }
+
+  /** Resume the automatic cycle (e.g. if something paused it). */
+  resumeCycle() {
+    this._tween?.kill?.();
+    this._tween = null;
+    this.paused = false;
+  }
+
+  /** Re-apply the current sampled palette to every consumer. Called by App.js
+   *  after async loads (Signs / Billboards / Water) so freshly created scene
+   *  objects pick up the correct values. */
   reapply() {
-    this.#applyInstant(this.mode);
+    this.#sampleCycle(this.progress);
+    this.#applyContinuous();
+    if (this.water) this.water.applyTimeOfDay(this._mode);
+    if (this.distantIslands) this.distantIslands.setMode(this._mode, 0);
   }
 
-  /** Recompute sunOffset from the live clock + mode and snap to it,
-   *  skipping the per-frame lerp. Useful if the system clock jumps
-   *  (e.g. a verify probe stubs Date) and you want the next rendered
-   *  frame to already show the new position. */
+  /** Snap the sun/moon direction to the current cycle position, skipping the
+   *  per-frame lerp. */
   snapToClock() {
     if (this.sunOffset) this.sunOffset.copy(this.#calcOffset());
   }
 
+  /** Mode for a given cycle progress (mirrors detectAutoMode's 06:00–20:00). */
+  #modeAt(progress) {
+    return progress < NIGHT_THRESHOLD ? "day" : "night";
+  }
+
   /**
-   * Update per-frame state — spotlight + fill light tracking the player,
-   * stars + moon following the camera.
+   * Update per-frame state — advance the day/night cycle, then track the
+   * player-following lights + camera-following stars/moon.
+   * @param {number} [frameDelta=0] seconds since last frame (0 = no advance,
+   *   used by the shader prewarm to settle a forced phase without moving time).
    */
-  tick(playerPos, camera, elapsed) {
+  tick(playerPos, camera, elapsed, frameDelta = 0) {
+    // ── Advance the cycle + apply the sampled palette ──
+    if (!this.paused && frameDelta > 0) {
+      this._raw += frameDelta / CYCLE_SECONDS;
+    }
+    this.#sampleCycle(this.progress);
+    this.#applyContinuous();
+    // Discrete day↔night flip drives water / islands / audio / achievements.
+    const mode = this.#modeAt(this.progress);
+    if (mode !== this._mode) {
+      this._mode = mode;
+      if (this.water) this.water.applyTimeOfDay(mode, { tween: true, duration: 1.5 });
+      if (this.distantIslands) this.distantIslands.setMode(mode, 1.5);
+      if (mode === "night") {
+        // Each nightfall shows a fresh, randomly-chosen moon phase.
+        this.setMoonPhase();
+        this.achievements?.onToggleNight?.();
+      } else {
+        this.achievements?.onToggleDay?.();
+      }
+    }
+
     // Keep the rim light visible even at zero intensity. Toggling
     // Light.visible changes the shader light count and can trigger a
     // noticeable compile hitch when switching day/night modes.
@@ -313,16 +533,18 @@ export class TimeOfDay {
       this.starGroup.visible =
         this.starMaterial.uniforms.uOpacity.value > 0.001;
     }
-    // Real-time sun/moon direction. Calculated each frame from the
-    // local clock (or pinned to a peak angle while the user has the
-    // toggle in manual override). Lerping rather than snapping keeps
-    // mode-toggle transitions smooth — at 0.06 the arc covers a
-    // day→night swap in ~1s, which matches the gsap color tween below.
+    // Shadow-light direction (mode-based arc). Lerped so transitions are smooth.
     this.sunOffset.lerp(this.#calcOffset(), 0.06);
+    // Independent sun-disc + moon display directions (separate arcs → opposite
+    // sides of the sky at dawn/dusk, never stacked). Snap is fine: both are
+    // continuous functions of progress and only visible when their opacity > 0.
+    const hours = hoursFromProgress(this.progress);
+    this.sunDiscDir.copy(this.#calcSunPosition(hours)).normalize();
+    this.moonOffset.copy(this.#calcMoonPosition(hours)).normalize();
 
     if (this.moonGroup && camera) {
       this.#updateMoonPosition(camera);
-      this.moonGroup.visible = this.moonDisc.material.opacity > 0.001;
+      this.moonGroup.visible = this.moonMat.opacity > 0.001;
     }
   }
 
@@ -397,7 +619,7 @@ export class TimeOfDay {
     // as instanced billboarded quads (same technique as Fireflies): a tiny quad
     // per star, billboarded in the vertex node by offsetting the corner in VIEW
     // space, twinkle + radial disc as TSL node graphs. The `.uniforms` shape is
-    // preserved so #applyInstant / #transition / tick() drive it unchanged.
+    // preserved so #applyContinuous / tick() drive it unchanged.
     const bases = new Float32Array(STAR_COUNT * 3);
     const sizes = new Float32Array(STAR_COUNT);
     const phases = new Float32Array(STAR_COUNT);
@@ -472,34 +694,15 @@ export class TimeOfDay {
     this.moonGroup = new THREE.Group();
     this.moonGroup.renderOrder = -1;
 
-    // HDR-boost the disc colour so UnrealBloomPass picks it up (threshold
-    // is 0.92 in linear space; 2.4× boost on #ddeeff puts it cleanly past
-    // that). Same trick Sun.js uses on the day-side disc.
-    const moonColor = new THREE.Color("#ddeeff").multiplyScalar(2.4);
-    const moonMat = new THREE.MeshBasicMaterial({
-      color: moonColor,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      fog: false,
-      toneMapped: false,
-    });
-    this.moonDisc = new THREE.Mesh(
-      new THREE.SphereGeometry(5.0, 24, 18),
-      moonMat,
-    );
-    this.moonDisc.frustumCulled = false;
-    this.moonDisc.renderOrder = 10;
-    this.moonGroup.add(this.moonDisc);
-
-    // Soft glow corona — billboarded plane with a procedural radial
-    // gradient, additive blended so the falloff feathers into the sky
-    // instead of reading as a solid disc behind the moon (which is how
-    // the old BackSide sphere halo looked).
-    const coronaTex = this.#buildCoronaTexture();
-    const coronaMat = new THREE.MeshBasicMaterial({
-      map: coronaTex,
-      color: new THREE.Color("#aac6ff"),
+    // Phase-shaded moon billboard — a real crescent/quarter/gibbous/full shape
+    // (random each night). Additive + toneMapped:false so only the LIT limb
+    // shows over the night sky and the core blooms to a soft glow. Replaces the
+    // old hard sphere disc + ring that read as a flat 2-tone circle.
+    this._moonPhaseAngle = randomMoonPhaseAngle();
+    this.moonMat = new THREE.MeshBasicMaterial({
+      map: makeMoonSprite({ phaseAngle: this._moonPhaseAngle }),
+      // Slight HDR-ish boost so the lit limb crosses the bloom threshold.
+      color: new THREE.Color(1.35, 1.45, 1.65),
       transparent: true,
       opacity: 0,
       depthWrite: false,
@@ -508,56 +711,34 @@ export class TimeOfDay {
       toneMapped: false,
       side: THREE.DoubleSide,
     });
-    this.moonHalo = new THREE.Mesh(new THREE.PlaneGeometry(26, 26), coronaMat);
-    this.moonHalo.frustumCulled = false;
-    this.moonHalo.renderOrder = 9;
-    this.moonGroup.add(this.moonHalo);
+    this.moonMesh = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), this.moonMat);
+    this.moonMesh.frustumCulled = false;
+    this.moonMesh.renderOrder = 9;
+    this.moonGroup.add(this.moonMesh);
 
     this.scene.add(this.moonGroup);
   }
 
-  /** Procedural 256² halo: hot core fading to fully transparent at the
-   *  edge with a pow(1-d, 3.0) curve. Identical technique to Sun.js. */
-  #buildCoronaTexture() {
-    const size = 256;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    const img = ctx.createImageData(size, size);
-    const half = size / 2;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = (x - half) / half;
-        const dy = (y - half) / half;
-        const d = Math.min(Math.sqrt(dx * dx + dy * dy), 1);
-        const a = Math.pow(1 - d, 3.0);
-        const i = (y * size + x) * 4;
-        img.data[i] = 255;
-        img.data[i + 1] = 255;
-        img.data[i + 2] = 255;
-        img.data[i + 3] = Math.round(a * 255);
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.generateMipmaps = false;
-    return tex;
+  /** Re-roll the moon phase (called when night begins so each night can show a
+   *  different crescent/half/full). Rebuilds the sprite texture. */
+  setMoonPhase(phaseAngle = randomMoonPhaseAngle()) {
+    this._moonPhaseAngle = phaseAngle;
+    const old = this.moonMat?.map;
+    if (!this.moonMat) return;
+    this.moonMat.map = makeMoonSprite({ phaseAngle });
+    this.moonMat.needsUpdate = true;
+    old?.dispose?.();
   }
 
   #updateMoonPosition(camera) {
-    // The moon disc rides the same direction as the moonlight that
-    // casts the night-time shadows — i.e. whatever sunOffset is at
-    // night. Camera-anchored at STAR_DOME_RADIUS * 0.7 so the moon
-    // sits clearly inside the star dome but well past nearby props.
+    // The moon rides the same direction as the (night) DirectionalLight that
+    // casts shadows — i.e. whatever sunOffset is at night. Camera-anchored at
+    // STAR_DOME_RADIUS * 0.7 so it sits inside the star dome, past nearby props.
     this.moonGroup.position
       .copy(camera.position)
-      .addScaledVector(this.sunOffset.clone().normalize(), STAR_DOME_RADIUS * 0.7);
-    // Halo plane billboards toward the camera so the additive corona
-    // is always seen face-on (instead of edge-on, which made it vanish).
-    this.moonHalo.quaternion.copy(camera.quaternion);
+      .addScaledVector(this.moonOffset, STAR_DOME_RADIUS * 0.7);
+    // Billboard toward the camera so the phase shape always faces the viewer.
+    this.moonMesh.quaternion.copy(camera.quaternion);
   }
 
   // ── Real-time sun/moon position ───────────────────────────────────────────
@@ -637,243 +818,108 @@ export class TimeOfDay {
   }
 
   /**
-   * Picks the current target offset based on mode + override state, then
-   * normalizes magnitude so the shadow camera frustum (configured in
-   * App.js #initLighting around the player) stays valid across the
-   * whole arc. Only the *direction* of the offset varies with time;
-   * the *distance* is locked. Returns a fresh Vector3 the caller can
-   * lerp toward or copy from freely.
+   * Sun/moon direction for the current cycle position. Converts progress to a
+   * synthetic clock, then reuses the day-arc (sun) or night-arc (moon) shape.
+   * Only the *direction* varies; magnitude is locked so the shadow-camera
+   * frustum (App.js #initLighting) stays valid across the whole arc. Returns a
+   * fresh Vector3 the caller can lerp toward or copy from freely.
    */
   #calcOffset() {
-    const hours = this._manualOverride
-      ? (this.mode === "day" ? 12 : 0)
-      : this.#getCurrentHours();
-    const off = this.mode === "day"
+    const hours = hoursFromProgress(this.progress);
+    const off = this._mode === "day"
       ? this.#calcSunPosition(hours)
       : this.#calcMoonPosition(hours);
-    const FIXED_MAG = this.mode === "day" ? 40 : 35;
+    const FIXED_MAG = this._mode === "day" ? 40 : 35;
     return off.normalize().multiplyScalar(FIXED_MAG);
   }
 
-  // ── State application ─────────────────────────────────────────────────────
-  #applyInstant(mode) {
-    const p = mode === "night" ? NIGHT_PALETTE : DAY_PALETTE;
-    // Hard-set every animatable field with no tween. Used on construction so
-    // the first rendered frame matches the auto-detected mode.
-    this.sun.color.set(p.sunColor);
+  // ── Cycle sampling + application ──────────────────────────────────────────
+  /** Precompute a THREE.Color per keyframe colour field, plus the reusable
+   *  `_live` palette (mutated in place each frame by #sampleCycle so the hot
+   *  path allocates nothing). */
+  #prepareCycle() {
+    this._stopColors = CYCLE_STOPS.map((stop) => {
+      const colors = {};
+      for (const field of CYCLE_COLOR_FIELDS) {
+        colors[field] = new THREE.Color(stop.palette[field]);
+      }
+      return colors;
+    });
+    this._live = {};
+    for (const field of CYCLE_COLOR_FIELDS) this._live[field] = new THREE.Color();
+    for (const field of CYCLE_SCALAR_FIELDS) this._live[field] = 0;
+  }
+
+  /** Interpolate every palette field into `_live` for the given progress,
+   *  smoothstepping between the two bracketing keyframes (colours in RGB). */
+  #sampleCycle(progress) {
+    const stops = CYCLE_STOPS;
+    let i = 0;
+    while (i < stops.length - 2 && progress >= stops[i + 1].at) i++;
+    const a = stops[i];
+    const b = stops[i + 1];
+    const span = Math.max(1e-6, b.at - a.at);
+    const t = Math.min(1, Math.max(0, (progress - a.at) / span));
+    const st = t * t * (3 - 2 * t); // smoothstep
+    const ca = this._stopColors[i];
+    const cb = this._stopColors[i + 1];
+    for (const field of CYCLE_COLOR_FIELDS) {
+      this._live[field].lerpColors(ca[field], cb[field], st);
+    }
+    for (const field of CYCLE_SCALAR_FIELDS) {
+      this._live[field] = a.palette[field] + (b.palette[field] - a.palette[field]) * st;
+    }
+  }
+
+  /** Push the current `_live` palette into every per-frame consumer. All cheap
+   *  uniform / scalar / colour writes — no rebuilds. Water + distant islands
+   *  ride the discrete day↔night flip instead (tick / reapply). */
+  #applyContinuous() {
+    const p = this._live;
+    this.sun.color.copy(p.sunColor);
     this.sun.intensity = p.sunIntensity;
-    this.rim.color.set(p.rimColor);
+    this.rim.color.copy(p.rimColor);
     this.rim.intensity = p.rimIntensity;
-    this.ambient.color.set(p.ambientColor);
+    this.ambient.color.copy(p.ambientColor);
     this.ambient.intensity = p.ambientIntensity;
-    this.hemi.color.set(p.hemiSky);
-    this.hemi.groundColor.set(p.hemiGround);
+    this.hemi.color.copy(p.hemiSky);
+    this.hemi.groundColor.copy(p.hemiGround);
     this.hemi.intensity = p.hemiIntensity;
 
-    this.sky.material.uniforms.uTop.value.set(p.skyTop);
-    this.sky.material.uniforms.uMid.value.set(p.skyMid);
-    this.sky.material.uniforms.uHorizon.value.set(p.skyHorizon);
-    this.sky.material.uniforms.uGround.value.set(p.skyGround);
+    this.sky.material.uniforms.uTop.value.copy(p.skyTop);
+    this.sky.material.uniforms.uMid.value.copy(p.skyMid);
+    this.sky.material.uniforms.uHorizon.value.copy(p.skyHorizon);
+    this.sky.material.uniforms.uGround.value.copy(p.skyGround);
 
-    this.fog.color.set(p.fogColor);
+    this.fog.color.copy(p.fogColor);
     this.fog.near = p.fogNear;
     this.fog.far = p.fogFar;
 
     if (this.grass) {
-      this.grass.setColor(p.grassColor);
+      this.grass.baseColor.copy(p.grassColor);
+      this.grass.syncColor();
     }
     if (this.fireflies) {
       this.fireflies.material.uniforms.uIntensity.value = p.fireflyIntensity;
     }
     this.sunMesh?.setOpacity?.(p.sunMeshOpacity);
 
-    this.fillLight.color.set(p.fillColor);
+    this.fillLight.color.copy(p.fillColor);
     this.fillLight.intensity = p.fillIntensity;
     this.spotLight.intensity = p.spotlightIntensity;
 
-    this.moonDisc.material.opacity = p.moonOpacity;
-    // Halo is additive — a higher peak (0.7) gives a real soft bloom-glow
-    // instead of the dull 0.08-opacity backside sphere we had before.
-    this.moonHalo.material.opacity = p.moonOpacity * 0.7;
-    this.moonGroup.visible = p.moonOpacity > 0.001;
+    // Gate the moon by how visible the sun is — the moon only appears once the
+    // sun has nearly set, so you never see a bright sun and a moon at the same
+    // time (they're also on opposite sides of the sky now).
+    const sunGate = Math.max(0, 1 - p.sunMeshOpacity * 2);
+    const moonOpacity = p.moonOpacity * sunGate;
+    this.moonMat.opacity = moonOpacity;
+    this.moonGroup.visible = moonOpacity > 0.001;
 
     this.starMaterial.uniforms.uOpacity.value = p.starsOpacity;
     this.starGroup.visible = p.starsOpacity > 0.001;
 
-    if (this.billboards)
-      this.billboards.emissiveBoost = p.billboardEmissiveBoost;
-    // Ocean tints (shallow / deep / foam / sun position) ride day-night
-    // together — see Water.applyTimeOfDay for the colour palettes.
-    if (this.water) this.water.applyTimeOfDay(mode);
-    if (this.distantIslands) this.distantIslands.setMode(mode, 0);
-
-    // sunOffset is computed every frame from real local time in tick();
-    // the palette value is only a seed for the very first applyInstant
-    // before the constructor snaps it to the real-time direction.
-    // Subsequent reapply() calls (after async loads of water / signs /
-    // lamps) must leave the live offset alone — otherwise the sun
-    // visibly jumps back to the static seed and then lerps out again.
-    if (!this.sunOffset) this.sunOffset = p.sunOffset.clone();
-  }
-
-  #transition(mode, duration) {
-    const p = mode === "night" ? NIGHT_PALETTE : DAY_PALETTE;
-    const ease = "sine.inOut";
-
-    if (this._activeTweens) {
-      for (const t of this._activeTweens) t.kill?.();
-    }
-
-    // Make sure stars/moon are added to the render queue at the start of any
-    // fade-in (they're hidden when opacity is ~0).
-    this.starGroup.visible = true;
-    this.moonGroup.visible = true;
-
-    const tweens = [];
-    const colorTo = (color, hex) =>
-      tweens.push(
-        gsap.to(color, {
-          r: tmp.set(hex).r,
-          g: tmp.g,
-          b: tmp.b,
-          duration,
-          ease,
-        }),
-      );
-    const tmp = new THREE.Color();
-
-    // Lights
-    colorTo(this.sun.color, p.sunColor);
-    tweens.push(
-      gsap.to(this.sun, { intensity: p.sunIntensity, duration, ease }),
-    );
-    colorTo(this.rim.color, p.rimColor);
-    tweens.push(
-      gsap.to(this.rim, { intensity: p.rimIntensity, duration, ease }),
-    );
-    colorTo(this.ambient.color, p.ambientColor);
-    tweens.push(
-      gsap.to(this.ambient, { intensity: p.ambientIntensity, duration, ease }),
-    );
-    colorTo(this.hemi.color, p.hemiSky);
-    colorTo(this.hemi.groundColor, p.hemiGround);
-    tweens.push(
-      gsap.to(this.hemi, { intensity: p.hemiIntensity, duration, ease }),
-    );
-
-    // Sun follow offset is driven by tick() each frame from the real
-    // local clock — no gsap tween here, otherwise it would fight the
-    // per-frame lerp.
-
-    // Sky
-    colorTo(this.sky.material.uniforms.uTop.value, p.skyTop);
-    colorTo(this.sky.material.uniforms.uMid.value, p.skyMid);
-    colorTo(this.sky.material.uniforms.uHorizon.value, p.skyHorizon);
-    colorTo(this.sky.material.uniforms.uGround.value, p.skyGround);
-
-    // Fog
-    colorTo(this.fog.color, p.fogColor);
-    tweens.push(
-      gsap.to(this.fog, { near: p.fogNear, far: p.fogFar, duration, ease }),
-    );
-
-    // Grass — tween the shared baseColor and propagate to all per-layer
-    // materials each onUpdate. GLB grass uses patchShadowTint at a fixed
-    // strength so the old uShadowTintStrength tween is dropped.
-    if (this.grass) {
-      const gTarget = new THREE.Color(p.grassColor);
-      tweens.push(
-        gsap.to(this.grass.baseColor, {
-          r: gTarget.r,
-          g: gTarget.g,
-          b: gTarget.b,
-          duration,
-          ease,
-          onUpdate: () => this.grass.syncColor(),
-        }),
-      );
-    }
-
-    // Fireflies
-    if (this.fireflies) {
-      tweens.push(
-        gsap.to(this.fireflies.material.uniforms.uIntensity, {
-          value: p.fireflyIntensity,
-          duration,
-          ease,
-        }),
-      );
-    }
-
-    // Sun mesh (visible disc + corona)
-    if (this.sunMesh?.tweenOpacity) {
-      this.sunMesh.tweenOpacity(p.sunMeshOpacity, duration, ease);
-    }
-
-    // Character lights
-    colorTo(this.fillLight.color, p.fillColor);
-    tweens.push(
-      gsap.to(this.fillLight, { intensity: p.fillIntensity, duration, ease }),
-    );
-    tweens.push(
-      gsap.to(this.spotLight, {
-        intensity: p.spotlightIntensity,
-        duration,
-        ease,
-      }),
-    );
-
-    // Moon (disc + halo opacity lerped together)
-    tweens.push(
-      gsap.to(this.moonDisc.material, {
-        opacity: p.moonOpacity,
-        duration,
-        ease,
-      }),
-    );
-    tweens.push(
-      gsap.to(this.moonHalo.material, {
-        opacity: p.moonOpacity * 0.7,
-        duration,
-        ease,
-      }),
-    );
-
-    // Stars
-    tweens.push(
-      gsap.to(this.starMaterial.uniforms.uOpacity, {
-        value: p.starsOpacity,
-        duration,
-        ease,
-      }),
-    );
-
-    // Billboards (read the scalar each pulse in Billboards.update)
-    if (this.billboards) {
-      tweens.push(
-        gsap.to(this.billboards, {
-          emissiveBoost: p.billboardEmissiveBoost,
-          duration,
-          ease,
-        }),
-      );
-    }
-
-    // Ocean tint — tweens shallow + deep + foam + sun position together.
-    if (this.water)
-      this.water.applyTimeOfDay(mode, { tween: true, duration, ease });
-
-    // Distant islands fade their rock + vegetation tint together with the
-    // sky/fog tween. Tiny lighthouse dots snap visibility in setMode.
-    if (this.distantIslands) this.distantIslands.setMode(mode, duration);
-
-    // Note: we deliberately do NOT schedule a delayed visibility hide
-    // here — a previous tween's delayedCall firing mid-way through the
-    // NEXT (opposite) transition would hide the moon / stars while they
-    // should still be ramping up. Visibility is now derived from the
-    // live opacity each frame inside tick().
-
-    this._activeTweens = tweens;
+    if (this.billboards) this.billboards.emissiveBoost = p.billboardEmissiveBoost;
   }
 }
 

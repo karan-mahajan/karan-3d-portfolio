@@ -1,12 +1,27 @@
-import { PostProcessing } from 'three/webgpu';
-import { pass, screenUV, smoothstep, float, vec2, vec4, Fn, uniform, sin, cos, hash } from 'three/tsl';
+import {
+  PostProcessing,
+  SRGBColorSpace,
+  NeutralToneMapping,
+  AgXToneMapping,
+  ACESFilmicToneMapping,
+} from 'three/webgpu';
+import { pass, screenUV, smoothstep, float, vec2, vec3, vec4, Fn, uniform, sin, cos, hash, dot, mix, clamp, length, workingToColorSpace } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
 /**
- * WebGPU render pipeline (B0): render → tilt-shift → bloom → output.
+ * WebGPU render pipeline (B0): render → tilt-shift → bloom → tone-map → output.
  *
  * Ported from the legacy WebGL EffectComposer (RenderPass → UnrealBloomPass →
  * tilt-shift ShaderPass → OutputPass).
+ *
+ * Tone mapping is applied EXPLICITLY in the output node (outputColorTransform
+ * is turned OFF) so the operator is switchable at runtime and so a future
+ * color-grade can slot in AFTER tone mapping but BEFORE the sRGB encode. The
+ * renderer is set to NoToneMapping in App.js so nothing double-applies; the
+ * exposure still comes from renderer.toneMappingExposure (the .toneMapping()
+ * node reads it). Default operator is Neutral (Khronos PBR Neutral) — it
+ * reproduces the authored palette ~1:1 with no hue shift, unlike ACES which
+ * desaturates and skews warm hues toward yellow.
  *
  * Tilt-shift / fake-DOF: the old GLSL computed a per-pixel
  * strength = smoothstep(0.15, 0.55, abs(uv.y - 0.5)) then averaged 8
@@ -23,6 +38,14 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
  */
 
 const TILT_TAPS = 8;
+
+// Tone-mapping operators the `T` debug key cycles through, in order. Neutral is
+// the default (index 0). Labels are logged so the user knows which is active.
+export const TONE_MAPPING_MODES = [
+  { mode: NeutralToneMapping, label: 'Neutral (PBR Neutral)' },
+  { mode: AgXToneMapping, label: 'AgX' },
+  { mode: ACESFilmicToneMapping, label: 'ACESFilmic' },
+];
 
 // screen-UV bokeh approximation. `tex` is the scene pass texture node; `amount`
 // is a live uniform scalar (0 = off, 1 = full).
@@ -48,23 +71,70 @@ const tiltShift = /*#__PURE__*/ Fn(([tex, amount]) => {
   return vec4(acc.div(float(TILT_TAPS + 1)), 1.0);
 });
 
+// Rec.709 luma weights for the saturation + split-tone steps.
+const LUMA = vec3(0.2126, 0.7152, 0.0722);
+// Split-tone chroma directions (tiny additive offsets). Highlights drift warm
+// (toward the authored sun #ffd58a: more red, less blue); shadows drift cool-
+// purple (toward the authored shadowTint #7a2da8: less green, more blue). This
+// is the chromatic-shadow "pop" — applied here because patchShadowTint is dead
+// on WebGPU node materials.
+const SPLIT_HI = vec3(0.18, 0.02, -0.22);
+const SPLIT_SH = vec3(0.02, -0.10, 0.16);
+
+/**
+ * Subtle, hue-preserving palette grade applied AFTER tone mapping + sRGB encode
+ * so pivots are perceptual (mid-gray ≈ 0.5). Kept gentle on purpose — the goal
+ * is to make the authored palette read with more depth/cohesion, NOT to recolor
+ * it. `c` is the sRGB-encoded color; the rest are live uniform scalars.
+ */
+const colorGrade = /*#__PURE__*/ Fn(([c, contrast, saturation, splitStrength, vignette]) => {
+  const col = c.rgb.toVar();
+  // Contrast about mid-gray.
+  col.assign(col.sub(0.5).mul(contrast).add(0.5));
+  // Saturation (luma-preserving — no hue rotation).
+  const luma = dot(col, LUMA).toVar();
+  col.assign(mix(vec3(luma), col, saturation));
+  // Luminance split-tone: warm highlights, cool-purple shadows.
+  col.addAssign(SPLIT_HI.mul(luma).mul(splitStrength));
+  col.addAssign(SPLIT_SH.mul(luma.oneMinus()).mul(splitStrength));
+  // Soft vignette to focus the eye and add depth.
+  const d = length(screenUV.sub(0.5));
+  const vig = float(1.0).sub(smoothstep(0.45, 0.95, d).mul(vignette));
+  col.mulAssign(vig);
+  // Scene renders opaque (renderer alpha:false), so alpha is always 1.
+  return vec4(clamp(col, 0.0, 1.0), 1.0);
+});
+
 export class PostFX {
   #tiltShiftAmount = 1.0;
   #tiltUniform = null;
   #bloomStrength = 0.30;
+  // Linear HDR node (tiltShift(scene) + bloom) — the input to tone mapping.
+  // Kept so the output node can be rebuilt when the tone-mapping operator
+  // changes (the operator is a compile-time constant, so a swap = recompile).
+  #hdrNode = null;
+  #toneMappingIndex = 0;
+  // Subtle palette grade (Step 4). All gentle on purpose — enhance, don't recolor.
+  #grade = null;
 
   constructor(renderer, scene, camera, sizes, quality = {}) {
     this.renderer = renderer;
     this.scene = scene;
     this.camera = camera;
     this.enabled = quality.enabled !== false;
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      // No post chain to apply tone mapping, so the plain renderer.render path
+      // must do it. App.js set the renderer to NoToneMapping (it expects PostFX
+      // to handle it) — restore an operator here so the fallback isn't raw HDR.
+      renderer.toneMapping = NeutralToneMapping;
+      return;
+    }
 
     this.postProcessing = new PostProcessing(renderer);
-    // PostProcessing.outputColorTransform stays at its default (true): the
-    // pipeline applies ACESFilmic tonemapping + sRGB on the final outputNode,
-    // matching the old OutputPass at the tail of the WebGL composer. (Do NOT
-    // also use a RenderOutputNode or tonemapping is applied twice.)
+    // We apply tone mapping + sRGB ourselves in #buildOutputNode (see class
+    // doc), so disable the engine's auto output transform — otherwise tone
+    // mapping would be applied twice.
+    this.postProcessing.outputColorTransform = false;
 
     const scenePass = pass(scene, camera);
     const scenePassColor = scenePass.getTextureNode('output');
@@ -85,7 +155,57 @@ export class PostFX {
     );
     this.bloomPass = bloomPass;
 
-    this.postProcessing.outputNode = tiltShift(scenePassColor, this.#tiltUniform).add(bloomPass);
+    // Linear HDR scene (sharp + bloom), still in working/linear space — tone
+    // mapping happens in #buildOutputNode.
+    this.#hdrNode = tiltShift(scenePassColor, this.#tiltUniform).add(bloomPass);
+
+    // Grade uniforms (live-tunable). Conservative defaults.
+    this.#grade = {
+      contrast: uniform(quality.gradeContrast ?? 1.08),
+      saturation: uniform(quality.gradeSaturation ?? 1.10),
+      splitStrength: uniform(quality.gradeSplitStrength ?? 0.06),
+      vignette: uniform(quality.gradeVignette ?? 0.22),
+    };
+
+    this.#buildOutputNode();
+  }
+
+  /**
+   * (Re)assemble the output node: HDR → tone-map (current operator) → sRGB.
+   * Called once at construction and again whenever the operator is swapped.
+   * The operator is baked into the ToneMappingNode's cache key, so swapping
+   * requires a fresh node + needsUpdate (a one-time recompile hitch — fine for
+   * the `T` debug toggle).
+   */
+  #buildOutputNode() {
+    const operator = TONE_MAPPING_MODES[this.#toneMappingIndex].mode;
+    // .toneMapping(mode) reads renderer.toneMappingExposure internally and
+    // returns display-referred LINEAR rgb; workingToColorSpace applies the
+    // sRGB transfer for the canvas. The grade runs LAST (perceptual space).
+    const toneMapped = this.#hdrNode.toneMapping(operator);
+    const encoded = workingToColorSpace(toneMapped, SRGBColorSpace);
+    const g = this.#grade;
+    this.postProcessing.outputNode = colorGrade(
+      encoded,
+      g.contrast,
+      g.saturation,
+      g.splitStrength,
+      g.vignette,
+    );
+    this.postProcessing.needsUpdate = true;
+  }
+
+  /** Cycle to the next tone-mapping operator (Neutral → AgX → ACES → …). */
+  cycleToneMapping() {
+    if (!this.enabled) return TONE_MAPPING_MODES[this.#toneMappingIndex].label;
+    this.#toneMappingIndex = (this.#toneMappingIndex + 1) % TONE_MAPPING_MODES.length;
+    this.#buildOutputNode();
+    return TONE_MAPPING_MODES[this.#toneMappingIndex].label;
+  }
+
+  /** Current operator label (e.g. for a HUD readout). */
+  get toneMappingLabel() {
+    return TONE_MAPPING_MODES[this.#toneMappingIndex].label;
   }
 
   /**
