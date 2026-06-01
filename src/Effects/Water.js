@@ -10,6 +10,7 @@ import {
   viewportUV, viewportSafeUV, viewportSharedTexture,
   mx_noise_float, mx_fractal_noise_float,
 } from 'three/tsl';
+import { snowCoverage } from '../World/SnowState.js';
 import gsap from 'gsap';
 
 /**
@@ -363,6 +364,10 @@ export class Water {
         N.assign(normalize(N.add(vec3(nGrad.x.negate(), 0.0, nGrad.y.negate()))));
       }
 
+      // Freeze-over: as snow accumulates the surface calms toward flat (ripples
+      // and glint die down), reading as an icing-over pond.
+      N.assign(normalize(mix(N, vec3(0.0, 1.0, 0.0), snowCoverage.mul(0.7))));
+
       const V = normalize(cameraPosition.sub(wp));
       const topDown = clamp(V.y, 0.0, 1.0);
 
@@ -515,6 +520,9 @@ export class Water {
 
       const clearWater = smoothstep(1.15, 0.2, pd).mul(this.uPlayerInWater);
       col.assign(mix(col, this.uSky.mul(1.15), clearWater.mul(0.22)));
+
+      // Frosted ice tint over the calmed surface as snow settles.
+      col.assign(mix(col, vec3(0.84, 0.9, 0.96), snowCoverage.mul(0.6)));
 
       return col;
     })();

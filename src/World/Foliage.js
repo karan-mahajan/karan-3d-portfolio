@@ -6,6 +6,7 @@ import {
   length, smoothstep, max, sin, cos, normalize, clamp,
 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { snowMask, snowColor, snowEmissive } from './SnowState.js';
 
 /**
  * Runtime tree-canopy + bush foliage — Bruno's SDF "leaf cloud" ported to the
@@ -178,7 +179,9 @@ export class Foliage {
   #colorNode(colorANode, colorBNode) {
     return Fn(() => {
       const facing = normalWorld.dot(this.sunDir).smoothstep(-0.2, 1.0);
-      return mix(colorANode, colorBNode, facing);
+      const base = mix(colorANode, colorBNode, facing);
+      // Snow settles on the upward leaf cards so canopies/bushes crown white.
+      return snowColor(base, snowMask({ low: 0.25, high: 0.7 }));
     })();
   }
 
@@ -266,6 +269,7 @@ export class Foliage {
     coreMat.positionNode = this.#positionNode();
     coreMat.normalNode = this.#normalNode();
     coreMat.colorNode = this.#colorNode(colorANode, colorBNode);
+    coreMat.emissiveNode = snowEmissive(snowMask({ low: 0.25, high: 0.7 }));
     const core = new THREE.Mesh(coreGeom, coreMat);
     core.name = `foliage:${cloud.key}:core`;
     core.frustumCulled = false;
@@ -283,6 +287,7 @@ export class Foliage {
     })();
     shellMat.alphaTest = SDF_THRESHOLD;
     shellMat.colorNode = this.#colorNode(colorANode, colorBNode);
+    shellMat.emissiveNode = snowEmissive(snowMask({ low: 0.25, high: 0.7 }));
     const shell = new THREE.Mesh(shellGeom, shellMat);
     shell.name = `foliage:${cloud.key}`;
     shell.frustumCulled = false;

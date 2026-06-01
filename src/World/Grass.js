@@ -22,6 +22,7 @@ import {
 } from "three/tsl";
 import * as THREE from "three/webgpu";
 import { MeshLambertNodeMaterial } from "three/webgpu";
+import { snowGrowAt, SNOW_ALBEDO } from "./SnowState.js";
 
 /**
  * Runtime grass field — karan's authored curved-blade grass ("myGrass") ported
@@ -253,6 +254,7 @@ export class Grass {
 
     const vBladeH = varying(float(0), "vBladeH");
     const vDry = varying(float(0), "vDry");
+    const vSnow = varying(float(0), "vSnow"); // patchy snow coverage at this blade
 
     // Rotation helpers — build node graphs (pivot at the blade base / origin).
     const rotX = (p, a) => {
@@ -305,7 +307,12 @@ export class Grass {
       )
         .mul(1 - GRASS_MIN_VISIBLE)
         .add(GRASS_MIN_VISIBLE);
-      const size = sizeR.mul(grassFactor);
+      // Snow buries grass patch by patch (grass collects EARLY, bias +0.2):
+      // shrink blades where snow has settled so they sink under the drift
+      // instead of poking through, and carry the factor to the fragment.
+      const grassSnow = snowGrowAt(worldXZ, 0.2).toVar();
+      vSnow.assign(grassSnow);
+      const size = sizeR.mul(grassFactor).mul(grassSnow.mul(-0.6).add(1));
 
       // Blade local → scaled → leaned → spun (all rooted at the base).
       let p = local.mul(size);
@@ -387,7 +394,9 @@ export class Grass {
     const green = ramp(vBladeH, PALETTE_GREEN);
     const dryCol = ramp(vBladeH, PALETTE_DRY);
     const isDry = step(vDry, DRY_FRACTION); // 1 when this blade is dry
-    mat.colorNode = mix(green, dryCol, isDry).mul(this.tint);
+    const bladeCol = mix(green, dryCol, isDry).mul(this.tint);
+    // Frost the remaining blade tops white where snow has settled (patchy).
+    mat.colorNode = mix(bladeCol, SNOW_ALBEDO, vSnow.mul(0.85));
 
     this.material = mat;
   }

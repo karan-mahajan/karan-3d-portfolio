@@ -6,6 +6,7 @@ import { GroundBreak } from "./Effects/GroundBreak.js";
 import { Leaves } from "./Effects/Leaves.js";
 import { PostFX } from "./Effects/PostFX.js";
 import { Rain } from "./Effects/Rain.js";
+import { Snow } from "./Effects/Snow.js";
 import { Thunderstorm } from "./Effects/Thunderstorm.js";
 import { Water } from "./Effects/Water.js";
 import { WindLines } from "./Effects/WindLines.js";
@@ -58,6 +59,7 @@ import { Lights } from "./World/Lights.js";
 import { DUSK } from "./World/Palette.js";
 import { Sun } from "./World/Sun.js";
 import { TimeOfDay } from "./World/TimeOfDay.js";
+import { WeatherDirector } from "./World/WeatherDirector.js";
 import { Wind } from "./World/Wind.js";
 import { World } from "./World/World.js";
 
@@ -123,6 +125,13 @@ export class App extends EventTarget {
       count: this.quality.rainCount,
       splashBudget: this.quality.rainSplashBudget,
     });
+    // Automatic snow cycle: falling flakes + accumulation on every snow-aware
+    // material, driven by the shared snowCoverage/snowFall uniforms. Independent
+    // of the manual rain toggle and of time-of-day.
+    this.snow = new Snow(this.scene, this.camera, {
+      count: Math.round((this.quality.rainCount || 1200) * 3.84),
+    });
+    this.weather = new WeatherDirector({ fog: this.scene.fog });
     this.windLines = new WindLines(this.scene, this.wind, {
       count: this.quality.windLineCount,
     });
@@ -1425,6 +1434,10 @@ export class App extends EventTarget {
       this.water.update(elapsed, frameDelta, this.player.position, sample);
     }
     this.rain.update(frameDelta);
+    // Weather director advances the snow cycle + writes the shared uniforms;
+    // Snow reads them this same frame for its falling flakes.
+    this.weather.update(frameDelta);
+    this.snow.update(frameDelta);
     this.thunderstorm.update(frameDelta, this.player.position);
     this.windLines.update(frameDelta, this.player.position);
     this.leaves.update(frameDelta, this.player.position);
@@ -1433,7 +1446,12 @@ export class App extends EventTarget {
     const px = this.player.position.x;
     const py = this.player.position.y;
     const pz = this.player.position.z;
-    const surface = this.#surfaceAt(px, py, pz);
+    let surface = this.#surfaceAt(px, py, pz);
+    // Once a storm has blanketed the ground, footsteps crunch through snow
+    // (separate walk vs run packs). Water wading keeps its own steps.
+    if (surface !== "water" && (this.weather?.coverage ?? 0) > 0.55) {
+      surface = this.player.controller.isRunning ? "snowRun" : "snow";
+    }
     this.audio?.tick(frameDelta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,
@@ -1499,6 +1517,7 @@ export class App extends EventTarget {
         waterDepth,
         isNight: this.timeOfDay?.mode === "night",
         isRaining: !!this.rain?.enabled,
+        isSnowing: !!this.weather?.isSnowing,
         mode: this.timeOfDay?.mode,
       });
       this.#tickAchievementProximity(ppos, inWater);

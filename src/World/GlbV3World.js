@@ -20,6 +20,15 @@ import {
   MeshStandardNodeMaterial,
 } from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { positionLocal } from "three/tsl";
+import {
+  snowMask,
+  snowColor4,
+  snowColor,
+  snowRoughness,
+  snowEmissive,
+  terrainSnowDrift,
+} from "./SnowState.js";
 
 // Tree GLB systems that ship a solid low-poly GREEN canopy primitive (material
 // `*_canopy_*`) alongside their trunk → foliage species key. ONLY oak does:
@@ -793,6 +802,14 @@ export class GlbV3World {
     }
 
     const mat = new MeshLambertNodeMaterial();
+    // Snow blanket: drift the surface up (depth + dunes) and whiten the ground
+    // by the shared snowCoverage uniform. Flat ground covers fully; steep banks
+    // stay bare via the normal-keyed mask.
+    mat.positionNode = positionLocal.add(terrainSnowDrift(0.12));
+    // Grass ground collects snow EARLY, the path/slab art LAST — so a storm
+    // creeps across the meadow before the walkways whiten.
+    const maskGrass = snowMask({ low: 0.2, high: 0.5, bias: 0.2 });
+    const maskPath = snowMask({ low: 0.2, high: 0.5, bias: -0.18 });
     if (this.grassMask) {
       const invSpan = 1 / (this.grassGrid.bounds * 2);
       mat.colorNode = Fn(() => {
@@ -809,7 +826,7 @@ export class GlbV3World {
         const grassGround = mix(mix(olive, midGreen, g), darkGreen, g).mul(
           this.groundGrassColor,
         );
-        if (!furnMask) return grassGround;
+        if (!furnMask) return snowColor(grassGround, maskGrass);
         // terrainFurnitures.R (mesh UVs): 1 at path centre → 0 at edge.
         const pathR = clamp(texture(furnMask, uv()).r, 0, 1);
         // Paint the real tile art over the path, sampled by world XZ (Blender
@@ -830,11 +847,18 @@ export class GlbV3World {
         } else {
           paving = stone;
         }
-        return mix(grassGround, paving, pathR);
+        return mix(
+          snowColor(grassGround, maskGrass),
+          snowColor(paving, maskPath),
+          pathR,
+        );
       })();
     } else {
-      mat.colorNode = olive;
+      mat.colorNode = snowColor(olive, maskGrass);
     }
+    // Sparkle + cool lift on the snowy ground so it reads as bright snow, not
+    // cream, under the warm sunset light.
+    mat.emissiveNode = snowEmissive(maskGrass);
     mesh.material = mat;
     mesh.receiveShadow = true;
   }
@@ -1096,9 +1120,16 @@ export class GlbV3World {
       opacity: 1,
     });
     mat.name = `worldShared:${kind}:${this.#sideName(side)}`;
-    mat.colorNode = vertexColor();
-    mat.emissiveNode = attribute(WORLD_EMISSIVE_ATTR, "vec3");
-    mat.roughnessNode = attribute(WORLD_ROUGHNESS_ATTR, "float");
+    // Shape-hugging snow: whiten + roughen upward-facing fragments by the shared
+    // snowCoverage uniform. Colour-only (no vertex displacement) so the rocks
+    // InstancedMesh that rides this material stays intact. vertexColor() is a
+    // vec4 (rgb + baked opacity in .a) — preserve the alpha.
+    const baseColor = vertexColor();
+    const baseRough = attribute(WORLD_ROUGHNESS_ATTR, "float");
+    const mask = snowMask();
+    mat.colorNode = snowColor4(baseColor, mask);
+    mat.emissiveNode = attribute(WORLD_EMISSIVE_ATTR, "vec3").add(snowEmissive(mask));
+    mat.roughnessNode = snowRoughness(baseRough, mask);
     mat.userData.worldSharedMaterial = true;
     this._sharedWorldMaterials.set(key, mat);
     return mat;

@@ -1,0 +1,105 @@
+import * as THREE from "three/webgpu";
+import { snowCoverage, snowFall } from "./SnowState.js";
+
+/**
+ * Drives the automatic snow cycle. The portfolio has no other weather
+ * scheduler (rain is a manual toggle), so this is the sole writer of the shared
+ * `snowCoverage` / `snowFall` uniforms.
+ *
+ * Cycle: clear → onset (snow builds) → storm (heavy, held) → melt → clear …
+ * Time-of-day independent — snow can fall at noon or midnight.
+ *
+ * Fog: lerps a private winter tint over whatever colour TimeOfDay has settled
+ * on. The base is re-snapshotted every frame while clear, so day/night changes
+ * are picked up automatically and never fought over.
+ */
+
+const FIRST_DELAY = 15; // s after load before the first storm (short for testing)
+const CLEAR_HOLD = 30; // s of clear weather between storms
+const ONSET = 30; // s for snow to creep in patch by patch
+const STORM_HOLD = 45; // s of heavy snow
+const MELT = 30; // s for snow to melt off
+
+const approach = (a, b, rate, delta) =>
+  a + (b - a) * Math.min(1, Math.max(0, rate * delta));
+
+export class WeatherDirector {
+  /** @param {{ fog?: THREE.Fog|null }} [o] */
+  constructor({ fog = null } = {}) {
+    this.fog = fog;
+    this.enabled = true;
+    this._phase = "clear";
+    this._t = 0;
+    this._wait = FIRST_DELAY;
+    this._cov = 0;
+    this._fall = 0;
+    this._baseFog = fog ? fog.color.clone() : null;
+    this._winterFog = new THREE.Color(0xc9dee9);
+  }
+
+  /** True once snow is visibly falling or laying — for achievements / HUD. */
+  get isSnowing() {
+    return this._fall > 0.15 || this._cov > 0.15;
+  }
+
+  /** Current accumulation 0..1 — App reads it to swap footsteps to snow. */
+  get coverage() {
+    return this._cov;
+  }
+
+  setEnabled(value) {
+    this.enabled = value;
+  }
+
+  #go(phase) {
+    this._phase = phase;
+    this._t = 0;
+  }
+
+  update(delta) {
+    if (!this.enabled) {
+      this._fall = approach(this._fall, 0, 0.4, delta);
+      this._cov = approach(this._cov, 0, 0.1, delta);
+    } else {
+      this._t += delta;
+      switch (this._phase) {
+        case "clear":
+          this._fall = approach(this._fall, 0, 0.4, delta);
+          this._cov = approach(this._cov, 0, 0.12, delta);
+          if (this._t >= this._wait) this.#go("onset");
+          break;
+        case "onset":
+          this._fall = approach(this._fall, 1, 0.5, delta);
+          this._cov = Math.min(1, this._cov + delta / ONSET);
+          if (this._t >= ONSET) this.#go("storm");
+          break;
+        case "storm":
+          this._fall = approach(this._fall, 1, 0.6, delta);
+          this._cov = Math.min(1, this._cov + delta / ONSET);
+          if (this._t >= STORM_HOLD) this.#go("melt");
+          break;
+        case "melt":
+          this._fall = approach(this._fall, 0, 0.45, delta);
+          this._cov = Math.max(0, this._cov - delta / MELT);
+          if (this._t >= MELT) {
+            this._wait = CLEAR_HOLD;
+            this.#go("clear");
+          }
+          break;
+      }
+    }
+    snowCoverage.value = this._cov;
+    snowFall.value = this._fall;
+    this.#applyFog();
+  }
+
+  #applyFog() {
+    if (!this.fog || !this._baseFog) return;
+    // While there's no snow, TimeOfDay owns the fog — keep snapshotting it.
+    if (this._cov < 0.02) {
+      this._baseFog.copy(this.fog.color);
+      return;
+    }
+    this.fog.color.copy(this._baseFog).lerp(this._winterFog, this._cov * 0.7);
+  }
+}

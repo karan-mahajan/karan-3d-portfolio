@@ -207,6 +207,11 @@ export const DAWN_PALETTE = Object.freeze({
 const CYCLE_SECONDS = 150; // 2.5-minute full cycle
 // progress at which mode flips day↔night (hours 20:00 → (20-6)/24).
 const NIGHT_THRESHOLD = 0.5833;
+// Night should pass quickly — the dark arc (NIGHT_THRESHOLD→1.0 ≈ 42% of the
+// cycle ≈ 62s at the base rate) is fast-forwarded to NIGHT_SECONDS wall-clock.
+// Day keeps the slow base rate, so we get long days + short nights.
+const NIGHT_SECONDS = 10;
+const NIGHT_SPEEDUP = ((1 - NIGHT_THRESHOLD) * CYCLE_SECONDS) / NIGHT_SECONDS;
 // The four selectable phases and the cycle position each one peaks at. The UI
 // lets the visitor jump to any of these; the cycle then keeps advancing.
 const PHASE_PROGRESS = Object.freeze({ dawn: 0.0, day: 0.3, dusk: 0.58, night: 0.75 });
@@ -459,7 +464,10 @@ export class TimeOfDay {
   tick(playerPos, camera, elapsed, frameDelta = 0) {
     // ── Advance the cycle + apply the sampled palette ──
     if (!this.paused && frameDelta > 0) {
-      this._raw += frameDelta / CYCLE_SECONDS;
+      // Fast-forward through the night arc so the dark phase only lasts
+      // ~NIGHT_SECONDS while daytime keeps the slow base rate.
+      const speed = this.progress >= NIGHT_THRESHOLD ? NIGHT_SPEEDUP : 1;
+      this._raw += (frameDelta / CYCLE_SECONDS) * speed;
     }
     this.#sampleCycle(this.progress);
     this.#applyContinuous();

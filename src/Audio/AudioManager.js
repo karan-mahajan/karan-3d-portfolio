@@ -82,7 +82,7 @@ const VOL = {
   footstep: 0.45,
   // Water clips are a touch quieter at source (soft recording) so they get a
   // small lift; wood planks are crisp so they sit at unity.
-  footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95, water: 1.15, wood: 1.0 },
+  footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95, water: 1.15, wood: 1.0, snow: 1.05, snowRun: 1.05 },
   // Big splash when jumping / landing in water (replaces splashEntry as the
   // water-entry one-shot).
   waterJump: 0.6,
@@ -202,6 +202,15 @@ const SOUND_FILES = {
   stepWood2: { src: "/sounds/step-wood-2.mp3", loop: false, vol: VOL.footstep },
   stepWood3: { src: "/sounds/step-wood-3.mp3", loop: false, vol: VOL.footstep },
   stepWood4: { src: "/sounds/step-wood-4.mp3", loop: false, vol: VOL.footstep },
+  // Snow footsteps — discrete crunches cut from the snow-walk / snow-run clips.
+  stepSnow1: { src: "/sounds/step-snow-1.mp3", loop: false, vol: VOL.footstep },
+  stepSnow2: { src: "/sounds/step-snow-2.mp3", loop: false, vol: VOL.footstep },
+  stepSnow3: { src: "/sounds/step-snow-3.mp3", loop: false, vol: VOL.footstep },
+  stepSnow4: { src: "/sounds/step-snow-4.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun1: { src: "/sounds/step-snowrun-1.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun2: { src: "/sounds/step-snowrun-2.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun3: { src: "/sounds/step-snowrun-3.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun4: { src: "/sounds/step-snowrun-4.mp3", loop: false, vol: VOL.footstep },
   // Splash one-shot when the player jumps / lands in the water.
   splashJump: { src: "/sounds/splash-jump.mp3", loop: false, vol: VOL.waterJump },
   // Interaction / UI
@@ -277,6 +286,10 @@ const STEP_POOLS = {
   sand: ["stepSand1", "stepSand2", "stepSand3"],
   water: ["stepWater1", "stepWater2", "stepWater3", "stepWater4"],
   wood: ["stepWood1", "stepWood2", "stepWood3", "stepWood4"],
+  // Snow crunch — only used while a storm has covered the ground (App swaps the
+  // surface to snow/snowRun). Separate walk vs run packs from the source clips.
+  snow: ["stepSnow1", "stepSnow2", "stepSnow3", "stepSnow4"],
+  snowRun: ["stepSnowRun1", "stepSnowRun2", "stepSnowRun3", "stepSnowRun4"],
 };
 
 const BRICK_HIT_KEYS = ["brickHit1", "brickHit2", "brickHit3", "brickHit4"];
