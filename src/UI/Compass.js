@@ -29,6 +29,35 @@ export class Compass {
     this.playerCamera = playerCamera;
     this.ring = document.getElementById('compass-ring');
     this._fwd = new THREE.Vector3();
+    this._cardinalsEl = null;
+    this._cardinalsTimer = null;
+  }
+
+  /**
+   * Flash the four cardinal section names for a few seconds — fired once when
+   * the intro cinematic lands, to orient newcomers in-world (replaces the old
+   * static welcome-screen compass card). Built lazily on first call.
+   */
+  revealCardinals(holdMs = 2800) {
+    if (!this._cardinalsEl) {
+      const el = document.createElement('div');
+      el.className = 'compass-cardinals';
+      el.setAttribute('aria-hidden', 'true');
+      el.innerHTML = `
+        <div class="cc-row"><span class="cc-dir">N</span><span class="cc-name">Experience</span></div>
+        <div class="cc-row"><span class="cc-dir">E</span><span class="cc-name">Projects</span></div>
+        <div class="cc-row"><span class="cc-dir">S</span><span class="cc-name">Skills</span></div>
+        <div class="cc-row"><span class="cc-dir">W</span><span class="cc-name">Contact</span></div>`;
+      document.body.appendChild(el);
+      this._cardinalsEl = el;
+    }
+    const el = this._cardinalsEl;
+    clearTimeout(this._cardinalsTimer);
+    // Force reflow so re-triggering restarts the fade transition cleanly.
+    el.classList.remove('is-shown');
+    void el.offsetWidth;
+    el.classList.add('is-shown');
+    this._cardinalsTimer = setTimeout(() => el.classList.remove('is-shown'), holdMs);
   }
 
   update() {

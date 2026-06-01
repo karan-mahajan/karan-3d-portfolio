@@ -62,6 +62,7 @@ const VOL = {
   thunder: 1.0,
   jump: 0.55,
   bump: 0.5,
+  landingImpact: 1.0,
   landWater: 0.55,
   landGrass: 0.45,
   landStone: 0.55,
@@ -137,6 +138,9 @@ const SOUND_FILES = {
   landWater: { src: "/sounds/land-water.mp3", loop: false, vol: VOL.landWater },
   landGrass: { src: "/sounds/land-grass.mp3", loop: false, vol: VOL.landGrass },
   landStone: { src: "/sounds/land-stone.mp3", loop: false, vol: VOL.landStone },
+  // Intro cinematic — the superhero ground-impact hit (CC0). Loud: it's the
+  // dramatic beat the whole arrival builds to.
+  landingImpact: { src: "/sounds/landing-impact.mp3", loop: false, vol: VOL.landingImpact },
   // Footstep variants — picked at random per step. Pool size per surface
   // determined by what's in the Kenney pack: grass 4, stone 4, sand 3.
   stepGrass1: {
@@ -509,6 +513,12 @@ export class AudioManager {
       const id = h.play();
       h.rate(0.94 + Math.random() * 0.12, id);
     }
+  }
+
+  /** Intro-cinematic ground impact — the big superhero landing hit. */
+  playLandingImpact() {
+    const h = this.howls.landingImpact;
+    if (h && h.state() === "loaded") h.play();
   }
 
   /** Picks a random sample from the surface's footstep pool. Water steps

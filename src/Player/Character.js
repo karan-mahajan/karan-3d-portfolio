@@ -32,6 +32,15 @@ const MIXAMO_CLIPS = [
   { action: 'jump',             url: '/models/character/jump.glb' },
   { action: 'standingUp',       url: '/models/character/standing-up.glb' },
   { action: 'startWalking',     url: '/models/character/start-walking.glb' },
+  // Intro cinematic: looping mid-air descent + one-shot superhero landing.
+  // Root motion is stripped (like all clips) so IntroCinematic drives the
+  // actual fall height; the landing plays in-place at the spawn point.
+  { action: 'falling',          url: '/models/character/animations/falling.glb' },
+  // Root motion stripped like every other clip (in-place). The landing's
+  // ground penetration is handled instead by a per-frame ground-clamp in
+  // IntroCinematic, which lifts the body so the lowest foot/hand bone never
+  // sinks below the surface — robust regardless of the clip's authored contact.
+  { action: 'hardLanding',      url: '/models/character/animations/hard-landing.glb' },
 ];
 
 const DEFERRED_MIXAMO_CLIPS = [
@@ -79,6 +88,15 @@ export class Character {
     this._deferredClipPromises = new Map();
     this.rootBone = null;
     this.rootBoneBindPos = new THREE.Vector3();
+    // Foot/toe/hand bones — used by IntroCinematic's landing ground-clamp to
+    // find the lowest contact point of the current pose.
+    this.groundBones = [];
+    this._tmpV = new THREE.Vector3();
+    // How the hips (rootBone) are clamped each frame:
+    //   'full' — pin x/y/z to bind (in-place; default for locomotion/idle)
+    //   'xz'   — pin x/z only, let the clip's vertical root motion through
+    //            (used for the landing crouch so the body actually drops).
+    this._rootPin = 'full';
   }
 
   async load() {
@@ -134,6 +152,7 @@ export class Character {
         this.rootBone = child;
         this.rootBoneBindPos.copy(child.position);
       }
+      if (/(foot|toebase|hand)/i.test(child.name)) this.groundBones.push(child);
     });
 
     this.mixer = new THREE.AnimationMixer(this.mesh);
@@ -166,15 +185,17 @@ export class Character {
     // Mixamo clips for actions Avaturn doesn't ship — retarget by stripping
     // the mixamorig prefix from track names.
     const mixamoResults = await Promise.allSettled(
-      MIXAMO_CLIPS.map(async ({ action, url }) => {
+      MIXAMO_CLIPS.map(async ({ action, url, keepRoot }) => {
         const g = await this.loader.loadGLTF(url);
-        return { action, clip: g.animations?.[0] };
+        return { action, clip: g.animations?.[0], keepRoot };
       }),
     );
     for (const r of mixamoResults) {
       if (r.status !== 'fulfilled' || !r.value.clip) continue;
-      const { action, clip } = r.value;
-      stripRootMotion(clip);
+      const { action, clip, keepRoot } = r.value;
+      // keepRoot clips (e.g. the landing) preserve their hips translation so the
+      // crouch reads correctly; everything else is flattened to in-place.
+      if (!keepRoot) stripRootMotion(clip);
       retargetMixamoToAvaturn(clip);
       clip.name = action;
       this.actions[action] = this.mixer.clipAction(clip);
@@ -283,7 +304,28 @@ export class Character {
     if (!this._oneShot) return;
     const next = this._oneShot.then;
     this._oneShot = null;
+    // Restore the default full-pin as any keepRoot one-shot (the landing)
+    // resolves, so the follow-up clip (idle) sits at the right hip height.
+    this._rootPin = 'full';
     if (next) this.play(next);
+  }
+
+  /**
+   * Lowest foot/toe/hand bone height for the current pose, expressed relative
+   * to the player group's origin (this.root's parent). Negative means a contact
+   * point is below the feet plane (would sink through ground). IntroCinematic
+   * lifts the group by -this so the landing crouch never penetrates the floor.
+   * @returns {number}
+   */
+  lowestContactLocalY() {
+    if (!this.groundBones.length || !this.root.parent) return 0;
+    const groupY = this.root.parent.position.y;
+    let lowest = Infinity;
+    for (const bone of this.groundBones) {
+      const y = bone.getWorldPosition(this._tmpV).y;
+      if (y < lowest) lowest = y;
+    }
+    return lowest === Infinity ? 0 : lowest - groupY;
   }
 
   update(delta) {
@@ -297,7 +339,13 @@ export class Character {
       }
     }
     if (this.rootBone) {
-      this.rootBone.position.copy(this.rootBoneBindPos);
+      if (this._rootPin === 'xz') {
+        // Keep the clip's vertical root motion (crouch depth); cancel drift.
+        this.rootBone.position.x = this.rootBoneBindPos.x;
+        this.rootBone.position.z = this.rootBoneBindPos.z;
+      } else {
+        this.rootBone.position.copy(this.rootBoneBindPos);
+      }
     }
   }
 }

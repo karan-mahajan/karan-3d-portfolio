@@ -126,6 +126,71 @@ body {
   min-height: 1em;
 }
 
+.loading-eyebrow {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.45em;
+  text-transform: uppercase;
+  color: var(--warm-amber);
+  opacity: 0.7;
+}
+
+/* Drifting sunset glow behind the loader — sets the "about to fall into a warm
+   world" mood with zero assets. Sits under .loading-inner (which is the same
+   stacking context, painted after). */
+.loading-sky {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 80% at 50% 120%, rgba(255, 140, 70, 0.35), transparent 60%),
+    radial-gradient(80% 60% at 70% 10%, rgba(255, 180, 120, 0.15), transparent 70%);
+  animation: loadingSkyDrift 8s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes loadingSkyDrift {
+  from { transform: translateY(0) scale(1); opacity: 0.8; }
+  to   { transform: translateY(-12px) scale(1.05); opacity: 1; }
+}
+
+/* Post-landing cardinal flash — orient newcomers once they touch down
+   (Compass.revealCardinals). Replaces the old static welcome compass card. */
+.compass-cardinals {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 120;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.25rem 0.7rem;
+  padding: 0.7rem 1.1rem;
+  background: rgba(26, 20, 16, 0.7);
+  border: 1px solid rgba(245, 230, 211, 0.2);
+  border-radius: 14px;
+  backdrop-filter: blur(7px);
+  font-family: 'Rajdhani', sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.compass-cardinals.is-shown { opacity: 1; transform: translateX(-50%) translateY(0); }
+.compass-cardinals .cc-row { display: contents; }
+.compass-cardinals .cc-dir {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  color: var(--warm-amber);
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+.compass-cardinals .cc-name {
+  color: var(--paper);
+  font-size: 0.92rem;
+  letter-spacing: 0.06em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-sky { animation: none; }
+}
+
 #debug-hud {
   position: fixed;
   top: 12px;
@@ -732,132 +797,6 @@ body {
   transform: translateY(-1px);
 }
 
-/* ─────────────── Welcome screen ─────────────── */
-#welcome-screen {
-  background: radial-gradient(ellipse at center, rgba(20, 12, 8, 0.78) 0%, rgba(8, 4, 2, 0.92) 100%);
-  backdrop-filter: blur(2px);
-}
-
-.welcome-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
-  text-align: center;
-  padding: 2rem;
-  max-width: 520px;
-}
-
-.welcome-eyebrow {
-  font-family: 'Rajdhani', sans-serif;
-  font-weight: 600;
-  font-size: 0.85rem;
-  letter-spacing: 0.35em;
-  text-transform: uppercase;
-  color: var(--warm-amber);
-  opacity: 0.8;
-}
-
-.welcome-title {
-  font-family: 'Oswald', sans-serif;
-  font-weight: 700;
-  font-size: clamp(2.4rem, 6vw, 4rem);
-  letter-spacing: 0.22em;
-  color: var(--paper);
-  text-shadow: 0 0 40px rgba(255, 153, 68, 0.45);
-  margin-bottom: 0.5rem;
-}
-
-.welcome-sub {
-  font-family: 'Rajdhani', sans-serif;
-  font-size: 1rem;
-  letter-spacing: 0.04em;
-  color: rgba(245, 230, 211, 0.85);
-  max-width: 360px;
-  margin-bottom: 1.2rem;
-}
-
-.welcome-compass {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
-  margin: 0.4rem 0 1.5rem;
-}
-
-.compass-row {
-  display: flex;
-  gap: 0.6rem;
-}
-
-.compass-card {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.5rem 0.85rem;
-  border: 1px solid rgba(245, 230, 211, 0.2);
-  border-radius: 8px;
-  background: rgba(26, 20, 16, 0.55);
-  color: var(--paper);
-  font-family: 'Rajdhani', sans-serif;
-  font-size: clamp(0.72rem, 2.4vw, 0.85rem);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  min-width: clamp(96px, 30vw, 130px);
-  justify-content: center;
-  white-space: nowrap;
-}
-
-.compass-card.compass-center {
-  min-width: 60px;
-  border-radius: 50%;
-  background: var(--warm-orange);
-  color: var(--ink);
-  font-weight: 700;
-  font-size: 1.2rem;
-}
-
-.compass-arrow {
-  color: var(--warm-amber);
-  font-family: 'Oswald', sans-serif;
-  font-weight: 700;
-  font-size: 1.1rem;
-}
-
-.compass-label {
-  font-weight: 600;
-}
-
-.welcome-start {
-  padding: 0.85rem 1.8rem;
-  border: none;
-  border-radius: 10px;
-  background: var(--warm-orange);
-  color: var(--ink);
-  font-family: 'Oswald', sans-serif;
-  font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  cursor: pointer;
-  box-shadow: 0 8px 24px rgba(255, 153, 68, 0.35);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.welcome-start:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 30px rgba(255, 153, 68, 0.5);
-}
-
-.welcome-hint {
-  margin-top: 0.4rem;
-  font-family: 'Rajdhani', sans-serif;
-  font-size: 0.78rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  opacity: 0.55;
-}
-
 /* ─────────────── Night-mode theming (legacy module buttons) ───────────────
    App.js writes `data-tod="day"` / `data-tod="night"` to <body> on every
    toggle. We shift the corner button glow toward cool blue at night so the
@@ -1080,6 +1019,7 @@ body.booting #top-left-stack,
 body.booting #bottom-left-stack,
 body.booting #controls-trigger,
 body.booting #controls-panel,
+body.booting #compass,
 body.booting #mobile-joystick-zone,
 body.booting #mobile-actions,
 body.booting #mobile-interact {

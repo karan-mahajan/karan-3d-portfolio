@@ -2,6 +2,7 @@ import * as THREE from "three/webgpu";
 import { AudioManager } from "./Audio/AudioManager.js";
 import { Fireflies } from "./Effects/Fireflies.js";
 import { Footprints } from "./Effects/Footprints.js";
+import { GroundBreak } from "./Effects/GroundBreak.js";
 import { Leaves } from "./Effects/Leaves.js";
 import { PostFX } from "./Effects/PostFX.js";
 import { Rain } from "./Effects/Rain.js";
@@ -25,6 +26,7 @@ import {
 import { Achievements } from "./Systems/Achievements.js";
 import { DistanceGame } from "./Systems/DistanceGame.js";
 import { ClickToMove } from "./Travel/ClickToMove.js";
+import { IntroCinematic } from "./Travel/IntroCinematic.js";
 import { Navmask } from "./Travel/Navmask.js";
 import { Teleport } from "./Travel/Teleport.js";
 import { TransitionFX } from "./Travel/TransitionFX.js";
@@ -491,6 +493,20 @@ export class App extends EventTarget {
     this.playerCamera.follow(this.player.position, true);
 
     const characterResult = await this.player.loadCharacter();
+
+    // Intro cinematic — the first-arrival fall-from-sky sequence. GroundBreak
+    // owns the procedural impact FX; both run as a pre-gameplay layer. main.js
+    // drives intro.play() off the "Enter Karan's World" button tap. onLanded
+    // flashes the compass cardinal labels once the character touches down.
+    this.groundBreak = new GroundBreak(this.scene);
+    this.intro = new IntroCinematic({
+      player: this.player,
+      playerCamera: this.playerCamera,
+      terrain: this.world.terrain,
+      groundBreak: this.groundBreak,
+      audio: this.audio,
+      onLanded: () => this.compass?.revealCardinals?.(),
+    });
 
     // Water — v3 runtime TSL surface covering the Blender-carved basins (ponds /
     // river) AND the ocean ring beyond the island. Built here (like grass) now
@@ -1211,6 +1227,9 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
     });
     this.playerCamera.update(frameDelta);
+    // Intro cinematic drives the camera + character descent directly while the
+    // orbit cam is locked; no-op once control has handed off.
+    if (this.intro?.active) this.intro.update(frameDelta);
     if (this.discovery)
       this.discovery.update(this.player.position.x, this.player.position.z);
     if (this.clickToMove) this.clickToMove.update(frameDelta);
@@ -1262,6 +1281,7 @@ export class App extends EventTarget {
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
     this.fireflies.update(elapsed);
+    if (this.groundBreak) this.groundBreak.update(frameDelta);
     if (this.water) {
       // Rain wetness drives the water's rain-impact rings.
       this.water.rainTarget = this.rain?.enabled ? 1 : 0;
