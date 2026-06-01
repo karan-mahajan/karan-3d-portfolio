@@ -67,7 +67,36 @@ export function snowGrowAt(xz, bias = 0, edge = 0.16) {
 export function snowMask({ low = 0.1, high = 0.5, bias = 0, scale = 1 } = {}) {
   const facing = smoothstep(low, high, normalWorld.y);
   const grow = snowGrowAt(positionWorld.xz, bias);
-  return clamp(facing.mul(grow).mul(scale), 0, 1);
+  // Break the snow line so accumulation is LUMPY, not flat paint — but the
+  // AMOUNT of break-up varies across the world via a large-scale zone noise, so
+  // some areas are nearly solid snow and others are patchy/bare. Uniform-
+  // amplitude noise reads as a tiled texture; this varying amplitude reads as
+  // real, place-by-place accumulation.
+  const zone = mx_noise_float(positionWorld.mul(0.07)).mul(0.5).add(0.5);
+  const lumps = mx_noise_float(positionWorld.mul(1.7)).mul(0.5).add(0.5);
+  const lo = mix(float(0.85), float(0.4), zone); // smooth zones barely break; rough zones break hard
+  const broken = clamp(grow.mul(mix(lo, float(1.25), lumps)), 0, 1);
+  return clamp(facing.mul(broken).mul(scale), 0, 1);
+}
+
+/**
+ * Geometric snow shell — pushes upward-facing vertices OUT along their own
+ * normal so settled snow has real THICKNESS (puffy caps that round over edges),
+ * not just a colour swap. Lumpy depth so the layer is uneven, and exactly zero
+ * when there's no snow. Add the returned vec3 to a material's positionNode.
+ *
+ * WARNING: only safe on a mesh with correct, independent vertex normals (e.g.
+ * the single terrain mesh). Do NOT use on the consolidated shared world
+ * material — displacing that merged/instanced geometry breaks its shading
+ * normals and renders every prop unlit/black. Prop thickness needs a dedicated
+ * snow-cap mesh or a normal-recompute pass instead.
+ * @param {number} [maxMeters] peak snow depth on a flat-up face
+ */
+export function snowShell(maxMeters = 0.09) {
+  const mask = snowMask({ low: 0.05, high: 0.55 });
+  const lumps = mx_noise_float(positionWorld.mul(2.3)).mul(0.5).add(0.5);
+  const depth = mask.mul(mix(float(0.45), float(1.0), lumps)).mul(maxMeters);
+  return normalLocal.mul(depth);
 }
 
 /** Noise-varied snow albedo so the white isn't flat. */
@@ -117,9 +146,17 @@ export function snowEmissive(mask) {
  * field so the surface only rises where snow has actually settled. Returns a
  * vec3 to add to positionLocal.
  */
-export function terrainSnowDrift(maxMeters = 0.12) {
+export function terrainSnowDrift(maxMeters = 0.2) {
   const slope = clamp(normalLocal.y.sub(0.3).mul(2.5), 0, 1);
   const grow = snowGrowAt(positionLocal.xz, 0.1);
-  const n = mx_noise_float(positionLocal.xz.mul(0.35)).mul(0.5).add(0.5);
-  return vec3(0, slope.mul(grow).mul(n).mul(maxMeters), 0);
+  // Base shape = large smooth drifts (low frequency) — most of the snow is a
+  // gentle rolling surface, not a cellular bump field.
+  const dunes = mx_noise_float(positionLocal.xz.mul(0.13)).mul(0.5).add(0.5);
+  // Bumpiness is GATED by a very-large-scale zone: some regions are smooth,
+  // others get fine lumps. This is what kills the "same pattern everywhere"
+  // tiled look — roughness itself varies place to place.
+  const zone = mx_noise_float(positionLocal.xz.mul(0.06)).mul(0.5).add(0.5);
+  const lumps = mx_noise_float(positionLocal.xz.mul(0.8)).mul(0.5).add(0.5);
+  const height = clamp(dunes.mul(0.7).add(lumps.mul(zone).mul(0.3)), 0, 1);
+  return vec3(0, slope.mul(grow).mul(height).mul(maxMeters), 0);
 }

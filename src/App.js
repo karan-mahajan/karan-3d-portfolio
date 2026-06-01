@@ -660,10 +660,15 @@ export class App extends EventTarget {
       pathRadius: 1.4,
     });
     this.audio.onStep = (odd) => {
+      // Only grass gets a print — `_printable` is set each tick from the same
+      // surface result the footstep AUDIO uses, so prints never land in
+      // water/ponds/river, on bridge decks, or on stone slabs/paths.
+      if (!this._printable) return;
       this.footprints.onStep(
         this.player.position,
         this.player.group.rotation.y,
         !odd,
+        this._snowPrint,
       );
     };
     // Cache path arrays once for #surfaceAt() — picking grass/stone/sand
@@ -1447,9 +1452,14 @@ export class App extends EventTarget {
     const py = this.player.position.y;
     const pz = this.player.position.z;
     let surface = this.#surfaceAt(px, py, pz);
+    // Prints only drop on grass; the snow look kicks in once the same storm
+    // coverage that swaps the crunch audio (>0.55) has blanketed the ground.
+    const coverage = this.weather?.coverage ?? 0;
+    this._printable = surface === "grass";
+    this._snowPrint = this._printable && coverage > 0.55;
     // Once a storm has blanketed the ground, footsteps crunch through snow
     // (separate walk vs run packs). Water wading keeps its own steps.
-    if (surface !== "water" && (this.weather?.coverage ?? 0) > 0.55) {
+    if (surface !== "water" && coverage > 0.55) {
       surface = this.player.controller.isRunning ? "snowRun" : "snow";
     }
     this.audio?.tick(frameDelta, {

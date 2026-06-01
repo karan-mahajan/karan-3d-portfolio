@@ -1,4 +1,7 @@
 import * as THREE from 'three/webgpu';
+import {
+  texture, attribute, uv, vec2, vec3, float, mix, smoothstep, clamp, step,
+} from 'three/tsl';
 
 /**
  * Footprints — pooled flat decal quads dropped one-per-step at the player's
@@ -8,15 +11,13 @@ import * as THREE from 'three/webgpu';
  *   - Single InstancedMesh of POOL_SIZE quads (PlaneGeometry rotated to lie
  *     flat on XZ, +Y normal). The mesh is allocated once; new prints
  *     overwrite the oldest slot via a ring-buffer cursor.
- *   - Material is a MeshBasicMaterial (not a raw ShaderMaterial) with the
- *     transparent muddy tread PNG as `map` + `alphaTest`. MeshBasicMaterial handles
- *     InstancedMesh setup (USE_INSTANCING, uv attribute injection) natively
- *     — a raw ShaderMaterial requires manual declarations and was the
- *     reason prints weren't rendering on first attempt.
- *   - Per-instance fade is injected via onBeforeCompile: a new
- *     `aAge` instanced attribute drives an opacity multiplier in the
- *     fragment shader; another `aMirror` flips UVs horizontally so a
- *     single asymmetric sole asset works for both feet.
+ *   - Material is a MeshBasicNodeMaterial (the project renders with
+ *     WebGPURenderer, so material logic must live in TSL nodes — GLSL
+ *     onBeforeCompile patching is silently ignored by the WebGPU backend).
+ *     Three per-instance attributes drive the look: `aAge` → fade-out,
+ *     `aMirror` → horizontal UV flip so one asymmetric sole serves both feet,
+ *     and `aSnow` → 0 on bare ground, or a ~0.6–1.4 depth factor that recolours
+ *     the print into a pale, cold pressed-in snow dent.
  *
  * Cadence is driven externally: App wires AudioManager.onStep to onStep()
  * so audio + visual cadence stay aligned regardless of mute state.
@@ -33,9 +34,15 @@ const SOLE_WIDTH = 0.27;
 const FOOT_LATERAL = 0.13;  // half-distance between L and R prints
 const STEP_BACK = 0.18;     // keep heel prints visible from follow camera
 const SAND_INNER = 38;      // anything past this is shore/water — skip
-// Y lift above the heightfield. Set well above the tallest grass tuft
-// (~0.2–0.3 m at the default scale) so prints aren't covered by grass.
-const PRINT_LIFT = 0.08;
+// Y lift above the heightfield — just enough to beat z-fighting with the
+// ground. Grass is disabled, so the print sits planted on the surface rather
+// than hovering. The quad is also tilted to the terrain normal (see onStep).
+const PRINT_LIFT = 0.02;
+// On snow the GROUND mesh is displaced up ~0.1–0.16 m by terrainSnowDrift
+// (shader-only — heightAt still returns bare terrain). A bare-height print
+// would be buried + depth-occluded by the raised snow, so snow prints ride
+// higher to sit on the snow surface, reading as a pressed-in dent.
+const SNOW_PRINT_LIFT = 0.16;
 const FOOTPRINT_MAP_URL = '/textures/foliage/footprint-tread.png?v=2';
 
 export class Footprints {
@@ -69,14 +76,18 @@ export class Footprints {
 
     this._ages   = new Float32Array(POOL_SIZE);
     this._mirror = new Float32Array(POOL_SIZE);
+    this._snow   = new Float32Array(POOL_SIZE); // 1 = print was laid on snow
     for (let i = 0; i < POOL_SIZE; i++) this._ages[i] = LIFETIME + 1; // dead
 
     const ageAttr    = new THREE.InstancedBufferAttribute(this._ages, 1).setUsage(THREE.DynamicDrawUsage);
     const mirrorAttr = new THREE.InstancedBufferAttribute(this._mirror, 1).setUsage(THREE.DynamicDrawUsage);
+    const snowAttr   = new THREE.InstancedBufferAttribute(this._snow, 1).setUsage(THREE.DynamicDrawUsage);
     geom.setAttribute('aAge', ageAttr);
     geom.setAttribute('aMirror', mirrorAttr);
+    geom.setAttribute('aSnow', snowAttr);
     this._ageAttr = ageAttr;
     this._mirrorAttr = mirrorAttr;
+    this._snowAttr = snowAttr;
 
     const tex = new THREE.TextureLoader().load(FOOTPRINT_MAP_URL);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -85,13 +96,10 @@ export class Footprints {
     tex.anisotropy = 8;
     this._texture = tex;
 
-    // The PNG carries both the muddy color and transparency, so the print
-    // reads like disturbed soil instead of a tinted white mask/sticker.
-    const material = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(0xffffff),
-      map: tex,
+    // TSL node material — the WebGPU backend ignores GLSL onBeforeCompile, so
+    // all per-instance logic (fade / mirror / snow recolour) lives in nodes.
+    const material = new THREE.MeshBasicNodeMaterial({
       transparent: true,
-      opacity: 1.0,
       depthWrite: false,
       // depthTest stays ON so prints behind the player are occluded — with
       // it off, renderOrder=4 paints them over the character regardless of
@@ -99,54 +107,43 @@ export class Footprints {
       // transparents (grass, water foam) sorted behind them.
       depthTest: true,
       side: THREE.DoubleSide,
-      alphaTest: 0.04,
       // toneMapped off — ACES otherwise brightens the dark brown into a
-      // muddy pink under day lighting which reads as a sticker, not mud.
+      // muddy pink which reads as a sticker, not mud.
       toneMapped: false,
     });
-    this._material = material;
+    material.alphaTest = 0.04;
 
-    // Patch the standard pipeline to add:
-    //   - per-instance fade via aAge → alpha multiplier
-    //   - per-instance UV mirror via aMirror (flip x)
-    // We chain onBeforeCompile so any future material chunk modifications
-    // (e.g. shadow tinting) can also stack on top.
-    material.onBeforeCompile = (shader) => {
-      shader.uniforms.uLifetime = { value: LIFETIME };
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           attribute float aAge;
-           attribute float aMirror;
-           uniform float uLifetime;
-           varying float vFade;`,
-        )
-        .replace(
-          '#include <uv_vertex>',
-          `#include <uv_vertex>
-           // Mirror the right foot horizontally so a single asymmetric
-           // sole asset renders both L and R correctly.
-           #ifdef USE_MAP
-             if (aMirror > 0.5) vMapUv.x = 1.0 - vMapUv.x;
-           #endif
-           float t = clamp(aAge / uLifetime, 0.0, 1.0);
-           float fadeOut = 1.0 - smoothstep(0.7, 1.0, t);
-           vFade = (aAge >= uLifetime) ? 0.0 : fadeOut;`,
-        );
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           varying float vFade;`,
-        )
-        .replace(
-          '#include <alphatest_fragment>',
-          `diffuseColor.a *= vFade;
-           #include <alphatest_fragment>`,
-        );
-    };
-    material.customProgramCacheKey = () => 'footprints-map-fade-v5';
+    const aAge = attribute('aAge', 'float');
+    const aMirror = attribute('aMirror', 'float');
+    const aSnow = attribute('aSnow', 'float');
+
+    // Mirror the right foot horizontally so one asymmetric sole serves L and R.
+    const baseUv = uv();
+    const mirroredU = mix(baseUv.x, baseUv.x.oneMinus(), step(0.5, aMirror));
+    const texel = texture(tex, vec2(mirroredU, baseUv.y));
+
+    // Age fade: full until 70% of life, ramp to 0 by the end (dead slots have
+    // age ≥ LIFETIME → fade 0 → discarded by alphaTest).
+    const t = clamp(aAge.div(LIFETIME), 0.0, 1.0);
+    const fade = smoothstep(0.7, 1.0, t).oneMinus();
+
+    // Snow recolour: the brown mud tread becomes a pale, COLD pressed-in dent
+    // so it reads as packed snow (white family), not a brown/black sticker.
+    // aSnow > 0 means "on snow"; its magnitude (~0.6–1.4) is a per-print depth
+    // so some prints are stronger/darker than others, like a real trail.
+    const isSnow = step(0.01, aSnow);
+    const depth = clamp(aSnow, 0.0, 1.4);
+    const snowTint = vec3(0.66, 0.74, 0.86); // cold light blue-grey snow shadow
+    const snowRgb = mix(texel.rgb, snowTint, clamp(depth.mul(0.88), 0.0, 0.96));
+    material.colorNode = mix(texel.rgb, snowRgb, isSnow);
+
+    // Alpha: texture cutout × age fade, with snow prints depth-scaled so the
+    // shallow ones stay faint.
+    const snowAlpha = clamp(float(0.5).add(depth.mul(0.35)), 0.0, 1.0);
+    const alphaMul = mix(float(1.0), snowAlpha, isSnow);
+    material.opacityNode = texel.a.mul(fade).mul(alphaMul);
+
+    this._material = material;
 
     this._mesh = new THREE.InstancedMesh(geom, material, POOL_SIZE);
     this._mesh.frustumCulled = false;
@@ -163,8 +160,9 @@ export class Footprints {
    * @param {THREE.Vector3} playerPos
    * @param {number} facingYaw  player.group.rotation.y in radians
    * @param {boolean} [forceSide]  optional override of the L/R alternator.
+   * @param {boolean} [onSnow]  true → render as a compressed-snow dent.
    */
-  onStep(playerPos, facingYaw, forceSide = null) {
+  onStep(playerPos, facingYaw, forceSide = null, onSnow = false) {
     if (forceSide === null) this._stepLeft = !this._stepLeft;
     else this._stepLeft = !!forceSide;
     const leftFoot = this._stepLeft;
@@ -176,9 +174,15 @@ export class Footprints {
     const rx = fz;
     const rz = -fx;
 
-    const lateral = leftFoot ? -FOOT_LATERAL : FOOT_LATERAL;
-    const stepX = playerPos.x + rx * lateral - fx * STEP_BACK;
-    const stepZ = playerPos.z + rz * lateral - fz * STEP_BACK;
+    // Small per-step jitter so a trail reads like a real gait — prints land at
+    // slightly varied spots/angles/depths instead of a perfect repeating line.
+    const jLateral = (Math.random() - 0.5) * 0.06;
+    const jBack = (Math.random() - 0.5) * 0.08;
+    const lateral = (leftFoot ? -FOOT_LATERAL : FOOT_LATERAL) + jLateral;
+    const stepBack = STEP_BACK + jBack;
+    const stepX = playerPos.x + rx * lateral - fx * stepBack;
+    const stepZ = playerPos.z + rz * lateral - fz * stepBack;
+    const printYaw = facingYaw + (Math.random() - 0.5) * 0.22;
 
     // Grass-only surface guard.
     const r = Math.hypot(stepX, stepZ);
@@ -189,21 +193,43 @@ export class Footprints {
       if (dx * dx + dz * dz < this.pathRadius * this.pathRadius) return;
     }
 
-    const stepY = (this.terrain ? this.terrain.heightAt(stepX, stepZ) : 0) + PRINT_LIFT;
+    const lift = onSnow ? SNOW_PRINT_LIFT : PRINT_LIFT;
+    const stepY = (this.terrain ? this.terrain.heightAt(stepX, stepZ) : 0) + lift;
 
     const idx = this._cursor;
     this._cursor = (this._cursor + 1) % POOL_SIZE;
 
     this._ages[idx] = 0;
     this._mirror[idx] = leftFoot ? 0 : 1;
+    // 0 = not snow. On snow, store a varied DEPTH factor (~0.6–1.4) so prints
+    // read as some-deep, some-shallow dents rather than identical stamps.
+    this._snow[idx] = onSnow ? 0.6 + Math.random() * 0.8 : 0;
 
-    _matrix.makeRotationY(facingYaw);
+    // Orient the quad to the terrain so it conforms to slopes instead of
+    // floating level. Sample the heightfield around the step to get a surface
+    // normal, project the player's facing onto that plane for the long axis,
+    // then build an orthonormal basis (local +Y → normal, +Z → forward).
+    if (this.terrain) {
+      const e = 0.3;
+      const hL = this.terrain.heightAt(stepX - e, stepZ);
+      const hR = this.terrain.heightAt(stepX + e, stepZ);
+      const hD = this.terrain.heightAt(stepX, stepZ - e);
+      const hU = this.terrain.heightAt(stepX, stepZ + e);
+      _up.set(hL - hR, 2 * e, hD - hU).normalize();
+    } else {
+      _up.set(0, 1, 0);
+    }
+    _fwd.set(Math.sin(printYaw), 0, Math.cos(printYaw));
+    _right.crossVectors(_up, _fwd).normalize();
+    _fwd.crossVectors(_right, _up).normalize(); // re-orthogonalize against the slope
+    _matrix.makeBasis(_right, _up, _fwd);
     _matrix.setPosition(stepX, stepY, stepZ);
     this._mesh.setMatrixAt(idx, _matrix);
 
     this._mesh.instanceMatrix.needsUpdate = true;
     this._ageAttr.needsUpdate = true;
     this._mirrorAttr.needsUpdate = true;
+    this._snowAttr.needsUpdate = true;
 
     // Achievement count only fires for prints that actually landed (after
     // the surface guard above), so the counter matches what the player can
@@ -225,3 +251,6 @@ export class Footprints {
 }
 
 const _matrix = new THREE.Matrix4();
+const _up = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();

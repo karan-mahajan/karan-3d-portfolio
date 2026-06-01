@@ -805,7 +805,7 @@ export class GlbV3World {
     // Snow blanket: drift the surface up (depth + dunes) and whiten the ground
     // by the shared snowCoverage uniform. Flat ground covers fully; steep banks
     // stay bare via the normal-keyed mask.
-    mat.positionNode = positionLocal.add(terrainSnowDrift(0.12));
+    mat.positionNode = positionLocal.add(terrainSnowDrift(0.16));
     // Grass ground collects snow EARLY, the path/slab art LAST — so a storm
     // creeps across the meadow before the walkways whiten.
     const maskGrass = snowMask({ low: 0.2, high: 0.5, bias: 0.2 });
@@ -1121,9 +1121,12 @@ export class GlbV3World {
     });
     mat.name = `worldShared:${kind}:${this.#sideName(side)}`;
     // Shape-hugging snow: whiten + roughen upward-facing fragments by the shared
-    // snowCoverage uniform. Colour-only (no vertex displacement) so the rocks
-    // InstancedMesh that rides this material stays intact. vertexColor() is a
-    // vec4 (rgb + baked opacity in .a) — preserve the alpha.
+    // snowCoverage uniform. Colour-only (NO vertex displacement) — this material
+    // spans merged/consolidated geometry + the rocks InstancedMesh, and pushing
+    // vertices along the normal here breaks the shading normals (props render
+    // unlit/black). Thickness on props needs a different approach (see snowShell
+    // docs); the lumpy mask below carries the uneven look without geometry.
+    // vertexColor() is a vec4 (rgb + baked opacity in .a) — preserve the alpha.
     const baseColor = vertexColor();
     const baseRough = attribute(WORLD_ROUGHNESS_ATTR, "float");
     const mask = snowMask();
