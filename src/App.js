@@ -17,6 +17,7 @@ import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
 import { SkillSphere } from "./Portfolio/SkillSphere.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
+import { ContactBoard } from "./Portfolio/ContactBoard.js";
 import {
   BLOCKERS,
   LAMPS,
@@ -701,6 +702,18 @@ export class App extends EventTarget {
       achievements: this.achievements,
     });
 
+    this.contactBoard = new ContactBoard({
+      scene: this.scene,
+      camera: this.camera,
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      audio: this.audio,
+      achievements: this.achievements,
+      timeOfDay: this.timeOfDay,
+      postfx: this.postfx,
+    });
+
     this.interaction = new Interaction({
       scene: this.scene,
       camera: this.camera,
@@ -711,6 +724,7 @@ export class App extends EventTarget {
       signs: this.world.signs,
       skillSphere: this.skillSphere,
       projectsHut: this.projectsHut,
+      contactBoard: this.contactBoard,
       audio: this.audio,
       timeOfDay: this.timeOfDay,
       achievements: this.achievements,
@@ -1276,6 +1290,7 @@ export class App extends EventTarget {
     if (this.interaction) this.interaction.tick(this.player.position);
     if (this.skillSphere) this.skillSphere.update(frameDelta);
     if (this.projectsHut) this.projectsHut.update(frameDelta);
+    if (this.contactBoard) this.contactBoard.update(elapsed);
     if (this.interactables) this.interactables.update(frameDelta);
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.
@@ -1294,8 +1309,9 @@ export class App extends EventTarget {
     const _grounded = this.player._grounded !== false;
     this.footprints.update(frameDelta);
     const px = this.player.position.x;
+    const py = this.player.position.y;
     const pz = this.player.position.z;
-    const surface = this.#surfaceAt(px, pz);
+    const surface = this.#surfaceAt(px, py, pz);
     this.audio?.tick(frameDelta, {
       moving: !!sample?.moving,
       running: this.player.controller.isRunning,
@@ -1481,13 +1497,20 @@ export class App extends EventTarget {
     }
   }
 
-  /** Pick the surface category at (x, z) for footstep + landing audio.
-   *  Mirrors the same rules Footprints uses for its surface guard:
-   *  in water → 'water'; r ≥ 38 → 'sand' (shore); within radius of a path
-   *  tile → 'stone'; otherwise grass. Cheap O(N) over path positions, but
-   *  N is small (~tens) and only runs once per frame. */
-  #surfaceAt(x, z) {
+  /** Pick the surface category at (x, y, z) for footstep + landing audio.
+   *  Bridges are checked first (their decks sit over water, so the water
+   *  test below would otherwise win): on a deck → 'wood'. Then mirrors the
+   *  rules Footprints uses: in water → 'water'; r ≥ 38 → 'sand' (shore);
+   *  within radius of a path tile → 'stone'; otherwise grass. Cheap O(N)
+   *  over path positions, but N is small (~tens) and runs once per frame. */
+  #surfaceAt(x, y, z) {
+    if (this.world?.glb?.playerOnBridge?.(x, y, z, this.water?.waterLevel))
+      return "wood";
     if (this.water?.playerOverWater?.(x, z)) return "water";
+    // Flat stone props (slabs / flagstones / stepping stones) read as stone,
+    // not grass — checked ahead of the shore/path tests so a slab beyond the
+    // sand radius still sounds like stone.
+    if (this.world?.glb?.playerOnStone?.(x, y, z)) return "stone";
     if (x * x + z * z >= 38 * 38) return "sand";
     const pos = this._pathPositions;
     const n = this._pathCount;

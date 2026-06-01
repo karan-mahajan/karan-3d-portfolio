@@ -60,7 +60,7 @@ const VOL = {
   // over the ambient stack). With the −18% ambient pass above, this
   // sits well above any background bed.
   thunder: 1.0,
-  jump: 0.55,
+  jump: 0.45,
   bump: 0.5,
   landingImpact: 1.0,
   landWater: 0.55,
@@ -80,7 +80,12 @@ const VOL = {
   rainWaterMax: 0.303,
   // Per-step footstep volume (multiplied by per-surface trim below).
   footstep: 0.45,
-  footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95 },
+  // Water clips are a touch quieter at source (soft recording) so they get a
+  // small lift; wood planks are crisp so they sit at unity.
+  footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95, water: 1.15, wood: 1.0 },
+  // Big splash when jumping / landing in water (replaces splashEntry as the
+  // water-entry one-shot).
+  waterJump: 0.6,
   // UI clicks — kept gentle so they don't punch through the ambient bed.
   click: 0.45,
   toggle: 0.45,
@@ -186,6 +191,19 @@ const SOUND_FILES = {
   stepSand1: { src: "/sounds/step-sand-1.mp3", loop: false, vol: VOL.footstep },
   stepSand2: { src: "/sounds/step-sand-2.mp3", loop: false, vol: VOL.footstep },
   stepSand3: { src: "/sounds/step-sand-3.mp3", loop: false, vol: VOL.footstep },
+  // Wading footsteps — walking IN water (replaces the old auto wading-splash
+  // cadence in Water.js). User-recorded, sliced + peak-normalized.
+  stepWater1: { src: "/sounds/step-water-1.mp3", loop: false, vol: VOL.footstep },
+  stepWater2: { src: "/sounds/step-water-2.mp3", loop: false, vol: VOL.footstep },
+  stepWater3: { src: "/sounds/step-water-3.mp3", loop: false, vol: VOL.footstep },
+  stepWater4: { src: "/sounds/step-water-4.mp3", loop: false, vol: VOL.footstep },
+  // Bridge-deck footsteps — fire when the player is on bridge01/bridge02.
+  stepWood1: { src: "/sounds/step-wood-1.mp3", loop: false, vol: VOL.footstep },
+  stepWood2: { src: "/sounds/step-wood-2.mp3", loop: false, vol: VOL.footstep },
+  stepWood3: { src: "/sounds/step-wood-3.mp3", loop: false, vol: VOL.footstep },
+  stepWood4: { src: "/sounds/step-wood-4.mp3", loop: false, vol: VOL.footstep },
+  // Splash one-shot when the player jumps / lands in the water.
+  splashJump: { src: "/sounds/splash-jump.mp3", loop: false, vol: VOL.waterJump },
   // Interaction / UI
   push: { src: "/sounds/push.mp3", loop: false, vol: VOL.push },
   objectSlide: {
@@ -257,8 +275,8 @@ const STEP_POOLS = {
   grass: ["stepGrass1", "stepGrass2", "stepGrass3", "stepGrass4"],
   stone: ["stepStone1", "stepStone2", "stepStone3", "stepStone4"],
   sand: ["stepSand1", "stepSand2", "stepSand3"],
-  // 'water' surface re-uses the existing splash-light wading sound (handled
-  // in playFootstep) so a single pool is enough.
+  water: ["stepWater1", "stepWater2", "stepWater3", "stepWater4"],
+  wood: ["stepWood1", "stepWood2", "stepWood3", "stepWood4"],
 };
 
 const BRICK_HIT_KEYS = ["brickHit1", "brickHit2", "brickHit3", "brickHit4"];
@@ -395,8 +413,11 @@ export class AudioManager {
     if (!this._started || this.muted || this._focusLost) return;
 
     // Landing audio is dispatched from App.js so the surface (water vs.
-    // ground) is known. Here we only track the jump leg.
-    if (this._wasGrounded === true && grounded === false) this.playJump();
+    // ground) is known. Here we only track the jump leg. Jumping from water
+    // skips the dry jump grunt — the water-entry splash (playWaterJump) takes
+    // preference for anything in/over the water.
+    if (this._wasGrounded === true && grounded === false && surface !== "water")
+      this.playJump();
     this._wasGrounded = grounded;
 
     // Rain layer + thunder. _rainOn is cached so setOceanProximity can gate
@@ -500,19 +521,33 @@ export class AudioManager {
     this.#proceduralJump();
   }
 
-  /** Landing on any surface. Maps surface → land sample. */
+  /** Landing on any surface. Maps surface → land sample. Water is handled by
+   *  playWaterJump (fired on water-entry from Water.js), so a water landing
+   *  here is skipped to avoid double-splashing. */
   playLand(surface = "grass") {
+    if (surface === "water") return;
     const key =
-      surface === "water"
-        ? "landWater"
-        : surface === "stone"
-          ? "landStone"
-          : "landGrass";
+      surface === "stone" || surface === "wood" ? "landStone" : "landGrass";
     const h = this.howls[key];
     if (h && h.state() === "loaded") {
       const id = h.play();
       h.rate(0.94 + Math.random() * 0.12, id);
     }
+  }
+
+  /** Big splash one-shot for jumping / dropping into the water. Fired from
+   *  Water.js the moment the player's feet cross below the water line (covers
+   *  jumping in from land and re-entering after a jump while wading). Falls
+   *  back to the lighter entry splash if the dedicated sample is missing. */
+  playWaterJump() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.splashJump;
+    if (h && h.state() === "loaded") {
+      const id = h.play();
+      h.rate(0.96 + Math.random() * 0.08, id);
+      return;
+    }
+    this.playSplash({ entry: true });
   }
 
   /** Intro-cinematic ground impact — the big superhero landing hit. */
@@ -525,11 +560,6 @@ export class AudioManager {
    *  re-use the existing wading splash so we don't double-up. */
   playFootstep(surface = "grass", alt = false) {
     if (this.muted || this._focusLost) return;
-    if (surface === "water") {
-      // The wading splash audio is already triggered by Water.js per its own
-      // cadence; emitting a step here would double-up. Skip.
-      return;
-    }
     const pool = STEP_POOLS[surface] || STEP_POOLS.grass;
     const key = pool[Math.floor(Math.random() * pool.length)];
     const h = this.howls[key];

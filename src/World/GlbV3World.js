@@ -113,6 +113,11 @@ const INSTANCE_COLLIDER_HALF_MIN = 0.05;
 const BENCH_MESH_RE = /^bench_/i;
 const BENCH_PROXY_RE = /^cuboid_bench_/i;
 const SHADOW_RECEIVER_RE = /slab|foundation|path|pave|stone|brick/i;
+// Flat walkable stone props the player stands ON (scenery slabs, hut
+// flagstones, stepping stones) — their footprints flag a 'stone' footstep
+// surface so steps on them don't read as grass. Matched on the un-merged
+// node names (collected before #mergeStaticWorldChunks erases them).
+const STONE_SURFACE_RE = /(?:^|_)(slab|flagstone|stepping[_]?stone)/i;
 
 // Rope-and-post fences (fences.glb) ship no colliders. We rebuild thin wall
 // segments at runtime by clustering the posts mesh into post centres and
@@ -389,6 +394,10 @@ export class GlbV3World {
     }
 
     if (physics?.ready) this.#registerBridgeColliders(physics);
+    // Footstep-surface footprints for flat stone props. MUST run before the
+    // static-chunk merge below (line ~440) — the merge erases the slab/
+    // flagstone/steppingstone node names this relies on.
+    this.#registerStoneSurfaces();
 
     // 1b. Instanced bricks — the authored stone paving (pave/kerb/pile). Other
     // instanced systems (rocks/flowers) stay deferred; only bricks are wired so
@@ -1352,6 +1361,28 @@ export class GlbV3World {
       bridgeMeshes.push(obj);
     });
 
+    // World-space footprint per bridge (union of its sub-meshes), used by the
+    // footstep-surface query so standing on a deck reads as 'wood'. topY is the
+    // crown of the arch + structure; the runtime gates on the player being
+    // above the water line so swimming under a deck doesn't read as wood.
+    const byBridge = new Map();
+    for (const mesh of bridgeMeshes) {
+      const prefix = (mesh.name || "").startsWith("bridge01")
+        ? "bridge01"
+        : "bridge02";
+      const box = new THREE.Box3().setFromObject(mesh);
+      const existing = byBridge.get(prefix);
+      if (existing) existing.union(box);
+      else byBridge.set(prefix, box);
+    }
+    this.bridgeBounds = [...byBridge.values()].map((b) => ({
+      minX: b.min.x,
+      maxX: b.max.x,
+      minZ: b.min.z,
+      maxZ: b.max.z,
+      topY: b.max.y,
+    }));
+
     // Trimesh per deck mesh so the collider traces the REAL plank surface:
     // flat for bridge01, following bridge02's 2.6m arch across its 42 slats.
     // The old single oriented box put its TOP at the mesh Y-percentile (0.9 for
@@ -1367,6 +1398,75 @@ export class GlbV3World {
     }
     if (count > 0)
       console.log(`[GlbV3World] bridge colliders: ${count} deck trimeshes`);
+  }
+
+  /** True when the player is standing on a bridge deck (footstep-surface
+   *  query → 'wood'). Tests the XZ footprint of each bridge plus a Y gate:
+   *  feet above the water line (so swimming under a deck stays 'water') and
+   *  below the arch crown + headroom (so a high jump over it doesn't read
+   *  wood). `waterLevel` is the world Y of the water surface. */
+  playerOnBridge(x, y, z, waterLevel = -Infinity) {
+    const bounds = this.bridgeBounds;
+    if (!bounds) return false;
+    for (let i = 0; i < bounds.length; i++) {
+      const b = bounds[i];
+      if (
+        x >= b.minX - 0.2 &&
+        x <= b.maxX + 0.2 &&
+        z >= b.minZ - 0.2 &&
+        z <= b.maxZ + 0.2 &&
+        y >= waterLevel + 0.3 &&
+        y <= b.topY + 1.2
+      )
+        return true;
+    }
+    return false;
+  }
+
+  /** Collect world-space footprints of flat walkable stone props (scenery
+   *  slabs, hut flagstones, stepping stones) for the footstep-surface query.
+   *  Run before #mergeStaticWorldChunks — the merge renames these meshes. */
+  #registerStoneSurfaces() {
+    const boxes = [];
+    const box = new THREE.Box3();
+    this.root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      if (!STONE_SURFACE_RE.test(obj.name || "")) return;
+      box.setFromObject(obj);
+      if (box.isEmpty()) return;
+      boxes.push({
+        minX: box.min.x,
+        maxX: box.max.x,
+        minZ: box.min.z,
+        maxZ: box.max.z,
+        minY: box.min.y,
+        topY: box.max.y,
+      });
+    });
+    this.stoneBounds = boxes;
+    if (boxes.length)
+      console.log(`[GlbV3World] stone-surface footprints: ${boxes.length}`);
+  }
+
+  /** True when the player is standing on a flat stone prop (→ 'stone'
+   *  footstep surface). XZ footprint + a Y gate around the prop's top so
+   *  walking past the side of a tall stone doesn't trigger it. */
+  playerOnStone(x, y, z) {
+    const bounds = this.stoneBounds;
+    if (!bounds) return false;
+    for (let i = 0; i < bounds.length; i++) {
+      const b = bounds[i];
+      if (
+        x >= b.minX - 0.15 &&
+        x <= b.maxX + 0.15 &&
+        z >= b.minZ - 0.15 &&
+        z <= b.maxZ + 0.15 &&
+        y >= b.minY - 0.4 &&
+        y <= b.topY + 1.0
+      )
+        return true;
+    }
+    return false;
   }
 
   #isBridgeColliderMesh(name) {

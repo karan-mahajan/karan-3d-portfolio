@@ -65,7 +65,6 @@ const SPLASH_PER_BURST_WALK = 5;
 const SPLASH_PER_BURST_RUN = 8;
 const SPLASH_LIFE = 0.45;
 const SPLASH_GRAVITY = -9.8;
-const SPLASH_AUDIO_INTERVAL = 0.55;
 
 // Shallow/deep matched to karan's authored terrain-material RGB nodes (the
 // blank-bruno colour overrides): RGB.002 shallow = (0.28,0.68,0.72) linear =
@@ -151,7 +150,6 @@ export class Water {
     this.#buildSplashSystem();
 
     this._splashTimer = 0;
-    this._audioSplashTimer = 0;
     this._playerInWaterPrev = 0;
   }
 
@@ -635,20 +633,20 @@ export class Water {
         gsap.killTweensOf(this.entryDisturbance);
         gsap.to(this.entryDisturbance, { strength: 0, duration: 0.85, ease: 'sine.out' });
         this.#spawnSplashBurst(playerPos, 14);
-        if (this.audio) this.audio.playSplash({ entry: true });
-        this._audioSplashTimer = SPLASH_AUDIO_INTERVAL;
+        // Entering the water → the big jump/drop splash. Leaving → a lighter
+        // splash so the exit still reads. (Continuous wading audio is now the
+        // footstep system's water step pool, not an auto-splash loop.)
+        if (this.audio) {
+          if (inWater > 0.5) this.audio.playWaterJump();
+          else this.audio.playSplash({ entry: false, volume: 0.6 });
+        }
       }
 
       this._splashTimer -= delta;
-      this._audioSplashTimer -= delta;
       const running = (sample?.speed ?? 0) > 5;
       if (inWater > 0.5 && sample && sample.moving && this._splashTimer <= 0) {
         this._splashTimer = SPLASH_SPAWN_INTERVAL;
         this.#spawnSplashBurst(playerPos, running ? SPLASH_PER_BURST_RUN : SPLASH_PER_BURST_WALK);
-      }
-      if (inWater > 0.5 && sample && sample.moving && this._audioSplashTimer <= 0) {
-        this._audioSplashTimer = SPLASH_AUDIO_INTERVAL;
-        if (this.audio) this.audio.playSplash({ volume: running ? 1.0 : 0.7 });
       }
     } else {
       this.uPlayerInWater.value = 0;

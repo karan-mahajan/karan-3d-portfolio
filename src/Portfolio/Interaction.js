@@ -1,10 +1,8 @@
 import gsap from "gsap";
 import * as THREE from "three";
-import { contact } from "./ContactData.js";
 import { resume } from "./ResumeData.js";
 
 const PROXIMITY = 4.5; // distance from billboard to show prompt
-const CONTACT_PROXIMITY = 3.2;
 const RESUME_PROXIMITY = 4;
 const ZOOM_DURATION = 1.1; // seconds
 const ZOOM_STANDOFF = 4.0; // distance from screen during focused view — sized so the full 3m-tall screen fits the 45° vertical FOV with margin
@@ -29,6 +27,7 @@ export class Interaction {
     signs = null,
     skillSphere = null,
     projectsHut = null,
+    contactBoard = null,
     audio = null,
     actionPrompts = null,
     timeOfDay = null,
@@ -43,6 +42,7 @@ export class Interaction {
     this.signs = signs;
     this.skillSphere = skillSphere;
     this.projectsHut = projectsHut;
+    this.contactBoard = contactBoard;
     this.audio = audio;
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
@@ -51,7 +51,6 @@ export class Interaction {
     this.activeIndex = -1; // -1 = not focused
     this.candidate = null; // billboard the player is currently near
     this.contactCandidate = false;
-    this.contactOpen = false;
     this.skillCandidate = false;
     this.projectsCandidate = false;
     this.resumeCandidate = false;
@@ -102,33 +101,6 @@ export class Interaction {
     this.panelEl
       .querySelector(".panel-next")
       .addEventListener("click", () => this.cycle(+1));
-
-    // ── Contact overlay ────────────────────────────────────────────────────
-    this.contactEl = document.createElement("div");
-    this.contactEl.className = "contact-panel hidden";
-    const linksHtml = contact.links
-      .map(
-        (
-          l,
-        ) => `<a class="contact-link" href="${l.href}" target="_blank" rel="noopener noreferrer">
-        <span class="contact-link-label">${l.label}</span>
-        <span class="contact-link-value">${l.value}</span>
-      </a>`,
-      )
-      .join("");
-    this.contactEl.innerHTML = `
-      <button class="panel-close" aria-label="Close">×</button>
-      <div class="contact-accent"></div>
-      <h2 class="contact-title">${contact.name}</h2>
-      <p class="contact-subtitle">${contact.title}</p>
-      <p class="contact-blurb">${contact.blurb}</p>
-      <div class="contact-links">${linksHtml}</div>
-      <div class="panel-hint">ESC to close</div>
-    `;
-    document.body.appendChild(this.contactEl);
-    this.contactEl
-      .querySelector(".panel-close")
-      .addEventListener("click", () => this.closeContact());
 
     // ── Resume overlay ─────────────────────────────────────────────────────
     // Mirrors the contact-panel structure so existing .contact-panel CSS
@@ -202,8 +174,7 @@ export class Interaction {
     if (nearBillboard && !this.#inFrontOf(nearBillboard, playerPosition)) {
       nearBillboard = null;
     }
-    const nearContact =
-      this.signs && this.signs.nearContact?.(playerPosition, CONTACT_PROXIMITY);
+    const nearContact = this.contactBoard?.near?.(playerPosition);
     const nearResume =
       this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
     const nearSkills = this.skillSphere?.near?.(playerPosition);
@@ -233,7 +204,7 @@ export class Interaction {
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
     else if (this.resumeCandidate) this.#showPrompt("Résumé");
-    else if (this.contactCandidate) this.#showPrompt("Contact");
+    else if (this.contactCandidate) this.#showPrompt("Contact", "Enter");
     else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
     else if (this.projectsCandidate) this.#showPrompt("Projects", "Enter");
     else this.#hidePrompt();
@@ -426,22 +397,19 @@ export class Interaction {
 
   // ── Contact ──────────────────────────────────────────────────────────────
 
+  /** True while the contact-board dolly is animating in/out or held at the board. */
+  get contactOpen() {
+    return !!(this.contactBoard?.active || this.contactBoard?.zooming);
+  }
+
   openContact() {
-    if (this.contactOpen) return;
-    this.contactOpen = true;
+    if (!this.contactBoard || this.contactOpen) return;
     this.#hidePrompt();
-    this.audio?.playMenuOpen();
-    this.controller.paused = true;
-    this.contactEl.classList.remove("hidden");
-    this.achievements?.onSectionVisited?.('contact');
+    this.contactBoard.enter();
   }
 
   closeContact() {
-    if (!this.contactOpen) return;
-    this.contactOpen = false;
-    this.audio?.playMenuClose();
-    this.controller.paused = false;
-    this.contactEl.classList.add("hidden");
+    this.contactBoard?.exit?.();
   }
 
   // ── Resume ────────────────────────────────────────────────────────────────
