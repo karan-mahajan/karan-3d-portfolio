@@ -37,6 +37,7 @@ import { Compass } from "./UI/Compass.js";
 import { assertCoordRoundTrip } from "./UI/coords.js";
 import { Discovery } from "./UI/Discovery.js";
 import { MapOverlay } from "./UI/MapOverlay.js";
+import { MapSnapshot } from "./UI/MapSnapshot.js";
 import { MiniMap } from "./UI/MiniMap.js";
 import { Tutorial } from "./UI/Tutorial.js";
 import { UIController } from "./UI/UIController.js";
@@ -810,6 +811,13 @@ export class App extends EventTarget {
     // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
     // longer re-schedules itself via requestAnimationFrame.
     this.renderer.setAnimationLoop(this.#tick);
+
+    // One-time top-down render of the world for the map. Runs now that the
+    // render loop is live (so every lighting system — sun, world lights, sky,
+    // water — is frame-driven), forced to day, while the welcome overlay still
+    // covers the screen. The map is never re-rendered after this, so opening it
+    // later is a pure canvas blit with zero frame cost.
+    this.#captureMapSnapshot();
     this.#scheduleDeferredAnimationWarmup();
     if (this.debug?.enabled) {
       console.log(
@@ -904,7 +912,12 @@ export class App extends EventTarget {
       label: "lamp",
     }));
 
-    this.discovery = new Discovery();
+    // Resolve the three sections from their live world features (real coords +
+    // correct facing) so the map markers and teleport match the actual world,
+    // not the stale hardcoded positions.
+    this.mapSections = this.#buildMapSections();
+
+    this.discovery = new Discovery({ sections: this.mapSections });
     this.navmask = new Navmask({
       bounds: WORLD_BOUNDS,
       blockers: [...BLOCKERS, ...runtimeBlockers, ...lampBlockers],
@@ -921,7 +934,7 @@ export class App extends EventTarget {
       transitionFx: this.transitionFx,
       audio: this.audio,
       discovery: this.discovery,
-      sections: SECTIONS,
+      sections: this.mapSections,
       world: this.world,
     });
     this.clickToMove = new ClickToMove({
@@ -932,12 +945,19 @@ export class App extends EventTarget {
       scene: this.scene,
       terrain: this.world.terrain,
       audio: this.audio,
+      sections: this.mapSections,
+    });
+    this.mapSnapshot = new MapSnapshot({
+      renderer: this.renderer,
+      scene: this.scene,
+      bounds: WORLD_BOUNDS,
+      hideDuringCapture: [this.player.group],
     });
     this.miniMap = new MiniMap({
       player: this.player,
-      playerCamera: this.playerCamera,
       discovery: this.discovery,
-      teleport: this.teleport,
+      snapshot: this.mapSnapshot,
+      sections: this.mapSections,
       audio: this.audio,
       onExpand: (rect) => this.mapOverlay?.open(rect),
     });
@@ -950,11 +970,113 @@ export class App extends EventTarget {
       navmask: this.navmask,
       audio: this.audio,
       miniMap: this.miniMap,
+      snapshot: this.mapSnapshot,
+      sections: this.mapSections,
     });
     this.discovery.onDiscover((id) => {
       if (id) this.audio?.playMarkerClick?.();
     });
     this.#bindMapKeys();
+  }
+
+  /**
+   * Render the world top-down for the map exactly once, forced to DAY lighting
+   * so the map reads the same regardless of the live time of day (and so the
+   * single render never has to be repeated for day/night — opening the map
+   * stays a zero-cost canvas blit). Runs during boot behind the loading screen;
+   * forces day, captures, then restores the real clock-based cycle position.
+   */
+  async #captureMapSnapshot() {
+    if (!this.mapSnapshot || !this.timeOfDay) return;
+    const tod = this.timeOfDay;
+    const origProgress = tod.progress;
+    const origPaused = tod.paused;
+    try {
+      // Jump to the day peak and freeze the cycle so the live tick loop holds
+      // every lighting system at day for the frames before the snapshot — not
+      // just the palette (which is all `mode = "day"` applies synchronously).
+      tod.mode = "day";
+      tod.paused = true;
+      await this.#waitFrames(2);
+      await this.mapSnapshot.capture();
+    } catch (err) {
+      console.warn("[App] map snapshot capture failed:", err);
+    } finally {
+      tod.progress = origProgress;
+      tod.paused = origPaused;
+      tod.reapply();
+    }
+  }
+
+  /** Resolve after `n` animation frames (the live render loop drives them). */
+  #waitFrames(n) {
+    return new Promise((resolve) => {
+      let i = 0;
+      const step = () => (++i >= n ? resolve() : requestAnimationFrame(step));
+      requestAnimationFrame(step);
+    });
+  }
+
+  /**
+   * Resolve the three portfolio sections from their live world features so the
+   * map markers + teleport use real coordinates and face the right way:
+   *   - Projects → stand just outside the hut door, facing into the hut.
+   *   - Skills   → stand at the pond edge (spawn-ward side), facing the sphere.
+   *   - Contact  → stand in front of the readable board face, facing the board.
+   * Each entry carries an explicit `landing` { x, z, facing } the teleport
+   * lands on. Falls back to WorldMap metadata if a feature didn't resolve.
+   */
+  #buildMapSections() {
+    const meta = Object.fromEntries(SECTIONS.map((s) => [s.id, s]));
+    const out = [];
+    const add = (id, center, landing) => {
+      const m = meta[id] ?? { id, name: id, color: "#d4a017" };
+      out.push({ id, name: m.name, color: m.color, position: [center.x, 0, center.z], landing });
+    };
+
+    const hut = this.projectsHut;
+    if (hut?.ready && hut.doorPoint && hut.boardNormal) {
+      const n = hut.boardNormal; // points outward through the door arch
+      const stand = {
+        x: hut.doorPoint.x + n.x * 3.2,
+        z: hut.doorPoint.z + n.z * 3.2,
+        facing: Math.atan2(-n.x, -n.z), // look back toward the hut interior
+      };
+      add("projects", hut.doorPoint, stand);
+    }
+
+    const sph = this.skillSphere;
+    if (sph?.ready && sph.center) {
+      const c = sph.center;
+      const len = Math.hypot(c.x, c.z) || 1;
+      const dx = -c.x / len; // unit vector from sphere toward spawn
+      const dz = -c.z / len;
+      const dist = (sph.radius ?? 6) + 8;
+      const stand = {
+        x: c.x + dx * dist,
+        z: c.z + dz * dist,
+        facing: Math.atan2(-dx, -dz), // look back toward the sphere centre
+      };
+      add("skills", c, stand);
+    }
+
+    const brd = this.contactBoard;
+    if (brd?.ready && brd.faceCenter && brd.faceNormal) {
+      const n = brd.faceNormal; // points toward spawn (the readable side)
+      const fc = brd.faceCenter;
+      const stand = {
+        x: fc.x + n.x * 3.2,
+        z: fc.z + n.z * 3.2,
+        facing: Math.atan2(-n.x, -n.z), // look back toward the board face
+      };
+      add("contact", fc, stand);
+    }
+
+    // Keep any section that failed to resolve so its marker still shows.
+    for (const s of SECTIONS) {
+      if (!out.some((o) => o.id === s.id)) out.push({ ...s });
+    }
+    return out;
   }
 
   #navBlockerRadius(spot) {
@@ -1417,6 +1539,11 @@ export class App extends EventTarget {
     // frame total (vs. 10 if each surface owned its own pair).
     if (this.water) this.water.preRender(this.renderer, this.camera);
 
+    // Defensive: the off-screen map snapshot binds a render target and may be
+    // mid-flight (its async render/readback can straddle this frame). Force the
+    // on-screen frame back to the default framebuffer so it never lands in the
+    // map's texture.
+    this.renderer.setRenderTarget(null);
     this.postfx.render(frameDelta);
     this.debug.tick();
   };

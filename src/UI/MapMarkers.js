@@ -34,10 +34,20 @@ export function renderIslandMap(svg, {
   bounds = WORLD_BOUNDS,
   showLabels = false,
   discovery = null,
+  worldImage = false,
+  sections = SECTIONS,
 } = {}) {
   svg.replaceChildren();
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('role', 'img');
+
+  // When a real top-down render of the world sits behind the SVG, the
+  // procedural parchment base (ocean/shore/land/grain/coastline + the faked
+  // tree & lamp dots) is redundant — draw only the section markers on top.
+  if (worldImage) {
+    svg.appendChild(renderSections(width, height, bounds, { showLabels, discovery, sections }));
+    return;
+  }
 
   const defs = svgEl('defs');
   defs.appendChild(svgEl('filter', {
@@ -106,7 +116,7 @@ export function renderIslandMap(svg, {
 
   svg.appendChild(renderTreeClusters(width, height, bounds));
   svg.appendChild(renderLamps(width, height, bounds));
-  svg.appendChild(renderSections(width, height, bounds, { showLabels, discovery }));
+  svg.appendChild(renderSections(width, height, bounds, { showLabels, discovery, sections }));
 }
 
 export function renderTreeClusters(width, height, bounds = WORLD_BOUNDS) {
@@ -138,9 +148,9 @@ export function renderLamps(width, height, bounds = WORLD_BOUNDS) {
   return group;
 }
 
-export function renderSections(width, height, bounds = WORLD_BOUNDS, { showLabels = false, discovery = null } = {}) {
+export function renderSections(width, height, bounds = WORLD_BOUNDS, { showLabels = false, discovery = null, sections = SECTIONS } = {}) {
   const group = svgEl('g', { class: 'map-sections' });
-  for (const section of SECTIONS) {
+  for (const section of sections) {
     const [x, , z] = section.position;
     const p = worldToSvg(x, z, width, height, bounds);
     const discovered = discovery?.isDiscovered(section.id) ?? false;

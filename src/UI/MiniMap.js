@@ -1,182 +1,195 @@
 import gsap from 'gsap';
-import { POIS, SECTIONS, WORLD_BOUNDS } from '../Portfolio/WorldMap.js';
+import { SECTIONS, WORLD_BOUNDS } from '../Portfolio/WorldMap.js';
 import { worldToSvg } from './coords.js';
-import { renderIslandMap, svgEl } from './MapMarkers.js';
 
-const SIZE = 220;
+// Canvas backing resolution (CSS-scaled down to the 140px shell). 256 keeps
+// the rotated world crop crisp without a devicePixelRatio dance.
+const SIZE = 256;
+// Metres from the player to the rim of the circle. Sections farther than this
+// pin to the rim as a direction arrow until you walk closer.
+const VIEW_RADIUS_M = 40;
+const OCEAN_FILL = '#7a99a3';
 
 export class MiniMap {
   constructor({
     root = document.getElementById('minimap-root'),
     player,
-    playerCamera,
     discovery,
-    teleport,
+    snapshot,
+    sections = SECTIONS,
     audio,
     onExpand,
   }) {
     this.root = root;
     this.player = player;
-    this.playerCamera = playerCamera;
     this.discovery = discovery;
-    this.teleport = teleport;
+    this.snapshot = snapshot;
+    this.sections = sections;
     this.audio = audio;
     this.onExpand = onExpand;
     this.trail = [];
+    this._reducedMotion = typeof matchMedia === 'function'
+      && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     this.root.className = 'minimap-root';
     this.root.innerHTML = `
       <button class="minimap-shell" type="button" aria-label="Open map">
-        <svg class="minimap-svg"></svg>
-        <div class="map-tooltip hidden"></div>
+        <canvas class="minimap-canvas" width="${SIZE}" height="${SIZE}"></canvas>
+        <div class="minimap-ring" aria-hidden="true"></div>
       </button>
     `;
     this.shell = this.root.querySelector('.minimap-shell');
-    this.svg = this.root.querySelector('.minimap-svg');
-    this.tooltip = this.root.querySelector('.map-tooltip');
+    this.canvas = this.root.querySelector('.minimap-canvas');
+    this.ctx = this.canvas.getContext('2d');
 
-    this.#render();
     this.#wireBootFade();
-    this.discovery?.onDiscover?.((id) => this.#handleDiscover(id));
-    this.shell.addEventListener('click', (e) => {
-      if (e.target.closest('.map-marker')) return;
-      const section = this.#sectionAtEvent(e);
-      if (section) {
-        this.audio?.playMarkerClick?.();
-        this.teleport?.toSection?.(section, { x: e.clientX, y: e.clientY });
-        return;
-      }
+    this.shell.addEventListener('click', () => {
       if (document.body.classList.contains('booting')) return;
+      this.audio?.playMapOpen?.();
       this.onExpand?.(this.shell.getBoundingClientRect());
     });
-    this.svg.addEventListener('mousemove', (e) => {
-      const section = this.#sectionAtEvent(e);
-      if (!section) {
-        this.#hideTooltip();
-        this._hoverSectionId = null;
-        return;
-      }
-      if (section.id !== this._hoverSectionId) {
-        this._hoverSectionId = section.id;
-        this.audio?.playMarkerHover?.(section.id);
-      }
-      this.#showTooltip(section, e);
-    });
-    this.svg.addEventListener('mouseleave', () => this.#hideTooltip());
+    this.snapshot?.onReady?.(() => this.#draw());
   }
 
   update() {
     if (!this.player) return;
     const p = this.player.position;
-    const svgP = worldToSvg(p.x, p.z, SIZE, SIZE, WORLD_BOUNDS);
-    this.arrow?.setAttribute(
-      'transform',
-      `translate(${svgP.x.toFixed(2)} ${svgP.y.toFixed(2)}) rotate(${this.#playerAngleDeg().toFixed(2)})`,
-    );
-
     const last = this.trail[this.trail.length - 1];
-    if (!last || Math.hypot(last.x - p.x, last.z - p.z) > 0.35) {
+    if (!last || Math.hypot(last.x - p.x, last.z - p.z) > 0.6) {
       this.trail.push({ x: p.x, z: p.z });
-      if (this.trail.length > 30) this.trail.shift();
-      this.#renderTrail();
+      if (this.trail.length > 24) this.trail.shift();
     }
+    this.#draw();
   }
 
   getRect() {
     return this.shell.getBoundingClientRect();
   }
 
-  #render() {
-    renderIslandMap(this.svg, {
-      width: SIZE,
-      height: SIZE,
-      bounds: WORLD_BOUNDS,
-      discovery: this.discovery,
-    });
+  #draw() {
+    const ctx = this.ctx;
+    const c = SIZE / 2;
+    const yaw = this.player?.group?.rotation?.y ?? 0;
+    const px = this.player?.position?.x ?? 0;
+    const pz = this.player?.position?.z ?? 0;
+    const mppm = c / VIEW_RADIUS_M; // mini-map pixels per metre
 
-    this.trailGroup = svgEl('g', { class: 'map-breadcrumbs' });
-    this.svg.appendChild(this.trailGroup);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    ctx.fillStyle = OCEAN_FILL;
+    ctx.fillRect(0, 0, SIZE, SIZE);
 
-    this.arrow = svgEl('g', { class: 'map-player-arrow' });
-    this.arrow.appendChild(svgEl('path', { d: 'M 0 -9 L 6 7 L 0 4 L -6 7 Z' }));
-    this.svg.appendChild(this.arrow);
-    this.#wireMarkers();
+    // World crop: rotate the whole snapshot so the player's heading points up,
+    // centred on the player. cos/sin built from yaw; the map spins opposite the
+    // player so the fixed centre arrow always reads "forward".
+    if (this.snapshot?.ready) {
+      const snapSize = this.snapshot.size;
+      const ppmSnap = snapSize / (WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX);
+      const drawScale = mppm / ppmSnap;
+      const pSnap = worldToSvg(px, pz, snapSize, snapSize, WORLD_BOUNDS);
+      ctx.save();
+      ctx.translate(c, c);
+      ctx.rotate(-yaw);
+      ctx.scale(drawScale, drawScale);
+      ctx.translate(-pSnap.x, -pSnap.y);
+      ctx.drawImage(this.snapshot.canvas, 0, 0);
+      ctx.restore();
+    }
+
+    this.#drawTrail(c, mppm, yaw, px, pz);
+    this.#drawSections(c, mppm, yaw, px, pz);
+    this.#drawPlayerMarker(c);
   }
 
-  #renderTrail() {
-    if (!this.trailGroup) return;
-    this.trailGroup.replaceChildren();
-    this.trail.forEach((point, i) => {
-      const p = worldToSvg(point.x, point.z, SIZE, SIZE, WORLD_BOUNDS);
+  // Rotate a world delta (relative to the player) into mini-map screen space.
+  // North-up screen offset is (dx, -dz); then rotate by -yaw to match the crop.
+  #project(dx, dz, mppm, yaw) {
+    const ux = dx * mppm;
+    const uy = -dz * mppm;
+    const cos = Math.cos(-yaw);
+    const sin = Math.sin(-yaw);
+    return { x: ux * cos - uy * sin, y: ux * sin + uy * cos };
+  }
+
+  #drawTrail(c, mppm, yaw, px, pz) {
+    const ctx = this.ctx;
+    const rim = c - 8;
+    ctx.fillStyle = 'rgba(255, 107, 53, 0.5)';
+    this.trail.forEach((pt, i) => {
+      const o = this.#project(pt.x - px, pt.z - pz, mppm, yaw);
+      if (Math.hypot(o.x, o.y) > rim) return;
       const age = i / Math.max(1, this.trail.length - 1);
-      this.trailGroup.appendChild(svgEl('circle', {
-        cx: p.x,
-        cy: p.y,
-        r: 1.2 + age * 0.7,
-        opacity: 0.08 + age * 0.36,
-      }));
+      ctx.globalAlpha = 0.1 + age * 0.4;
+      ctx.beginPath();
+      ctx.arc(c + o.x, c + o.y, 1.4 + age * 1.1, 0, Math.PI * 2);
+      ctx.fill();
     });
+    ctx.globalAlpha = 1;
   }
 
-  #wireMarkers() {
-    for (const marker of this.svg.querySelectorAll('.map-marker-section')) {
-      const section = SECTIONS.find((s) => s.id === marker.dataset.markerId);
-      if (!section) continue;
-      marker.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.audio?.playMarkerClick?.();
-        this.teleport?.toSection?.(section, { x: e.clientX, y: e.clientY });
-      });
-      marker.addEventListener('mouseenter', (e) => {
-        this.audio?.playMarkerHover?.(section.id);
-        this.#showTooltip(section, e);
-      });
-      marker.addEventListener('mousemove', (e) => this.#positionTooltip(e));
-      marker.addEventListener('mouseleave', () => this.#hideTooltip());
-      marker.addEventListener('keydown', (e) => {
-        if (e.code !== 'Enter' && e.code !== 'Space') return;
-        e.preventDefault();
-        this.teleport?.toSection?.(section, this.#markerScreenCenter(marker));
-      });
-    }
-  }
-
-  #showTooltip(target, e) {
-    const discovered = this.discovery?.isDiscovered?.(target.id);
-    this.tooltip.innerHTML = `
-      <strong>${target.name}</strong>
-      ${discovered ? `<span>${target.blurb}</span>` : '<span>Undiscovered</span>'}
-    `;
-    this.tooltip.classList.remove('hidden');
-    this.#positionTooltip(e);
-  }
-
-  #positionTooltip(e) {
-    const rect = this.root.getBoundingClientRect();
-    this.tooltip.style.left = `${e.clientX - rect.left - 8}px`;
-    this.tooltip.style.top = `${e.clientY - rect.top - 36}px`;
-  }
-
-  #hideTooltip() {
-    this.tooltip.classList.add('hidden');
-  }
-
-  #handleDiscover(id) {
-    if (id === null || SECTIONS.some((s) => s.id === id) || POIS.some((p) => p.id === id)) {
-      this.#render();
-      const marker = this.svg.querySelector(`[data-marker-id="${id}"]`);
-      const star = marker?.querySelector('.map-star');
-      if (star) {
-        gsap.fromTo(star, { scale: 0.4, opacity: 0, rotation: -25 }, {
-          scale: 1,
-          opacity: 1,
-          rotation: 0,
-          duration: 0.45,
-          ease: 'back.out(2)',
-          transformOrigin: 'center',
-        });
+  #drawSections(c, mppm, yaw, px, pz) {
+    const ctx = this.ctx;
+    const rim = c - 12;
+    for (const section of this.sections) {
+      const [sx, , sz] = section.position;
+      let o = this.#project(sx - px, sz - pz, mppm, yaw);
+      const dist = Math.hypot(o.x, o.y);
+      const atRim = dist > rim;
+      if (atRim && dist > 0) {
+        o = { x: (o.x / dist) * rim, y: (o.y / dist) * rim };
       }
+      const discovered = this.discovery?.isDiscovered?.(section.id) ?? false;
+      ctx.beginPath();
+      ctx.arc(c + o.x, c + o.y, atRim ? 3.4 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = discovered ? section.color : '#9a9082';
+      ctx.fill();
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = 'rgba(40, 30, 18, 0.85)';
+      ctx.stroke();
     }
+  }
+
+  // Heading-up "you are here" beacon. A pulsing halo (motion-gated), a white
+  // ring for contrast on both day and night crops, a coloured core, and a small
+  // forward notch. The mini-map rotates under it, so "up" is always forward.
+  #drawPlayerMarker(c) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(c, c);
+
+    if (!this._reducedMotion) {
+      const t = (performance.now() % 1600) / 1600; // 0..1
+      const pulseR = 9 + t * 12;
+      ctx.beginPath();
+      ctx.arc(0, 0, pulseR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 107, 53, ${0.5 * (1 - t)})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Forward notch (points up = heading).
+    ctx.beginPath();
+    ctx.moveTo(0, -13);
+    ctx.lineTo(5, -5);
+    ctx.lineTo(-5, -5);
+    ctx.closePath();
+    ctx.fillStyle = '#ff6b35';
+    ctx.fill();
+
+    // Cored dot with a white halo ring.
+    ctx.beginPath();
+    ctx.arc(0, 0, 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff6b35';
+    ctx.fill();
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    ctx.restore();
   }
 
   #wireBootFade() {
@@ -189,27 +202,5 @@ export class MiniMap {
       requestAnimationFrame(check);
     };
     check();
-  }
-
-  #playerAngleDeg() {
-    const yaw = this.player?.group?.rotation?.y ?? 0;
-    return (yaw * 180) / Math.PI;
-  }
-
-  #markerScreenCenter(marker) {
-    const rect = marker.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  }
-
-  #sectionAtEvent(e) {
-    const rect = this.svg.getBoundingClientRect();
-    const sx = ((e.clientX - rect.left) / rect.width) * SIZE;
-    const sy = ((e.clientY - rect.top) / rect.height) * SIZE;
-    for (const section of SECTIONS) {
-      const [x, , z] = section.position;
-      const p = worldToSvg(x, z, SIZE, SIZE, WORLD_BOUNDS);
-      if (Math.hypot(sx - p.x, sy - p.y) <= 15) return section;
-    }
-    return null;
   }
 }

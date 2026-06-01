@@ -138,6 +138,10 @@ const FENCE_RIDGE_RISE = 0.22; // pitched-roof cap height; > ~1.2× halfThick so
 // The exception: solid BUILDINGS whose footprint IS the visible wall — kept (as a
 // tight oriented box) so the player can't walk through them.
 const SOLID_FOOTPRINT_RE = /Footprint_(cabin|outhouse)/i;
+// Solid miscFx props with no collider proxy: the WASD controls board (panel +
+// frame + caps + posts) and the PlayStation console/crate. Floating keys,
+// labels and the controller pad are intentionally excluded (walk-through).
+const DECOR_SOLID_RE = /^controlsBoard_|^playstation_(console|crate)$/;
 const TITLE_LETTER_COLOR = "#24345a";
 const TITLE_LETTER_EMISSIVE = "#080d18";
 const TITLE_LETTER_FLOAT_CLEARANCE = 1.15;
@@ -382,6 +386,7 @@ export class GlbV3World {
       if (entry.system === "scenery" || entry.system === "areas") {
         this.#configureShadowReceivers(group);
       }
+      if (entry.system === "scenery") this.#addSlabColliders(group, physics);
       // Trees: strip the solid green canopy → SDF foliage anchors in its form.
       const treeSpecies = TREE_SYSTEMS[entry.system];
       if (treeSpecies) this.#extractTreeFoliage(group, treeSpecies);
@@ -389,8 +394,12 @@ export class GlbV3World {
       if (TREE_TRUNK_SYSTEMS.has(entry.system))
         this._addTreeTrunkColliders(group, physics);
       if (entry.system === "fences") this.#addFenceColliders(group, physics);
-      if (entry.system === "miscFx")
+      if (entry.system === "lanterns")
+        this.#addLanternColliders(group, physics);
+      if (entry.system === "miscFx") {
         this.#extractDynamicTitleLetters(group, physics);
+        this.#addDecorPropColliders(group, physics);
+      }
     }
 
     if (physics?.ready) this.#registerBridgeColliders(physics);
@@ -398,6 +407,9 @@ export class GlbV3World {
     // static-chunk merge below (line ~440) — the merge erases the slab/
     // flagstone/steppingstone node names this relies on.
     this.#registerStoneSurfaces();
+    // Stamp those flat-stone footprints into the grass mask so blades don't
+    // poke up through the slab tops (the mask alone doesn't carve them out).
+    this.#carveGrassMaskHoles();
 
     // 1b. Instanced bricks — the authored stone paving (pave/kerb/pile). Other
     // instanced systems (rocks/flowers) stay deferred; only bricks are wired so
@@ -1236,6 +1248,31 @@ export class GlbV3World {
     }
   }
 
+  /**
+   * Scenery slabs (`slab01/02/03`) are raised stone platforms on the grass —
+   * without a collider the player's feet sink to the terrain below. Trimesh per
+   * mesh so the collider traces the real (possibly stepped) top surface, like
+   * the bridge decks. The `areas` water lily pads / stepping stones are left as
+   * non-physics decoration, so this `/^slab\d/` match never touches them.
+   */
+  #addSlabColliders(group, physics) {
+    if (!physics?.ready) return;
+    group.updateMatrixWorld(true);
+
+    let count = 0;
+    group.traverse((node) => {
+      if (!/^slab\d/i.test(node.name || "")) return;
+      // Top-most slab node only — then collide every mesh in its subtree.
+      for (let p = node.parent; p; p = p.parent)
+        if (/^slab\d/i.test(p.name || "")) return;
+      node.traverse((m) => {
+        if (m.isMesh && this.#addMeshTrimeshCollider(m, physics)) count++;
+      });
+    });
+    if (count)
+      console.log(`[GlbV3World] scenery slabs: ${count} trimesh colliders`);
+  }
+
   #addMeshTrimeshCollider(mesh, physics) {
     const geometry = mesh.geometry;
     const posAttr = geometry?.attributes?.position;
@@ -1264,6 +1301,100 @@ export class GlbV3World {
     return !!physics.addStaticTrimesh(points, indices);
   }
 
+  /**
+   * Tight oriented-box collider hugging ONE mesh's local bbox + world yaw.
+   * Decomposing the world matrix (vs a `Box3.setFromObject` world-AABB) avoids
+   * the yaw inflation that turns a rotated thin panel into a fat invisible wall.
+   * Shared by the `colliders.glb` `cuboid_` proxies and the runtime decor props.
+   * Returns false if the mesh has no usable geometry.
+   */
+  #addMeshOrientedBoxCollider(mesh, physics) {
+    const geometry = mesh.geometry;
+    if (!geometry) return false;
+    geometry.computeBoundingBox();
+    const lbb = geometry.boundingBox;
+    if (!lbb) return false;
+
+    mesh.updateMatrixWorld(true);
+    const localCenter = lbb.getCenter(new THREE.Vector3());
+    const localSize = lbb.getSize(new THREE.Vector3());
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    mesh.matrixWorld.decompose(new THREE.Vector3(), quat, scl);
+    const worldCenter = localCenter.applyMatrix4(mesh.matrixWorld);
+    const yaw = new THREE.Euler().setFromQuaternion(quat, "YXZ").y;
+    physics.addStaticCuboid(
+      worldCenter.x,
+      worldCenter.y,
+      worldCenter.z,
+      Math.max(Math.abs(localSize.x * scl.x) / 2, 0.02),
+      Math.max(Math.abs(localSize.y * scl.y) / 2, 0.02),
+      Math.max(Math.abs(localSize.z * scl.z) / 2, 0.02),
+      yaw,
+    );
+    return true;
+  }
+
+  /**
+   * Lanterns ship no collider proxy. Each is a slender upright lamp, so an
+   * AABB-derived cylinder (radius yaw-invariant for an upright prop) blocks
+   * walk-through without an inflated invisible box — same recipe as `tube_`.
+   */
+  #addLanternColliders(group, physics) {
+    if (!physics?.ready) return;
+    group.updateMatrixWorld(true);
+
+    const roots = [];
+    group.traverse((obj) => {
+      if (!/^lantern_slab/i.test(obj.name || "")) return;
+      // Take only the top-most lantern node so a parent + its sub-meshes don't
+      // each spawn a collider.
+      for (let p = obj.parent; p; p = p.parent)
+        if (/^lantern_slab/i.test(p.name || "")) return;
+      roots.push(obj);
+    });
+
+    let count = 0;
+    for (const node of roots) {
+      const wbox = new THREE.Box3().setFromObject(node);
+      if (wbox.isEmpty()) continue;
+      const size = wbox.getSize(new THREE.Vector3());
+      const center = wbox.getCenter(new THREE.Vector3());
+      const radius = Math.max(Math.max(size.x, size.z) / 2, 0.05);
+      const height = Math.max(size.y, 0.05);
+      // addStaticCylinder lifts by height/2; pass center.y - height/2 so the
+      // cylinder centres on the bbox centre.
+      physics.addStaticCylinder(
+        center.x,
+        center.y - height / 2,
+        center.z,
+        radius,
+        height,
+      );
+      count++;
+    }
+    if (count)
+      console.log(`[GlbV3World] lanterns: ${count} cylinder colliders`);
+  }
+
+  /**
+   * Solid miscFx props that ship no collider proxy — the WASD controls board
+   * and the PlayStation console/crate. One tight oriented box per matching
+   * mesh; the floating keys, labels and controller pad stay walk-through.
+   */
+  #addDecorPropColliders(group, physics) {
+    if (!physics?.ready) return;
+    group.updateMatrixWorld(true);
+
+    let count = 0;
+    group.traverse((obj) => {
+      if (!obj.isMesh || !DECOR_SOLID_RE.test(obj.name || "")) return;
+      if (this.#addMeshOrientedBoxCollider(obj, physics)) count++;
+    });
+    if (count)
+      console.log(`[GlbV3World] decor props: ${count} oriented-box colliders`);
+  }
+
   // ── Colliders ─────────────────────────────────────────────────────────────
 
   async #loadColliders(url, physics) {
@@ -1279,10 +1410,6 @@ export class GlbV3World {
     let cyl = 0,
       box = 0,
       skipped = 0;
-    const _pos = new THREE.Vector3();
-    const _quat = new THREE.Quaternion();
-    const _scl = new THREE.Vector3();
-    const _euler = new THREE.Euler();
 
     for (const obj of meshes) {
       const name = obj.name || "";
@@ -1328,23 +1455,7 @@ export class GlbV3World {
       // instead: half-extents from the LOCAL bbox × scale, centre from the local
       // bbox centre, and pass the yaw — same oriented-box recipe the bridge decks
       // use (#addBridgeDeckCollider).
-      obj.geometry.computeBoundingBox();
-      const lbb = obj.geometry.boundingBox;
-      const localCenter = lbb.getCenter(new THREE.Vector3());
-      const localSize = lbb.getSize(new THREE.Vector3());
-      obj.matrixWorld.decompose(_pos, _quat, _scl);
-      const worldCenter = localCenter.applyMatrix4(obj.matrixWorld);
-      const yaw = _euler.setFromQuaternion(_quat, "YXZ").y;
-      physics.addStaticCuboid(
-        worldCenter.x,
-        worldCenter.y,
-        worldCenter.z,
-        Math.max(Math.abs(localSize.x * _scl.x) / 2, 0.02),
-        Math.max(Math.abs(localSize.y * _scl.y) / 2, 0.02),
-        Math.max(Math.abs(localSize.z * _scl.z) / 2, 0.02),
-        yaw,
-      );
-      box++;
+      if (this.#addMeshOrientedBoxCollider(obj, physics)) box++;
     }
 
     // Proxy meshes are never added to the scene — physics owns them now.
@@ -1467,6 +1578,51 @@ export class GlbV3World {
         return true;
     }
     return false;
+  }
+
+  /**
+   * Zero the grass-density channel (G) of the grass mask over every flat-stone
+   * footprint so blades don't grow up through the slab tops. Uses the SAME
+   * world→UV mapping the ground material + Grass field sample with:
+   * `uv = (worldX, -worldZ) / (gridBounds*2) + 0.5` (mask is bottom-up, flipY
+   * off). A small pad covers the bilinear-filter fringe at the edges.
+   */
+  #carveGrassMaskHoles() {
+    const tex = this.grassMask;
+    const bounds = this.stoneBounds;
+    if (!tex?.image?.data || !bounds?.length) return;
+    const { data, width, height } = tex.image;
+    const ch = Math.round(data.length / (width * height));
+    if (ch < 2) return; // need at least an addressable G channel
+
+    const span = (this.grassGrid?.bounds ?? 96) * 2;
+    const PAD = 0.5; // m — swallow the bilinear fringe
+    const toRow = (z) => (-z / span + 0.5) * height; // v from -worldZ
+
+    let carved = 0;
+    for (const b of bounds) {
+      let c0 = Math.floor(((b.minX - PAD) / span + 0.5) * width);
+      let c1 = Math.ceil(((b.maxX + PAD) / span + 0.5) * width);
+      // -Z mapping inverts row order: maxZ → smaller row, minZ → larger row.
+      let r0 = Math.floor(toRow(b.maxZ + PAD));
+      let r1 = Math.ceil(toRow(b.minZ - PAD));
+      c0 = Math.max(0, c0);
+      c1 = Math.min(width - 1, c1);
+      r0 = Math.max(0, r0);
+      r1 = Math.min(height - 1, r1);
+      for (let r = r0; r <= r1; r++) {
+        for (let c = c0; c <= c1; c++) {
+          data[(r * width + c) * ch + 1] = 0; // G channel → no grass
+          carved++;
+        }
+      }
+    }
+    if (carved) {
+      tex.needsUpdate = true;
+      console.log(
+        `[GlbV3World] grass mask: carved ${carved} texels over ${bounds.length} stone footprints`,
+      );
+    }
   }
 
   #isBridgeColliderMesh(name) {

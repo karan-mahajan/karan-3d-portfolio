@@ -96,9 +96,18 @@ export class Teleport {
 
   #safeLanding(section) {
     const [sx, , sz] = section.position;
+    // Explicit landing (runtime-resolved stand spot + facing toward the
+    // feature). Use it verbatim when clear; otherwise fall through to the
+    // ring search around the feature centre below.
+    if (section.landing) {
+      const { x, z, facing } = section.landing;
+      if (!this.navmask || this.#landingIsClear(x, z, facing)) {
+        return { x, z, facing };
+      }
+    }
     const [ox, , oz] = section.landingOffset ?? [0, 0, 0];
     const desired = { x: sx + ox, z: sz + oz };
-    const facing = Math.atan2(sx - desired.x, sz - desired.z);
+    const facing = section.landing?.facing ?? Math.atan2(sx - desired.x, sz - desired.z);
     if (!this.navmask || this.#landingIsClear(desired.x, desired.z, facing)) {
       return { ...desired, facing };
     }
