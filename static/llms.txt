@@ -1,0 +1,50 @@
+# Karan Mahajan — Full Stack Web Developer
+
+> Karan Mahajan is a Full Stack Web Developer specializing in Next.js, React,
+> WordPress, and Drupal. He builds scalable CMS-driven and headless web
+> architectures. This site (world.karanmahajan.ca) is an interactive, walkable
+> 3D portfolio. His detailed, text-based portfolio lives at https://karanmahajan.ca.
+
+## About
+
+- Name: Karan Mahajan
+- Role: Full Stack Web Developer
+- Current employer: Skylar Media Group (Feb 2025 – Present)
+- Education: University of Windsor
+- Status: Open to full-time roles, freelance projects, and collaborations
+- Primary portfolio (detailed): https://karanmahajan.ca
+- Interactive 3D portfolio: https://world.karanmahajan.ca
+- Email: karanmahajan321@gmail.com
+- LinkedIn: https://www.linkedin.com/in/karan-mahajan/
+- GitHub: https://github.com/karan-mahajan
+
+## Skills
+
+- Frontend: Next.js, React, TypeScript, Tailwind CSS, JavaScript, HTML, CSS, Material UI, Bootstrap
+- CMS: WordPress, Drupal, Wix, ExpressionEngine (including headless setups)
+- Backend & Databases: Node.js, Django, Python, Java, PostgreSQL, MongoDB, MySQL
+- DevOps & Tools: AWS, Jenkins, Git, Pantheon, Jira, Figma
+- Other: GraphQL, REST APIs, Stripe, WooCommerce, JWT/OAuth, WCAG accessibility
+
+## Experience
+
+- Full Stack Web Developer, Skylar Media Group (Feb 2025 – Present): Scalable CMS-driven and headless architectures across WordPress, Drupal, Next.js, React.
+- Programming Research Assistant, University of Windsor (May 2024 – Aug 2024): Frontend redesign of a client platform, dynamic UI components, CMS architecture management.
+- Software Engineer, Recro (Jul 2022 – Mar 2023): Reusable React component library with cross-framework support and accessibility standards.
+- Software Craftsperson, Launch Ventures (Oct 2021 – Jul 2022): Responsive PWAs in React/Next.js; dashboards and Node.js APIs over MongoDB.
+- Member of Technical Staff, MetricStream (Jul 2019 – Oct 2021): MySQL optimization, JavaScript frontend, Java backend, AWS + Jenkins pipelines.
+
+## Selected projects
+
+- Alectra Utilities (https://alectrautilities.com): Enterprise Drupal CMS for an Ontario utility — complex content workflows, scheduled transitions, Pantheon deployments. Tech: Drupal, PHP, Pantheon, Lando.
+- RPRA Website (https://rpra.ca): Full QA audit and development for Ontario's Resource Productivity and Recovery Authority — custom tooling, plugin management, Git deployment pipelines. Tech: WordPress, PHP, Git, Pantheon.
+- Interstone: WooCommerce store with WebP image compression, REST API integrations, Wordfence security. Tech: WordPress, WooCommerce, REST API, PHP.
+- findabl: Next.js app with Apollo GraphQL, dynamic employee profiles, CSP enforcement, SSR optimizations. Tech: Next.js, React, GraphQL, Apollo.
+- Trimark Windows: ExpressionEngine project with an isolated landing-page system and PHP form handlers using Mailjet and Postmark. Tech: ExpressionEngine, PHP, Mailjet.
+
+## Links
+
+- Detailed portfolio: https://karanmahajan.ca
+- 3D portfolio: https://world.karanmahajan.ca
+- LinkedIn: https://www.linkedin.com/in/karan-mahajan/
+- GitHub: https://github.com/karan-mahajan

@@ -38,6 +38,22 @@ body {
   touch-action: none;
 }
 
+/* Crawlable / accessible content sits in normal flow behind the opaque fixed
+ * canvas: real text for search engines, AI crawlers, and screen readers, but
+ * never shown to sighted JS users. Not display:none (which Google discounts) —
+ * it is pinned to the top-left at z-index 0 and painted over by the canvas. */
+.seo-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 0;
+  padding: 1rem;
+  color: #111;
+  background: #0e0805;
+  pointer-events: none;
+}
+
 .overlay {
   position: fixed;
   inset: 0;
