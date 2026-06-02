@@ -32,11 +32,15 @@ const CLI = join(ROOT, 'node_modules', '.bin', 'gltf-transform');
 const manifest = JSON.parse(readFileSync(join(WORLD, 'manifest.json'), 'utf8'));
 
 // Visual GLBs only: every monolithic system except the heightfield terrain,
-// plus each instanced system's visual mesh. (colliders/references are addressed
-// via separate manifest keys and are never in these lists.)
+// plus each instanced system's visual mesh, plus the interactive system
+// (Colour Garden) which loads separately (kept out of the prop-merge) but is
+// still pure visual geometry — Draco only touches mesh buffers, so per-statue
+// materials stay intact and paintable. (colliders/references are addressed via
+// separate manifest keys and are never in these lists.)
 const targets = [
   ...(manifest.monolithic ?? []).filter((e) => !e.heightfield).map((e) => e.file),
   ...(manifest.instanced ?? []).map((e) => e.visual).filter(Boolean),
+  ...(manifest.interactive ? [manifest.interactive.file] : []),
 ];
 
 /** True if the GLB's JSON chunk already declares Draco compression. */

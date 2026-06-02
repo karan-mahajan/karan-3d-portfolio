@@ -94,7 +94,7 @@ src/Portfolio/          # Billboards (single Project Showcase), Signs, Interacti
 src/Effects/            # Fireflies, Water, Rain, Thunderstorm, Leaves, Footprints, WindLines, PostFX
 src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast/Panel, MiniMap, MapOverlay, MapMarkers, Discovery, coords, map.css
 src/Travel/             # TransitionFX (iris wipe), Teleport, Navmask (A* nav grid), ClickToMove (auto-walk)
-src/Systems/            # Achievements (34 unlocks + time tracker), DistanceGame (shore mini-game)
+src/Systems/            # Achievements (42 unlocks + time tracker), DistanceGame (shore mini-game)
 src/Audio/AudioManager.js # howler (ambient + footsteps + ui chimes + splashes)
 static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/, wildlife/
 ```
@@ -148,8 +148,10 @@ physics.step → player.update → playerCamera.update → discovery.update
   Rapier's kinematic-position character controller; football is the only
   dynamic body. Variable timestep — known wart, not yet fixed.
 - Fog tinted `#ffb084`, range 65→165, so distant trees fade into sunset.
-- **Achievements** (`Systems/Achievements.js`): 34 unlocks, time tracker, toast
-  on unlock, full panel on key. Persists to localStorage. App tick feeds it
+- **Achievements** (`Systems/Achievements.js`): 42 unlocks w/ rarity tiers
+  (common→legendary), time tracker, rarity-themed toast on unlock, full panel
+  on trophy click or `J` (completion %, per-category badges, NEW badge, 100%
+  celebration). Persists to localStorage. App tick feeds it
   player pos / moving / running / grounded / inWater / mode / isRaining.
 - **Tutorial** (`UI/Tutorial.js`): first-visit coachmarks for WASD/joystick,
   drag-to-look, zoom. Detects look/zoom from raw input events, NOT camera

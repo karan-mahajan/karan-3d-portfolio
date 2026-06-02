@@ -399,6 +399,23 @@ export class Player {
     if (this.controller) this.controller.paused = false;
   }
 
+  /**
+   * Snap the player (physics body + group + facing) to a fixed spot. Used when
+   * a mini-game stations the player at a known throwing position.
+   */
+  placeAt(x, y, z, yaw = 0) {
+    if (this.body?.teleport) this.body.teleport(x, y, z);
+    this.group.position.set(x, y, z);
+    this._currentYaw = yaw;
+    this._targetYaw = yaw;
+    this._verticalVelocity = 0;
+  }
+
+  /** Aim the body toward a yaw without moving — update() smooths the turn. */
+  setFacing(yaw) {
+    this._targetYaw = yaw;
+  }
+
   /** Teleport back to spawn and reset facing/tilt (lava death, etc.). */
   respawn() {
     const y = (this.terrain ? this.terrain.heightAt(0, 0) : 0) + 0.1;
@@ -418,6 +435,40 @@ export class Player {
   }
   wave() {
     if (this.character) this.character.play('waving', { once: true, then: 'idle', interruptible: true });
+  }
+
+  /**
+   * Colour Garden charge-throw. Plays the blended pickup→wind-up→throw clip,
+   * frozen at `holdFrac` of the clip (the cocked wind-up frame) until
+   * releaseChargedAction(). Returns false if the clip isn't loaded so the
+   * caller can fall back to a stand-in. The clip is a non-interruptible
+   * one-shot, so #updateAnimationState leaves it alone while it runs.
+   */
+  playChargedAction(name, holdFrac, rate = 1) {
+    if (!this.character || !this.character.actions[name]) return false;
+    const action = this.character.actions[name];
+    const dur = action.getClip()?.duration ?? 0;
+    const ok = this.character.playCharged(name, dur * holdFrac, { then: 'idle', fade: 0.2 });
+    if (ok) {
+      this._state = name;
+      action.timeScale = rate; // play() reset it to 1; speed the throw clip up
+    }
+    return ok;
+  }
+
+  /** Release the held wind-up so the throw swing completes. */
+  releaseChargedAction() {
+    this.character?.releaseHold?.();
+  }
+
+  /** Normalised 0..1 playhead of a character action (for release timing). */
+  actionProgress(name) {
+    return this.character?.actionProgress?.(name) ?? 0;
+  }
+
+  /** World position of the character's right wrist (the orb tracks it). */
+  getHandWorldPosition(out) {
+    return this.character?.getHandWorldPosition?.(out) ?? null;
   }
 
   /**

@@ -227,7 +227,8 @@ export class App extends EventTarget {
     });
     this.achievements.onUnlock((a) => {
       this.achievementToast.show(a);
-      this.audio?.playAchievement?.();
+      this.audio?.playAchievement?.(a.rarity || 'common');
+      this.#playUnlockBeat(a.rarity || 'common');
     });
     // Wrap Rain.setEnabled one more time so the on-edge fires onToggleRain.
     // The thunderstorm wrap above already chained an outer wrapper; this
@@ -623,6 +624,7 @@ export class App extends EventTarget {
           player: this.player,
           lava: this.lava,
           wasted: this.wasted,
+          achievements: this.achievements,
         });
       }
       this.animatedProps = new AnimatedProps(
@@ -750,6 +752,7 @@ export class App extends EventTarget {
       app: this,
       loader: this.loader,
       timeOfDay: this.timeOfDay,
+      achievements: this.achievements,
     });
     await this.colourGarden.load();
 
@@ -972,6 +975,7 @@ export class App extends EventTarget {
       transitionFx: this.transitionFx,
       audio: this.audio,
       discovery: this.discovery,
+      achievements: this.achievements,
       sections: this.mapSections,
       world: this.world,
     });
@@ -1365,6 +1369,24 @@ export class App extends EventTarget {
     this._slowMoLeft = duration;
   }
 
+  /**
+   * The "felt" half of an achievement unlock — a camera punch and (for the
+   * rarer tiers) a brief slow-mo so the moment lands like a game beat instead
+   * of a passive notification. Scaled by rarity; commons stay subtle so the
+   * early-game flurry (first steps, journey begins…) doesn't feel spammy.
+   * Skipped inside the Colour Garden, which already drives its own slow-mo.
+   */
+  #playUnlockBeat(rarity) {
+    if (this.colourGarden?.inGameMode) return;
+    // Commons are banner-only (they fire in clusters during the movement
+    // tutorial — a camera shake there reads as a glitch). Rare+ get a punch,
+    // epic/legendary additionally freeze the world for a beat.
+    const punch = { rare: 0.22, epic: 0.34, legendary: 0.5 }[rarity] ?? 0;
+    if (punch > 0) this.playerCamera?.addImpulse?.(punch);
+    if (rarity === 'epic') this.triggerSlowMo(0.4, 0.7);
+    else if (rarity === 'legendary') this.triggerSlowMo(0.28, 1.1);
+  }
+
   #tick = () => {
     // Skip 5 of every 6 frames while the tab is hidden. Don't burn the
     // clock's delta on the skipped frames — getDelta() is only called on
@@ -1432,15 +1454,17 @@ export class App extends EventTarget {
     if (this.miniMap) this.miniMap.update();
     if (this.mapOverlay) this.mapOverlay.update();
     if (this.compass) this.compass.update();
-    this.world.update(elapsed, this.camera, frameDelta, this.player.position, {
+    // World + ambient motion run on the SCALED delta so the whole scene visibly
+    // slows during the Colour Garden paint payoff (snow drift, grass/wind sway,
+    // leaves, orb arc + bloom). Camera/UI/audio + the weather schedule stay on
+    // real time. scaledDelta === frameDelta outside slow-mo → normal play same.
+    this.world.update(elapsed, this.camera, scaledDelta, this.player.position, {
       nightFactor: this.timeOfDay?.nightFactor ?? 0,
       snowCoverage: this.weather?.coverage ?? 0,
     });
-    // Colour Garden runs on the scaled delta so the orb arc + droplet burst
-    // slow down during the paint payoff.
     this.colourGarden?.update(scaledDelta, this.player.position);
     if (this._colliderDebugLines) this.#updateColliderDebug();
-    this.wind.update(frameDelta);
+    this.wind.update(scaledDelta);
     // Grass's wind sway is driven by the shared Wind clock; the per-frame work
     // here is feeding player position/speed so blades bend while walking and
     // ripple locally around the legs while running.
@@ -1492,14 +1516,15 @@ export class App extends EventTarget {
       this.water.rainTarget = this.rain?.enabled ? 1 : 0;
       this.water.update(elapsed, frameDelta, this.player.position, sample);
     }
-    this.rain.update(frameDelta);
+    this.rain.update(scaledDelta);
     // Weather director advances the snow cycle + writes the shared uniforms;
-    // Snow reads them this same frame for its falling flakes.
+    // Snow reads them this same frame for its falling flakes. The director runs
+    // on real time (don't slow the storm schedule); only the flake FALL slows.
     this.weather.update(frameDelta);
-    this.snow.update(frameDelta);
+    this.snow.update(scaledDelta);
     this.thunderstorm.update(frameDelta, this.player.position);
-    this.windLines.update(frameDelta, this.player.position);
-    this.leaves.update(frameDelta, this.player.position);
+    this.windLines.update(scaledDelta, this.player.position);
+    this.leaves.update(scaledDelta, this.player.position);
     const _grounded = this.player._grounded !== false;
     this.footprints.update(frameDelta);
     const px = this.player.position.x;
@@ -1560,7 +1585,12 @@ export class App extends EventTarget {
     // distance + water-state unlocks. Section + experience-sign proximity
     // and off-path detection are computed here too because we already have
     // the relevant world state cached on App.
-    if (this.achievements) {
+    // Hold ALL achievement tracking until the intro cinematic has handed off.
+    // During the sky-fall the player is moved programmatically (so movement /
+    // distance / edge unlocks would fire before they've touched a key) and
+    // spawn-state unlocks (snow, water) would all pop at once — then queue up
+    // and play for half a minute. Gameplay-driven unlocks only.
+    if (this.achievements && !this.intro?.active) {
       const ppos = this.player.position;
       // In-water state from the actual terrain water-depth (ponds/river/ocean),
       // matching Water.playerOverWater so visuals, slowdown, and unlocks agree.

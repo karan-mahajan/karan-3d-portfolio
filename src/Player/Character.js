@@ -18,6 +18,9 @@ const AVATURN_CLIPS = [
   { action: 'backflip',        url: '/models/character/animations/backflip.glb' },
   { action: 'cartwheel',       url: '/models/character/animations/cartwheel.glb' },
   { action: 'facepalm',        url: '/models/character/animations/facepalm.glb' },
+  // Colour Garden: one continuous reach→grab→wind-up→throw→recover take. Driven
+  // as a charge-hold one-shot (paused at the wind-up frame while charging).
+  { action: 'paintThrow',      url: '/models/character/animations/paint-throw.glb' },
 ];
 
 // Mixamo clips still used for actions Avaturn doesn't ship. The source FBX
@@ -85,6 +88,10 @@ export class Character {
     this.currentName = null;
     this.currentAction = null;
     this._oneShot = null;
+    // Charge-hold: a one-shot frozen at a wind-up frame until releaseHold().
+    this._chargeHold = null;
+    // Right wrist bone — resolved in load(); the Colour Garden orb tracks it.
+    this.rightHand = null;
     this._deferredClipPromises = new Map();
     this.rootBone = null;
     this.rootBoneBindPos = new THREE.Vector3();
@@ -153,6 +160,9 @@ export class Character {
         this.rootBoneBindPos.copy(child.position);
       }
       if (/(foot|toebase|hand)/i.test(child.name)) this.groundBones.push(child);
+      // Right wrist (not the finger bones) — the Colour Garden orb tracks this
+      // bone's world position so it reads as held + thrown from the hand.
+      if (!this.rightHand && /righthand$/i.test(child.name)) this.rightHand = child;
     });
 
     this.mixer = new THREE.AnimationMixer(this.mesh);
@@ -245,6 +255,10 @@ export class Character {
     const fade = opts.fade ?? 0.25;
     const next = action;
 
+    // Any new play() supersedes a pending charge-hold (playCharged re-sets it
+    // immediately after calling play, so this only clears stale holds).
+    this._chargeHold = null;
+
     if (opts.once) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
@@ -300,10 +314,46 @@ export class Character {
     this.#finishOneShot();
   };
 
+  /**
+   * Play a one-shot clip but FREEZE it at `holdTime` (seconds into the clip)
+   * until releaseHold() resumes it — for charge-and-release motions where the
+   * body cocks at a wind-up frame, holds, then completes the swing on release.
+   * Chains to opts.then (default 'idle') once the clip finishes after release.
+   * @returns {boolean} false if the clip isn't loaded.
+   */
+  playCharged(name, holdTime, opts = {}) {
+    if (!this.actions[name]) return false;
+    this.play(name, { once: true, then: opts.then ?? 'idle', fade: opts.fade ?? 0.2 });
+    this._chargeHold = { action: this.actions[name], holdTime };
+    return true;
+  }
+
+  /** Resume a clip frozen by playCharged so the rest of the motion plays out. */
+  releaseHold() {
+    if (!this._chargeHold) return;
+    this._chargeHold.action.paused = false;
+    this._chargeHold = null;
+  }
+
+  /** World position of the right wrist bone (or null if unavailable). */
+  getHandWorldPosition(out) {
+    if (!this.rightHand) return null;
+    return this.rightHand.getWorldPosition(out);
+  }
+
+  /** Normalised 0..1 playhead of a loaded action (0 if missing). */
+  actionProgress(name) {
+    const a = this.actions[name];
+    if (!a) return 0;
+    const dur = a.getClip()?.duration ?? 0;
+    return dur > 0 ? a.time / dur : 0;
+  }
+
   #finishOneShot() {
     if (!this._oneShot) return;
     const next = this._oneShot.then;
     this._oneShot = null;
+    this._chargeHold = null;
     // Restore the default full-pin as any keepRoot one-shot (the landing)
     // resolves, so the follow-up clip (idle) sits at the right hip height.
     this._rootPin = 'full';
@@ -331,6 +381,15 @@ export class Character {
   update(delta) {
     if (!this.mixer) return;
     this.mixer.update(delta);
+    // Charge-hold: once the playhead reaches the wind-up frame, pin it there
+    // and pause until releaseHold(). Re-pinning each frame is idempotent.
+    if (this._chargeHold) {
+      const { action, holdTime } = this._chargeHold;
+      if (action.time >= holdTime) {
+        action.time = holdTime;
+        action.paused = true;
+      }
+    }
     if (this._oneShot?.action) {
       const action = this._oneShot.action;
       const duration = action.getClip()?.duration ?? 0;

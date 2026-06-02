@@ -99,6 +99,13 @@ const VOL = {
   teleportArrive: 0.34,
   nope: 0.28,
   flagDrop: 0.25,
+  // Colour Garden paint-throw one-shots. Sources were peak-normalised on import
+  // so these trims set their relative balance — splat/bloom carry the payoff.
+  paintScoop: 0.5,
+  paintCharge: 0.4,
+  paintThrow: 0.55,
+  paintSplat: 0.75,
+  paintBloom: 0.6,
 };
 
 const AMBIENT_CROSSFADE_S = 3.0;
@@ -130,6 +137,13 @@ const SOUND_FILES = {
     loop: false,
     vol: VOL.splashEntry,
   },
+  // Colour Garden paint-throw one-shots (dedicated samples, dropped in by the
+  // user, trimmed + peak-normalised on import).
+  paintScoop: { src: "/sounds/paint-scoop.mp3", loop: false, vol: VOL.paintScoop },
+  paintCharge: { src: "/sounds/paint-charge.mp3", loop: false, vol: VOL.paintCharge },
+  paintThrow: { src: "/sounds/paint-throw.mp3", loop: false, vol: VOL.paintThrow },
+  paintSplat: { src: "/sounds/paint-splat.mp3", loop: false, vol: VOL.paintSplat },
+  paintBloom: { src: "/sounds/paint-bloom.mp3", loop: false, vol: VOL.paintBloom },
   // Weather — thunder uses the real recorded sample (set per-call by
   // Thunderstorm with delay + intensity). The procedural noise fallback
   // inside playThunder only fires if the sample failed to load.
@@ -524,6 +538,62 @@ export class AudioManager {
     h.volume(volume * (entry ? VOL.splashEntry : VOL.splashLight), id);
   }
 
+  /** Colour Garden: wet scoop when the hand lifts paint from a pot. */
+  playPaintScoop() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintScoop;
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.rate(0.94 + Math.random() * 0.12, id);
+  }
+
+  /** Colour Garden: rising charge hum, held from F-press until stopPaintCharge().
+   *  The sample is ~5s but a throw releases in ~1s, so it MUST be cut on release
+   *  (a short fade avoids a click). */
+  playPaintCharge() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintCharge;
+    if (!h || h.state() !== "loaded") return;
+    this.stopPaintCharge();
+    this._paintChargeId = h.play();
+  }
+  stopPaintCharge() {
+    const h = this.howls.paintCharge;
+    if (!h || this._paintChargeId == null) return;
+    const id = this._paintChargeId;
+    this._paintChargeId = null;
+    h.fade(VOL.paintCharge, 0, 90, id);
+    h.once("fade", () => h.stop(id), id);
+  }
+
+  /** Colour Garden: throw whoosh as the orb leaves the hand. */
+  playPaintThrow() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintThrow;
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.rate(0.95 + Math.random() * 0.1, id);
+  }
+
+  /** Colour Garden: magic shimmer as a sculpture blooms grey→colour. */
+  playPaintBloom() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintBloom;
+    if (!h || h.state() !== "loaded") return;
+    h.play();
+  }
+
+  /** Colour Garden paint-orb impact. Pitched + jittered so repeated throws
+   *  don't sound identical. */
+  playSplat({ volume = 1.0 } = {}) {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintSplat;
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.rate(0.92 + Math.random() * 0.16, id);
+    h.volume(volume * VOL.paintSplat, id);
+  }
+
   playJump() {
     const h = this.howls.jump;
     if (h && h.state() === "loaded") {
@@ -908,28 +978,53 @@ export class AudioManager {
   /** Rising 3-note triangle chime fired when an Achievement unlocks. Uses
    *  Howler.ctx so it inherits mute + focus loss like the other procedural
    *  fallbacks. */
-  playAchievement() {
+  /** Unlock chime. Rarer tiers play a longer, richer arpeggio so the ear can
+   *  tell a one-off from a legendary without looking. */
+  playAchievement(rarity = "common") {
     const ctx = this.#ctx();
     const dest = this.#dest();
     if (!ctx || !dest || this.muted || this._focusLost) return;
     const now = ctx.currentTime;
-    [
-      { f: 880, t: 0.0 }, // A5
-      { f: 1109, t: 0.12 }, // C#6
-      { f: 1319, t: 0.24 }, // E6
-    ].forEach(({ f, t }) => {
+    // Note ladders per tier (Hz). Common = a quick major triad; legendary adds
+    // a sparkly upper run + a held root for weight.
+    const LADDERS = {
+      common: [880, 1109, 1319],
+      rare: [880, 1109, 1319, 1760],
+      epic: [659, 880, 1109, 1319, 1760],
+      legendary: [523, 659, 880, 1109, 1319, 1760, 2217],
+    };
+    const ladder = LADDERS[rarity] || LADDERS.common;
+    const step = rarity === "legendary" ? 0.1 : 0.12;
+    const isBig = rarity === "epic" || rarity === "legendary";
+    ladder.forEach((f, i) => {
+      const t = i * step;
       const osc = ctx.createOscillator();
-      osc.type = "triangle";
+      osc.type = isBig ? "sine" : "triangle";
       osc.frequency.value = f;
       const gain = ctx.createGain();
+      const peak = isBig ? 0.22 : 0.25;
       gain.gain.setValueAtTime(0, now + t);
-      gain.gain.linearRampToValueAtTime(0.25, now + t + 0.03);
+      gain.gain.linearRampToValueAtTime(peak, now + t + 0.03);
       gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.5);
       osc.connect(gain);
       gain.connect(dest);
       osc.start(now + t);
       osc.stop(now + t + 0.55);
     });
+    // Legendary gets a soft held root underneath the run for extra heft.
+    if (rarity === "legendary") {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = 261; // C4
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.14, now + 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 1.25);
+    }
   }
 
   playWelcome() {

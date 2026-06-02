@@ -174,6 +174,7 @@ export class Interactables {
       action: 'kickFootball',
       onActivate: () => {
         const yaw = this.prompts.player.group.rotation.y;
+        this.prompts.achievements?.onFootballKick?.();
         setTimeout(() => {
           football.kick(yaw);
           this.prompts.audio?.playKick();

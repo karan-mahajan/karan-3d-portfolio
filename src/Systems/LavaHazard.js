@@ -24,10 +24,11 @@ export class LavaHazard {
    *           lava: import('../World/Lava.js').Lava,
    *           wasted: import('../UI/Wasted.js').Wasted }} deps
    */
-  constructor({ player, lava, wasted }) {
+  constructor({ player, lava, wasted, achievements = null }) {
     this.player = player;
     this.lava = lava;
     this.wasted = wasted;
+    this.achievements = achievements;
 
     this.state = 'idle';   // 'idle' | 'sinking' | 'dead'
     this.dwell = 0;        // seconds stood in the lava
@@ -71,6 +72,7 @@ export class LavaHazard {
   async #wasted() {
     if (this.state === 'dead') return;
     this.state = 'dead';
+    this.achievements?.onWasted?.();
     await this.wasted.show();      // resolves while the screen is still dark
     this.#tint(0);
     this.player.respawn?.();

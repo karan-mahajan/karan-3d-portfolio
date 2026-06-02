@@ -419,6 +419,25 @@ def _export_foliage_from_refs(system, rel, prefix, report):
             "count": len(src), "bySpecies": species or None}
 
 
+def _export_colour_garden(report):
+    """The interactive Colour Garden — its own GLB, deliberately NOT in the
+    monolithic/instanced lists the runtime world-loader iterates, so it is never
+    folded into the shared-material prop-merge. src/Portfolio/ColourGarden.js
+    loads this file directly and owns its per-statue materials + colliders +
+    painting. Selecting the whole collection captures the finalize root empty +
+    meshes, so world poses survive."""
+    objs = _coll_objects("colourGarden")
+    if not objs:
+        print(f"{LOG} note: no colourGarden collection — skip (optional system)")
+        return None
+    _select(objs)
+    rel = "colourGarden/colourGarden.glb"
+    size = _export_selection(os.path.join(OUT_DIR, rel))
+    report.append((rel, size, len(objs)))
+    return {"system": "colourGarden", "file": rel, "kind": "interactive",
+            "objects": len(objs)}
+
+
 def _export_colliders(report):
     objs = _coll_objects(COLLIDER_COLLECTION, types={"MESH"})
     for o in objs:
@@ -542,6 +561,9 @@ def main():
     refs = _export_references(report)
     if refs:
         manifest["references"] = refs
+    garden = _export_colour_garden(report)
+    if garden:
+        manifest["interactive"] = garden
     mask = _copy_grass_mask()
     if mask:
         manifest["grassMask"] = mask

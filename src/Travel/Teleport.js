@@ -8,6 +8,7 @@ export class Teleport {
     transitionFx,
     audio,
     discovery,
+    achievements = null,
     sections = null,
     world = null,
   }) {
@@ -19,6 +20,7 @@ export class Teleport {
     this.transitionFx = transitionFx;
     this.audio = audio;
     this.discovery = discovery;
+    this.achievements = achievements;
     // Section catalog + world handle let toSection() accept a string key (used
     // by the .verify probes and any future quick-jump UI). Map UI still passes
     // full section objects so this is additive.
@@ -34,6 +36,7 @@ export class Teleport {
     }
     if (!section) return false;
     this.isActive = true;
+    this.achievements?.onFastTravel?.();
     const center = this.#screenPct(clickScreenPos);
     this.controller?.lock?.();
     this.controller?.clearVirtualInput?.();

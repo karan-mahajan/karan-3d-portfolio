@@ -107,7 +107,7 @@
         "rockStyle_boulderCluster",
         "rockStyle_volcanicShards"
       ],
-      "count": 204
+      "count": 203
     },
     {
       "system": "bricks",
@@ -164,6 +164,12 @@
   "references": {
     "file": "references.glb",
     "count": 30
+  },
+  "interactive": {
+    "system": "colourGarden",
+    "file": "colourGarden/colourGarden.glb",
+    "kind": "interactive",
+    "objects": 15
   },
   "grassMask": "terrainGrass.exr",
   "grassGrid": {
