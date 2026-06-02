@@ -94,7 +94,14 @@ export class App extends EventTarget {
     this.compass = new Compass({ playerCamera: this.playerCamera });
     this.player = null;
     this.skillSphere = null;
+    this.colourGarden = null;
     this.discovery = null;
+
+    // Global slow-motion (Colour Garden paint payoff). timeScale eases toward
+    // _timeScaleTarget; while _slowMoLeft > 0 the sim runs on a scaled delta.
+    this.timeScale = 1;
+    this._timeScaleTarget = 1;
+    this._slowMoLeft = 0;
     this.miniMap = null;
     this.mapOverlay = null;
     this.navmask = null;
@@ -729,6 +736,23 @@ export class App extends EventTarget {
       postfx: this.postfx,
     });
 
+    // Colour Garden — Blender-authored paint-throw toy loaded from its own GLB
+    // (kept out of the world prop-merge so each statue stays paintable). Awaited
+    // so its static colliders register before gameplay; the GLB is tiny.
+    const { ColourGarden } = await import('./Portfolio/ColourGarden.js');
+    this.colourGarden = new ColourGarden({
+      scene: this.scene,
+      physics: this.physics,
+      player: this.player,
+      playerCamera: this.playerCamera,
+      controller: this.player.controller,
+      audio: this.audio,
+      app: this,
+      loader: this.loader,
+      timeOfDay: this.timeOfDay,
+    });
+    await this.colourGarden.load();
+
     this.interaction = new Interaction({
       scene: this.scene,
       camera: this.camera,
@@ -1333,6 +1357,14 @@ export class App extends EventTarget {
     });
   }
 
+  /** Briefly slow the simulation for a payoff beat (Colour Garden paint hit).
+   *  `scale` is the target timeScale (0.32 ≈ a third speed), `duration` seconds
+   *  of real time before easing back to 1. */
+  triggerSlowMo(scale = 0.32, duration = 1.2) {
+    this._timeScaleTarget = scale;
+    this._slowMoLeft = duration;
+  }
+
   #tick = () => {
     // Skip 5 of every 6 frames while the tab is hidden. Don't burn the
     // clock's delta on the skipped frames — getDelta() is only called on
@@ -1345,13 +1377,24 @@ export class App extends EventTarget {
     const frameDelta = Math.min(this.clock.getDelta(), 0.1);
     const elapsed = this.clock.getElapsedTime();
 
+    // Global slow-mo: ease timeScale toward its target and derive a scaled
+    // delta for the simulation (physics + player + world FX). Camera, UI and
+    // audio stay on the real frameDelta so the framerate feels responsive.
+    if (this._slowMoLeft > 0) {
+      this._slowMoLeft -= frameDelta;
+      if (this._slowMoLeft <= 0) this._timeScaleTarget = 1;
+    }
+    this.timeScale +=
+      (this._timeScaleTarget - this.timeScale) * Math.min(1, frameDelta * 6);
+    const scaledDelta = frameDelta * this.timeScale;
+
     this.renderer.info.reset();
     this.#updateAdaptiveDpr(frameDelta);
 
     const fixedDelta = this.quality.physicsStep ?? 1 / 60;
     const maxSteps = this.quality.maxPhysicsSteps ?? 5;
     this._fixedAccumulator = Math.min(
-      this._fixedAccumulator + frameDelta,
+      this._fixedAccumulator + scaledDelta,
       fixedDelta * maxSteps,
     );
 
@@ -1382,11 +1425,20 @@ export class App extends EventTarget {
     if (this.intro?.active) this.intro.update(frameDelta);
     if (this.discovery)
       this.discovery.update(this.player.position.x, this.player.position.z);
-    if (this.clickToMove) this.clickToMove.update(frameDelta);
+    // While the Colour Garden game mode owns the camera + locks movement,
+    // suppress click-to-move so canvas clicks don't drop walk-flags behind it.
+    const inGarden = this.colourGarden?.inGameMode === true;
+    if (this.clickToMove && !inGarden) this.clickToMove.update(frameDelta);
     if (this.miniMap) this.miniMap.update();
     if (this.mapOverlay) this.mapOverlay.update();
     if (this.compass) this.compass.update();
-    this.world.update(elapsed, this.camera, frameDelta, this.player.position);
+    this.world.update(elapsed, this.camera, frameDelta, this.player.position, {
+      nightFactor: this.timeOfDay?.nightFactor ?? 0,
+      snowCoverage: this.weather?.coverage ?? 0,
+    });
+    // Colour Garden runs on the scaled delta so the orb arc + droplet burst
+    // slow down during the paint payoff.
+    this.colourGarden?.update(scaledDelta, this.player.position);
     if (this._colliderDebugLines) this.#updateColliderDebug();
     this.wind.update(frameDelta);
     // Grass's wind sway is driven by the shared Wind clock; the per-frame work
@@ -1421,9 +1473,11 @@ export class App extends EventTarget {
     }
     // ActionPrompts first so Interaction can read its candidate state and
     // suppress its own prompt in case of overlap (Dance tile near Contact).
-    if (this.actionPrompts)
+    // Both are suppressed inside the Colour Garden game mode so stray prop
+    // prompts don't appear over the mini-game HUD.
+    if (this.actionPrompts && !inGarden)
       this.actionPrompts.tick(this.player.position, frameDelta);
-    if (this.interaction) this.interaction.tick(this.player.position);
+    if (this.interaction && !inGarden) this.interaction.tick(this.player.position);
     if (this.skillSphere) this.skillSphere.update(frameDelta);
     if (this.projectsHut) this.projectsHut.update(frameDelta);
     if (this.contactBoard) this.contactBoard.update(elapsed);

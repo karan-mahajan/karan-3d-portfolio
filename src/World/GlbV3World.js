@@ -153,6 +153,26 @@ const SOLID_FOOTPRINT_RE = /Footprint_(cabin|outhouse)/i;
 const DECOR_SOLID_RE = /^controlsBoard_|^playstation_(console|crate)$/;
 const TITLE_LETTER_COLOR = "#24345a";
 const TITLE_LETTER_EMISSIVE = "#080d18";
+
+// "Adaptive glow sign" recolour anchors. The KARAN letters are a tiny matte
+// navy by day, lerp through a warm slate at dusk/dawn (mid nightFactor), and
+// become a softly self-illuminated pale-gold sign at night so they stay legible
+// against a dark scene from any angle. Under snow they shift to a deep teal
+// that pops against the white blanket (still glowing at night). Targets are
+// damp-lerped each frame (TITLE_RECOLOR_RATE) so weather/time changes ease in
+// — never a one-to-five jump.
+const TITLE_DAY_COLOR = new THREE.Color(TITLE_LETTER_COLOR);
+const TITLE_NIGHT_COLOR = new THREE.Color("#f0dca0");
+const TITLE_SNOW_COLOR = new THREE.Color("#0f6f6a");
+const TITLE_DAY_EMISSIVE = new THREE.Color(TITLE_LETTER_EMISSIVE);
+const TITLE_NIGHT_EMISSIVE = new THREE.Color("#ffcf7a");
+const TITLE_SNOW_EMISSIVE = new THREE.Color("#1bb9ad");
+const TITLE_EMISSIVE_DAY = 0.08; // matte by day
+const TITLE_EMISSIVE_NIGHT = 1.5; // glowing sign at night
+const TITLE_EMISSIVE_SNOW_DAY = 0.4; // soft glow so teal reads on white
+const TITLE_EMISSIVE_SNOW_NIGHT = 1.3;
+const TITLE_RECOLOR_RATE = 1.6; // 1/s — exp-smoothing toward the target
+
 const TITLE_LETTER_FLOAT_CLEARANCE = 1.15;
 const TITLE_LETTER_FLOAT_AMPLITUDE = 0.12;
 const TITLE_LETTER_FLOAT_SPEED = 1.6;
@@ -219,6 +239,10 @@ export class GlbV3World {
     this.groundGrassColor = uniform(color("#ffffff"));
     this.dynamicBrickPiles = [];
     this.dynamicTitleLetters = [];
+    this.titleLetterMaterial = null; // shared by all letters; recoloured per frame
+    this._titleTargetColor = new THREE.Color(TITLE_LETTER_COLOR);
+    this._titleTargetEmissive = new THREE.Color(TITLE_LETTER_EMISSIVE);
+    this._titleTargetEmissiveIntensity = TITLE_EMISSIVE_DAY;
     this.materialConsolidation = null;
     this._sharedWorldMaterials = new Map();
     // Flower template geometry + colours + baked placements, collected during
@@ -472,10 +496,49 @@ export class GlbV3World {
     return this;
   }
 
-  update(delta = 0, playerPos = null) {
+  update(delta = 0, playerPos = null, env = null) {
     this.#updateFloatingTitleLetters(delta, playerPos);
+    this.#updateTitleLetterAppearance(delta, env);
     this.#syncDynamicItems(this.dynamicBrickPiles);
     this.#syncDynamicItems(this.dynamicTitleLetters);
+  }
+
+  // Recolour the floating KARAN sign from time-of-day + weather. nightFactor
+  // (0 day → 1 deep night) drives the navy→pale-gold glow; snowCoverage (0..1)
+  // pulls toward the contrasting teal. The target is approached with
+  // exponential smoothing so even an abrupt weather/time flip eases over ~1s.
+  #updateTitleLetterAppearance(delta, env) {
+    const mat = this.titleLetterMaterial;
+    if (!mat) return;
+
+    const ease = (x) => {
+      const c = Math.min(1, Math.max(0, x));
+      return c * c * (3 - 2 * c);
+    };
+    const night = ease(env?.nightFactor ?? 0);
+    const snow = ease(env?.snowCoverage ?? 0);
+
+    const target = this._titleTargetColor;
+    const targetEm = this._titleTargetEmissive;
+    target.copy(TITLE_DAY_COLOR).lerp(TITLE_NIGHT_COLOR, night);
+    targetEm.copy(TITLE_DAY_EMISSIVE).lerp(TITLE_NIGHT_EMISSIVE, night);
+    let targetEi = TITLE_EMISSIVE_DAY + (TITLE_EMISSIVE_NIGHT - TITLE_EMISSIVE_DAY) * night;
+
+    if (snow > 0) {
+      target.lerp(TITLE_SNOW_COLOR, snow);
+      targetEm.lerp(TITLE_SNOW_EMISSIVE, snow);
+      const snowEi =
+        TITLE_EMISSIVE_SNOW_DAY +
+        (TITLE_EMISSIVE_SNOW_NIGHT - TITLE_EMISSIVE_SNOW_DAY) * night;
+      targetEi += (snowEi - targetEi) * snow;
+    }
+    this._titleTargetEmissiveIntensity = targetEi;
+
+    const dt = Math.min(Math.max(delta || 1 / 60, 0), 1 / 30);
+    const k = 1 - Math.exp(-dt * TITLE_RECOLOR_RATE);
+    mat.color.lerp(target, k);
+    mat.emissive.lerp(targetEm, k);
+    mat.emissiveIntensity += (targetEi - mat.emissiveIntensity) * k;
   }
 
   #updateFloatingTitleLetters(delta, playerPos) {
@@ -2158,8 +2221,9 @@ export class GlbV3World {
       roughness: 0.72,
       metalness: 0,
       emissive: TITLE_LETTER_EMISSIVE,
-      emissiveIntensity: 0.1,
+      emissiveIntensity: TITLE_EMISSIVE_DAY,
     });
+    this.titleLetterMaterial = material;
 
     for (let i = 0; i < letters.length; i++) {
       const source = letters[i];

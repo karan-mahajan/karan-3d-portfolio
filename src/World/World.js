@@ -48,8 +48,8 @@ export class World {
     };
   }
 
-  update(elapsed, camera = null, delta = 0, playerPos = null) {
-    this.glb.update(delta, playerPos);
+  update(elapsed, camera = null, delta = 0, playerPos = null, env = null) {
+    this.glb.update(delta, playerPos, env);
     if (camera) this.sky.update(camera.position);
     if (this.billboards?.update) this.billboards.update(elapsed, playerPos, delta);
   }
