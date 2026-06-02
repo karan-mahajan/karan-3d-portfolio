@@ -1,16 +1,9 @@
 import gsap from 'gsap';
-import { POIS, SECTIONS, WORLD_BOUNDS } from '../Portfolio/WorldMap.js';
+import { SECTIONS, WORLD_BOUNDS } from '../Portfolio/WorldMap.js';
 import { svgToWorld, worldToSvg } from './coords.js';
 import { renderIslandMap, svgEl } from './MapMarkers.js';
 
 const SIZE = 800;
-const SECTION_THUMBS = {
-  projects: new URL('../../static/map-thumbs/projects.webp', import.meta.url).href,
-  experience: new URL('../../static/map-thumbs/experience.webp', import.meta.url).href,
-  skills: new URL('../../static/map-thumbs/skills.webp', import.meta.url).href,
-  contact: new URL('../../static/map-thumbs/contact.webp', import.meta.url).href,
-};
-const DEFAULT_THUMB = SECTION_THUMBS.projects;
 
 export class MapOverlay {
   constructor({
@@ -23,6 +16,8 @@ export class MapOverlay {
     navmask,
     audio,
     miniMap,
+    snapshot,
+    sections = SECTIONS,
   }) {
     this.root = root;
     this.player = player;
@@ -33,29 +28,41 @@ export class MapOverlay {
     this.navmask = navmask;
     this.audio = audio;
     this.miniMap = miniMap;
+    this.snapshot = snapshot;
+    this.sections = sections;
     this.isOpen = false;
 
     this.root.className = 'map-overlay-root hidden';
     this.root.innerHTML = `
       <div class="map-overlay-backdrop"></div>
-      <div class="map-overlay-panel" role="dialog" aria-modal="true" aria-label="World map">
+      <div class="map-overlay-panel map-overlay-panel--full" role="dialog" aria-modal="true" aria-label="World map">
         <button class="map-close" type="button" aria-label="Close map">×</button>
-        <svg class="map-overlay-svg"></svg>
-        <aside class="map-preview">
-          <div class="map-preview-eyebrow">Explorer map</div>
-          <h2>Choose a destination</h2>
-          <img alt="" src="${DEFAULT_THUMB}" />
-          <p>Hover a marker for a section preview. Click open land to drop a flag and walk there.</p>
-        </aside>
+        <div class="map-overlay-stage">
+          <canvas class="map-overlay-canvas"></canvas>
+          <svg class="map-overlay-svg"></svg>
+        </div>
         <button class="map-reset" type="button">Reset Discovery</button>
       </div>
     `;
     this.panel = this.root.querySelector('.map-overlay-panel');
+    this.stage = this.root.querySelector('.map-overlay-stage');
+    this.canvas = this.root.querySelector('.map-overlay-canvas');
     this.svg = this.root.querySelector('.map-overlay-svg');
-    this.preview = this.root.querySelector('.map-preview');
+    if (this.snapshot) {
+      this.canvas.width = this.snapshot.size;
+      this.canvas.height = this.snapshot.size;
+    }
     this.#render();
     this.#wire();
+    this.snapshot?.onReady?.(() => this.#paintWorld());
     this.discovery?.onDiscover?.(() => this.#render());
+  }
+
+  #paintWorld() {
+    if (!this.snapshot?.ready || !this.canvas) return;
+    const ctx = this.canvas.getContext('2d');
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.drawImage(this.snapshot.canvas, 0, 0);
   }
 
   open(fromRect = null) {
@@ -63,6 +70,9 @@ export class MapOverlay {
     this.isOpen = true;
     this.audio?.playMapOpen?.();
     this.controller && (this.controller.paused = true);
+    // Pure blit of the snapshot captured once at boot — opening never renders
+    // or reads back the GPU, so it can't hitch.
+    this.#paintWorld();
     this.root.classList.remove('hidden');
     const target = this.panel.getBoundingClientRect();
     const from = fromRect ?? this.miniMap?.getRect?.() ?? target;
@@ -114,9 +124,16 @@ export class MapOverlay {
       bounds: WORLD_BOUNDS,
       showLabels: true,
       discovery: this.discovery,
+      worldImage: !!this.snapshot,
+      sections: this.sections,
     });
-    this.playerDot = svgEl('g', { class: 'map-overlay-player' });
-    this.playerDot.appendChild(svgEl('path', { d: 'M 0 -10 L 7 8 L 0 4 L -7 8 Z' }));
+    // "You are here" beacon — a pulsing halo + a high-contrast cored dot with a
+    // heading wedge. The white ring keeps it legible on both the bright day and
+    // dark night world renders. aria-hidden: the dialog already announces the map.
+    this.playerDot = svgEl('g', { class: 'map-overlay-player', 'aria-hidden': 'true' });
+    this.playerDot.appendChild(svgEl('circle', { r: 26, class: 'map-player-pulse' }));
+    this.playerDot.appendChild(svgEl('path', { d: 'M 0 -26 L 9 -8 L -9 -8 Z', class: 'map-player-heading' }));
+    this.playerDot.appendChild(svgEl('circle', { r: 9, class: 'map-player-core' }));
     this.svg.appendChild(this.playerDot);
     this.#wireMarkers();
   }
@@ -160,19 +177,11 @@ export class MapOverlay {
         this.#showNope(x, y);
       }
     });
-    this.svg.addEventListener('mousemove', (e) => {
-      const { x, y } = this.#eventToSvg(e);
-      const section = this.#sectionAt(x, y);
-      if (!section || section.id === this._hoverSectionId) return;
-      this._hoverSectionId = section.id;
-      this.audio?.playMarkerHover?.(section.id);
-      this.#showPreview(section);
-    });
   }
 
   #wireMarkers() {
     for (const marker of this.svg.querySelectorAll('.map-marker-section')) {
-      const section = SECTIONS.find((s) => s.id === marker.dataset.markerId);
+      const section = this.sections.find((s) => s.id === marker.dataset.markerId);
       if (!section) continue;
       marker.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -180,23 +189,8 @@ export class MapOverlay {
         this.close({ silent: true });
         this.teleport?.toSection?.(section, { x: e.clientX, y: e.clientY });
       });
-      marker.addEventListener('mouseenter', () => {
-        this.audio?.playMarkerHover?.(section.id);
-        this.#showPreview(section);
-      });
-      marker.addEventListener('focus', () => this.#showPreview(section));
+      marker.addEventListener('mouseenter', () => this.audio?.playMarkerHover?.(section.id));
     }
-  }
-
-  #showPreview(section) {
-    const discovered = this.discovery?.isDiscovered?.(section.id);
-    const img = SECTION_THUMBS[section.id] ?? DEFAULT_THUMB;
-    this.preview.innerHTML = `
-      <div class="map-preview-eyebrow">${discovered ? 'Discovered' : 'Marked route'}</div>
-      <h2>${section.name}</h2>
-      <img alt="" src="${img}" />
-      <p>${discovered ? section.blurb : 'Visible from the start, but the color wakes up when you visit.'}</p>
-    `;
   }
 
   #showNope(x, y) {
@@ -223,7 +217,7 @@ export class MapOverlay {
   }
 
   #sectionAt(svgX, svgY) {
-    for (const section of SECTIONS) {
+    for (const section of this.sections) {
       const [x, , z] = section.position;
       const p = worldToSvg(x, z, SIZE, SIZE, WORLD_BOUNDS);
       if (Math.hypot(svgX - p.x, svgY - p.y) <= 24) return section;

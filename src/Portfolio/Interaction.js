@@ -1,9 +1,9 @@
 import gsap from "gsap";
 import * as THREE from "three";
-import { contact } from "./ContactData.js";
+import { resume } from "./ResumeData.js";
 
 const PROXIMITY = 4.5; // distance from billboard to show prompt
-const CONTACT_PROXIMITY = 3.2;
+const RESUME_PROXIMITY = 4;
 const ZOOM_DURATION = 1.1; // seconds
 const ZOOM_STANDOFF = 4.0; // distance from screen during focused view — sized so the full 3m-tall screen fits the 45° vertical FOV with margin
 const ZOOM_HEIGHT_OFFSET = 0.0; // vertical bias relative to screen center
@@ -25,6 +25,9 @@ export class Interaction {
     controller,
     billboards,
     signs = null,
+    skillSphere = null,
+    projectsHut = null,
+    contactBoard = null,
     audio = null,
     actionPrompts = null,
     timeOfDay = null,
@@ -37,19 +40,22 @@ export class Interaction {
     this.controller = controller;
     this.billboards = billboards;
     this.signs = signs;
+    this.skillSphere = skillSphere;
+    this.projectsHut = projectsHut;
+    this.contactBoard = contactBoard;
     this.audio = audio;
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
     this.achievements = achievements;
-    this.torchLight = null; // wired post-construction by App.js
 
     this.activeIndex = -1; // -1 = not focused
     this.candidate = null; // billboard the player is currently near
     this.contactCandidate = false;
-    this.contactOpen = false;
+    this.skillCandidate = false;
+    this.projectsCandidate = false;
+    this.resumeCandidate = false;
+    this.resumeOpen = false;
     this.zooming = false;
-    this.torchAiming = false;
-    this._lastTodMode = this.timeOfDay?.mode ?? null;
 
     this.#installDom();
     this.#installKeyListeners();
@@ -96,40 +102,25 @@ export class Interaction {
       .querySelector(".panel-next")
       .addEventListener("click", () => this.cycle(+1));
 
-    // ── Contact overlay ────────────────────────────────────────────────────
-    this.contactEl = document.createElement("div");
-    this.contactEl.className = "contact-panel hidden";
-    const linksHtml = contact.links
-      .map(
-        (
-          l,
-        ) => `<a class="contact-link" href="${l.href}" target="_blank" rel="noopener noreferrer">
-        <span class="contact-link-label">${l.label}</span>
-        <span class="contact-link-value">${l.value}</span>
-      </a>`,
-      )
-      .join("");
-    this.contactEl.innerHTML = `
+    // ── Resume overlay ─────────────────────────────────────────────────────
+    // Mirrors the contact-panel structure so existing .contact-panel CSS
+    // applies (avoids a CSS round-trip in Phase 2). Renders raw HTML from
+    // ResumeData.js — later sessions can swap in a real CV.
+    this.resumeEl = document.createElement("div");
+    this.resumeEl.className = "contact-panel resume-panel hidden";
+    this.resumeEl.innerHTML = `
       <button class="panel-close" aria-label="Close">×</button>
       <div class="contact-accent"></div>
-      <h2 class="contact-title">${contact.name}</h2>
-      <p class="contact-subtitle">${contact.title}</p>
-      <p class="contact-blurb">${contact.blurb}</p>
-      <div class="contact-links">${linksHtml}</div>
+      <div class="resume-body">${resume.html}</div>
+      ${resume.downloadUrl
+        ? `<div class="panel-actions"><a class="panel-link" href="${resume.downloadUrl}" target="_blank" rel="noopener noreferrer">Download PDF ↗</a></div>`
+        : ''}
       <div class="panel-hint">ESC to close</div>
     `;
-    document.body.appendChild(this.contactEl);
-    this.contactEl
+    document.body.appendChild(this.resumeEl);
+    this.resumeEl
       .querySelector(".panel-close")
-      .addEventListener("click", () => this.closeContact());
-
-    this.torchHintEl = document.createElement("div");
-    this.torchHintEl.className = "billboard-prompt torch-hint hidden";
-    this.torchHintEl.innerHTML = `
-      <span class="key">F</span>
-      <span class="label">Aim torch</span>
-    `;
-    document.body.appendChild(this.torchHintEl);
+      .addEventListener("click", () => this.closeResume());
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -138,22 +129,26 @@ export class Interaction {
     this._onKey = (e) => {
       if (this.zooming) return;
       if (e.code === "KeyE") {
-        if (this.contactOpen) return;
+        if (this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen) return;
         if (this.activeIndex === -1) {
-          if (this.contactCandidate) this.openContact();
+          // Resume is a smaller proximity than contact, so when both fire
+          // (shouldn't happen — different anchors — but be defensive), the
+          // resume lectern wins.
+          if (this.resumeCandidate) this.openResume();
+          else if (this.contactCandidate) this.openContact();
+          else if (this.skillCandidate) this.openSkills();
+          else if (this.projectsCandidate) this.openProjects();
           else if (this.candidate) this.focus(this.candidate.index);
         }
-      } else if (e.code === "KeyF") {
-        if (this.activeIndex !== -1 || this.contactOpen) return;
-        if (document.body.classList.contains("is-mobile")) return;
-        const torchOn = this.player?.character?.torchMesh?.visible === true;
-        const night = this.timeOfDay?.mode === "night";
-        if (!torchOn || !night) return;
-        this.toggleTorchAim();
       } else if (e.code === "Escape") {
-        if (this.contactOpen) this.closeContact();
+        if (this.skillOpen) this.closeSkills();
+        else if (this.projectsOpen) this.closeProjects();
+        else if (this.resumeOpen) this.closeResume();
+        else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
-        else if (this.torchAiming) this.exitTorchAim();
+      } else if (this.projectsOpen) {
+        if (e.code === "ArrowLeft" || e.code === "KeyA") this.projectsHut.prev();
+        else if (e.code === "ArrowRight" || e.code === "KeyD") this.projectsHut.next();
       } else if (this.activeIndex !== -1) {
         if (e.code === "ArrowLeft") this.cycle(-1);
         else if (e.code === "ArrowRight") this.cycle(+1);
@@ -165,15 +160,7 @@ export class Interaction {
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   tick(playerPosition) {
-    this.#syncTorchHint();
-    // If the world flipped from night → day mid-aim, exit silently so the
-    // controller speed multiplier and locked anim don't linger.
-    const tod = this.timeOfDay?.mode ?? null;
-    if (tod !== this._lastTodMode) {
-      this._lastTodMode = tod;
-      if (tod !== "night" && this.torchAiming) this.exitTorchAim();
-    }
-    if (this.activeIndex !== -1 || this.zooming || this.contactOpen) {
+    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen) {
       this.#hidePrompt();
       return;
     }
@@ -187,24 +174,39 @@ export class Interaction {
     if (nearBillboard && !this.#inFrontOf(nearBillboard, playerPosition)) {
       nearBillboard = null;
     }
-    const nearContact =
-      this.signs && this.signs.nearContact(playerPosition, CONTACT_PROXIMITY);
+    const nearContact = this.contactBoard?.near?.(playerPosition);
+    const nearResume =
+      this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
+    const nearSkills = this.skillSphere?.near?.(playerPosition);
+    const nearProjects = this.projectsHut?.near?.(playerPosition);
     this.candidate = nearBillboard;
-    this.contactCandidate = !!nearContact && !nearBillboard;
+    // Resume has the smallest proximity radius — when both fire, prefer it.
+    this.resumeCandidate = !!nearResume && !nearBillboard;
+    this.contactCandidate = !!nearContact && !nearBillboard && !nearResume;
+    this.skillCandidate = !!nearSkills && !nearBillboard && !nearResume && !nearContact;
+    this.projectsCandidate =
+      !!nearProjects && !nearBillboard && !nearResume && !nearContact && !nearSkills;
 
     // Defer to ActionPrompts — if it's about to show its own E prompt at the
     // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
     // ours. The action prompt is more specific to the player's current state.
     const ap = this.actionPrompts;
-    const apOwnsPrompt =
-      ap && (ap.candidate || ap.activeZoneLoop || ap.activeHoldLoop);
-    if (apOwnsPrompt) {
+    const apActionActive = ap && (ap.activeZoneLoop || ap.activeHoldLoop);
+    if (apActionActive) {
+      this.#hidePrompt();
+      return;
+    }
+    const apOwnsPrompt = ap && ap.candidate;
+    if (apOwnsPrompt && !this.skillCandidate) {
       this.#hidePrompt();
       return;
     }
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
-    else if (this.contactCandidate) this.#showPrompt("Contact");
+    else if (this.resumeCandidate) this.#showPrompt("Résumé");
+    else if (this.contactCandidate) this.#showPrompt("Contact", "Enter");
+    else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
+    else if (this.projectsCandidate) this.#showPrompt("Projects", "Enter");
     else this.#hidePrompt();
   }
 
@@ -222,8 +224,10 @@ export class Interaction {
     return fx * dx + fz * dz > 0;
   }
 
-  #showPrompt(name) {
+  #showPrompt(name, verb = "View") {
     this.promptEl.classList.remove("hidden");
+    const label = this.promptEl.querySelector(".label");
+    if (label?.childNodes?.[0]) label.childNodes[0].nodeValue = `${verb} `;
     this.promptEl.querySelector(".project-name").textContent = name;
   }
   #hidePrompt() {
@@ -237,7 +241,6 @@ export class Interaction {
     // slot is whatever the showcase is currently displaying. `index` is
     // the project index (0..projects.length-1) because the showcase
     // mutates items[0].index to track its current project.
-    if (this.torchAiming) this.exitTorchAim();
     this.billboards.setFocused?.(true);
     // Make sure the showcase is showing the project we're activating —
     // important if the auto-rotate had advanced past it between the
@@ -254,6 +257,10 @@ export class Interaction {
 
     this.controller.paused = true;
     this.playerCamera.locked = true;
+    // Hide the player so the character mesh doesn't sit between the focus
+    // camera and the screen (the camera tweens to `screen + 4m forward`,
+    // which is roughly where the player is standing when E is pressed).
+    if (this.player?.character?.root) this.player.character.root.visible = false;
 
     // Stash the camera's current world transform so we can return to it.
     if (!this._returnPos) {
@@ -320,6 +327,7 @@ export class Interaction {
         this.controller.paused = false;
         this.playerCamera.locked = false;
         this.playerCamera.resync();
+        if (this.player?.character?.root) this.player.character.root.visible = true;
       },
     });
   }
@@ -389,23 +397,71 @@ export class Interaction {
 
   // ── Contact ──────────────────────────────────────────────────────────────
 
+  /** True while the contact-board dolly is animating in/out or held at the board. */
+  get contactOpen() {
+    return !!(this.contactBoard?.active || this.contactBoard?.zooming);
+  }
+
   openContact() {
-    if (this.contactOpen) return;
-    if (this.torchAiming) this.exitTorchAim();
-    this.contactOpen = true;
+    if (!this.contactBoard || this.contactOpen) return;
     this.#hidePrompt();
-    this.audio?.playMenuOpen();
-    this.controller.paused = true;
-    this.contactEl.classList.remove("hidden");
-    this.achievements?.onSectionVisited?.('contact');
+    this.contactBoard.enter();
   }
 
   closeContact() {
-    if (!this.contactOpen) return;
-    this.contactOpen = false;
+    this.contactBoard?.exit?.();
+  }
+
+  // ── Resume ────────────────────────────────────────────────────────────────
+
+  openResume() {
+    if (this.resumeOpen) return;
+    this.resumeOpen = true;
+    this.#hidePrompt();
+    this.audio?.playMenuOpen();
+    this.controller.paused = true;
+    this.resumeEl.classList.remove("hidden");
+    this.achievements?.onSectionVisited?.('resume');
+  }
+
+  closeResume() {
+    if (!this.resumeOpen) return;
+    this.resumeOpen = false;
     this.audio?.playMenuClose();
     this.controller.paused = false;
-    this.contactEl.classList.add("hidden");
+    this.resumeEl.classList.add("hidden");
+  }
+
+  // ── Skills sphere ────────────────────────────────────────────────────────
+
+  get skillOpen() {
+    return !!(this.skillSphere?.active || this.skillSphere?.zooming);
+  }
+
+  openSkills() {
+    if (!this.skillSphere || this.skillOpen) return;
+    this.#hidePrompt();
+    this.skillSphere.enter();
+  }
+
+  closeSkills() {
+    this.skillSphere?.exit?.();
+  }
+
+  // ── Projects hut ───────────────────────────────────────────────────────────
+
+  get projectsOpen() {
+    return !!(this.projectsHut?.active || this.projectsHut?.zooming);
+  }
+
+  openProjects() {
+    if (!this.projectsHut || this.projectsOpen) return;
+    this.#hidePrompt();
+    this.projectsHut.enter();
+  }
+
+  closeProjects() {
+    this.projectsHut?.exit?.();
   }
 
   #populatePanel(item) {
@@ -436,49 +492,5 @@ export class Interaction {
     const counter = this.panelEl.querySelector(".panel-counter");
     const total = this.billboards.projects?.length ?? this.billboards.items.length;
     counter.textContent = `${item.index + 1} / ${total}`;
-  }
-
-  // ── Torch aim ────────────────────────────────────────────────────────────
-
-  toggleTorchAim() {
-    if (this.torchAiming) this.exitTorchAim();
-    else this.enterTorchAim();
-  }
-
-  enterTorchAim() {
-    if (this.torchAiming) return;
-    if (!this.player?.character?.actions?.torchAim) return;
-    this.torchAiming = true;
-    this.controller.actionSpeedMultiplier = 0.5;
-    this.player.character.playTorchOverlay("torchAim", 0.35);
-    this.audio?.playInteract?.();
-  }
-
-  exitTorchAim() {
-    if (!this.torchAiming) return;
-    this.torchAiming = false;
-    this.controller.actionSpeedMultiplier = 1.0;
-    this.player?.character?.stopTorchOverlay?.(0.35);
-  }
-
-  #syncTorchHint() {
-    const torchOn = this.player?.character?.torchMesh?.visible === true;
-    const night = this.timeOfDay?.mode === "night";
-    const modalOpen =
-      this.activeIndex !== -1 || this.contactOpen || this.zooming;
-    // Same gate every other corner toggle / HUD uses — stay hidden while the
-    // loading + welcome overlays are up. main.js strips `booting` from <body>
-    // the moment the user starts the journey.
-    const booting = document.body.classList.contains("booting");
-    const show = torchOn && night && !modalOpen && !booting;
-    if (!this.torchHintEl) return;
-    if (show) {
-      this.torchHintEl.classList.remove("hidden");
-      this.torchHintEl.querySelector(".label").textContent = this.torchAiming
-        ? "Lower torch"
-        : "Aim torch";
-    } else {
-      this.torchHintEl.classList.add("hidden");
-    }
   }
 }

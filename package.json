@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "compress:world": "node tools/compress-world-glb.mjs"
   },
   "keywords": [
     "three.js",
@@ -17,7 +18,7 @@
   "author": "Karan Mahajan",
   "license": "MIT",
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.12.0",
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@vercel/speed-insights": "^2.0.0",
     "camera-controls": "^3.1.2",
     "gsap": "^3.15.0",

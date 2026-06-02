@@ -1,8 +1,0 @@
-Model Information:
-* title:	Punch bag
-* source:	https://sketchfab.com/3d-models/punch-bag-dc939aa468a74c9a814f72fef1cb5a15
-* author:	Hapk (https://sketchfab.com/neiltonanimacoes)
-
-Model License:
-* license type:	SKETCHFAB Standard (https://sketchfab.com/licenses)
-* requirements:	Under basic restrictions, use worldwide, on all types of media, commercially or not, and in all types of derivative works

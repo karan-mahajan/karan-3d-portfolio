@@ -35,27 +35,29 @@ thumbs.db
 
 # Brainstorm-skill visual companion — persisted mockups + state.
 /.superpowers/
-# Tools — extraction scripts and compression utilities stay local; the
-# blender-scripts/ folder is committed as a pattern reference for the v2
-# Blender world build.
-tools/bruno-analysis/
-tools/compress-animations.mjs
-tools/compress-glbs.mjs
+# --- Dev-only working files — kept on disk for reference, never published ---
+# These are how the world was BUILT (Blender pipeline, research, planning,
+# design logs). They add nothing for someone visiting the live site or
+# browsing the public repo, so they're untracked. Originals also live in git
+# history if ever needed back. To resume a build, the files are right here on
+# disk; just point Claude at the path.
 
-# Reports — bulk Bruno extraction artifacts + working logs stay local. Only
-# the two design-relevant markdowns are committed:
-#   - world-design-decisions.md (brainstorm reasoning trail)
-#   - v2-karan-builder-notes.md (Bruno pattern adoption guide)
-reports/CHECKLIST.md
-reports/blender-recreate-compare/
-reports/blender-recreate-gaps.md
-reports/blender-recreate-log.md
-reports/bruno-*
-reports/recreation-gaps.md
-reports/recreation-log.md
-reports/screenshots/
-reports/v2-baseline-summary.md
-reports/v2-coverage-report.md
-reports/v2-final-index.md
-reports/v2-reconstruction-test.md
-reports/v2-recreation-playbook.md
+# Blender world-build pipeline: Python scripts, .blend files, compression
+# utilities, extraction scripts, approval mockups. (~46 MB)
+/tools/
+
+# Research, specs, plans, handoffs and runtime-phase planning docs.
+# NOTE: docs/day.webp + docs/night.webp ARE committed (README banner).
+docs/superpowers/
+docs/v3-runtime/
+
+# World-design decision logs + bulk Bruno extraction artifacts.
+/reports/
+
+# Agent context file (CLAUDE.md is kept public; AGENTS.md is dev-only).
+AGENTS.md
+
+# Stray shadow-verification probe.
+/.verify-shadows.mjs
+
+.superpowers/

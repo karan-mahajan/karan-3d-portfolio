@@ -1,4 +1,10 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
+import {
+  Fn, attribute, uniform, varying, vec2, vec3, vec4, float,
+  positionGeometry, cameraPosition, cameraViewMatrix, cameraProjectionMatrix,
+  cross, normalize,
+} from 'three/tsl';
 
 /**
  * Ghibli-style drifting wind streaks. ~350 instanced ribbon quads, each
@@ -14,7 +20,12 @@ import * as THREE from 'three';
  * the streaks are clearly present at the wind module's default strength
  * (~0.35) and only disappear in near-dead calm.
  *
- * Toggle via setEnabled(). Setting persists in localStorage.
+ * B0/WebGPU: ported from the raw-GLSL ShaderMaterial to a
+ * MeshBasicNodeMaterial. The billboard math now lives in `material.vertexNode`
+ * (returns clip space directly, like Bruno's WindLine). The wind direction +
+ * visibility are TSL `uniform` nodes synced from the shared Wind module each
+ * frame in update(); the CPU advance/wrap of the instanced offsets is
+ * unchanged. Toggle via setEnabled(). Setting persists in localStorage.
  */
 
 const DEFAULT_COUNT = 350;
@@ -29,51 +40,6 @@ const RIBBON_WIDTH = 0.04;
 const SPEED_MIN = 0.5;
 const SPEED_MAX = 1.5;
 const STORAGE_KEY = 'karan-portfolio:wind-lines';
-
-const vert = /* glsl */ `
-  uniform vec2 uWindDir;       // shared with Wind module
-  uniform float uLength;
-  uniform float uWidth;
-
-  attribute vec3 aOffset;      // world-space ribbon center
-  varying float vAlpha;
-
-  void main() {
-    // position.x is local length_t in [-0.5, 0.5]; position.y is width_t in [-0.5, 0.5].
-    float lengthT = position.x;
-    float widthT  = position.y;
-    float headFrac = lengthT + 0.5;  // 0 at tail, 1 at head
-
-    // Wind axis in world (xz). Already normalized by Wind module.
-    vec3 along = vec3(uWindDir.x, 0.0, uWindDir.y);
-    vec3 worldCenter = aOffset;
-
-    // Billboard the width axis toward the camera while keeping the length
-    // axis locked to the wind direction — gives a thin streak that always
-    // catches the light from the third-person view.
-    vec3 toCam = cameraPosition - worldCenter;
-    vec3 across = normalize(cross(along, toCam));
-
-    vec3 worldPos = worldCenter
-                  + along  * (lengthT * uLength)
-                  + across * (widthT  * uWidth);
-
-    gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
-
-    // Head bright (0.9) → tail invisible (0.0). Gives the comet-trail look.
-    vAlpha = headFrac * 0.9;
-  }
-`;
-
-const frag = /* glsl */ `
-  uniform vec3 uColor;       // HDR (>1.0) so bloom catches the brightest pixels
-  uniform float uVisibility;
-  varying float vAlpha;
-
-  void main() {
-    gl_FragColor = vec4(uColor, vAlpha * uVisibility);
-  }
-`;
 
 export class WindLines {
   /**
@@ -125,23 +91,48 @@ export class WindLines {
     this.offsetAttr.setUsage(THREE.DynamicDrawUsage);
     instGeom.setAttribute('aOffset', this.offsetAttr);
 
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: vert,
-      fragmentShader: frag,
+    // ── TSL uniforms (synced from the Wind module in update()) ──
+    const wd = this.wind.uniforms.uWindDir.value;
+    this.uWindDir = uniform(vec2(wd.x, wd.y));
+    this.uLength = uniform(RIBBON_LENGTH);
+    this.uWidth = uniform(RIBBON_WIDTH);
+    // HDR white — values >1.0 push the streaks above the bloom threshold so
+    // they glow against the dusk sky instead of washing out into it.
+    this.uColor = uniform(vec3(1.5, 1.5, 1.5));
+    this.uVisibility = uniform(0);
+
+    const mat = new MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      uniforms: {
-        // Share the live wind direction — wind module owns this Vector2.
-        uWindDir: this.wind.uniforms.uWindDir,
-        uLength: { value: RIBBON_LENGTH },
-        uWidth: { value: RIBBON_WIDTH },
-        // HDR white — values >1.0 push the streaks above the bloom threshold
-        // so they glow against the dusk sky instead of washing out into it.
-        uColor: { value: new THREE.Vector3(1.5, 1.5, 1.5) },
-        uVisibility: { value: 0 },
-      },
     });
+
+    // Head bright (0.9) → tail invisible (0.0). Computed per-vertex, varied
+    // to the fragment for the comet-trail alpha gradient.
+    const vAlpha = varying(float(0), 'vWindAlpha');
+
+    mat.vertexNode = Fn(() => {
+      const lengthT = positionGeometry.x;       // [-0.5, 0.5]
+      const widthT = positionGeometry.y;        // [-0.5, 0.5]
+      const headFrac = lengthT.add(0.5);        // 0 tail, 1 head
+
+      const along = vec3(this.uWindDir.x, 0.0, this.uWindDir.y);
+      const worldCenter = attribute('aOffset');
+      const toCam = cameraPosition.sub(worldCenter);
+      const across = normalize(cross(along, toCam));
+
+      const worldPos = worldCenter
+        .add(along.mul(lengthT.mul(this.uLength)))
+        .add(across.mul(widthT.mul(this.uWidth)));
+
+      vAlpha.assign(headFrac.mul(0.9));
+      // Mesh sits at the origin with identity transform, so object == world.
+      return cameraProjectionMatrix.mul(cameraViewMatrix.mul(vec4(worldPos, 1.0)));
+    })();
+
+    mat.colorNode = this.uColor;
+    mat.opacityNode = vAlpha.mul(this.uVisibility);
+
     this.material = mat;
 
     this.mesh = new THREE.Mesh(instGeom, mat);
@@ -181,6 +172,10 @@ export class WindLines {
    * @param {THREE.Vector3} playerPos
    */
   update(delta, playerPos) {
+    // Sync the live wind direction into the GPU uniform.
+    const dirVec = this.wind.uniforms.uWindDir.value;
+    this.uWindDir.value.set(dirVec.x, dirVec.y);
+
     // Visibility ramps with wind strength regardless of enabled state — so
     // when re-enabled mid-calm the streaks fade in naturally.
     const strength = this.wind.uniforms.uWindStrength.value;
@@ -189,13 +184,12 @@ export class WindLines {
     const target = THREE.MathUtils.smoothstep(strength, 0.05, 0.3);
     // Cheap one-pole smoothing so the fade doesn't pop when strength jitters.
     this.visibility += (target - this.visibility) * Math.min(1, delta * 4);
-    this.material.uniforms.uVisibility.value = this.visibility;
+    this.uVisibility.value = this.visibility;
 
     if (!this.enabled || this.visibility < 0.005) return;
 
-    const dir = this.wind.uniforms.uWindDir.value;
-    const dx = dir.x;
-    const dz = dir.y;
+    const dx = dirVec.x;
+    const dz = dirVec.y;
     const px = playerPos.x;
     const pz = playerPos.z;
 

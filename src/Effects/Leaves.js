@@ -1,5 +1,9 @@
-import * as THREE from 'three';
-import { DUSK } from '../World/Palette.js';
+import * as THREE from 'three/webgpu';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import {
+  Fn, attribute, uniform, vec3, float,
+  positionGeometry, uv, sin, cos, cross, dot, normalize, texture,
+} from 'three/tsl';
 
 /**
  * Autumn leaves drifting through the air, landing on the terrain, and
@@ -14,12 +18,15 @@ import { DUSK } from '../World/Palette.js';
  *     recycles only once the pool of settled leaves exceeds MAX_SETTLED
  *     (oldest-first) so the air never empties out.
  *
- * Material is a custom ShaderMaterial (not transparent — alphaTest only)
- * with `lights: true` so the same shadowmap binding the grass uses pipes
- * through here. Shadowed leaves get a magenta tint (DUSK.shadowTint),
- * matching the rest of the scene's patchShadowTint convention.
- *
- * Toggle via setEnabled(); persists under 'karan-portfolio:leaves'.
+ * B0/WebGPU: ported from the raw-GLSL ShaderMaterial (which deep-merged
+ * UniformsLib.lights + fog — neither exported by `three/webgpu`) to a
+ * MeshLambertNodeMaterial. Lighting, fog and shadow reception now come from the
+ * node-material pipeline for free; the per-leaf transform (tumble in flight /
+ * lay-flat when settled) lives in `material.positionNode`, and the leaf-mask
+ * cutout is an `alphaTest` on the mask's red channel. The old magenta
+ * shadow-tint (a grass-matching stylistic flourish) is dropped — there is no
+ * grass in v3 yet and the lit leaves read cleaner. The CPU simulation is
+ * unchanged. Toggle via setEnabled(); persists under 'karan-portfolio:leaves'.
  */
 
 const DEFAULT_COUNT = 120;
@@ -61,117 +68,6 @@ const PALETTE = [
   new THREE.Color('#e8a93d'),
   new THREE.Color('#8b5a2b'),
 ];
-
-const vert = /* glsl */ `
-  #include <common>
-  #include <fog_pars_vertex>
-  #include <shadowmap_pars_vertex>
-
-  uniform float uSize;
-
-  attribute vec3 aOffset;
-  attribute vec3 aSpinAxis;
-  attribute float aAngle;
-  attribute vec3 aTint;
-  attribute float aSettled;
-  attribute float aSettledYaw;
-  attribute float aScale;
-
-  varying vec2 vUv;
-  varying vec3 vTint;
-
-  // Rodrigues rotation — rotate a vector around a unit axis by an angle.
-  mat3 axisAngleMat(vec3 axis, float angle) {
-    float c = cos(angle);
-    float s = sin(angle);
-    float t = 1.0 - c;
-    float x = axis.x;
-    float y = axis.y;
-    float z = axis.z;
-    return mat3(
-      t*x*x + c,    t*x*y - s*z,  t*x*z + s*y,
-      t*x*y + s*z,  t*y*y + c,    t*y*z - s*x,
-      t*x*z - s*y,  t*y*z + s*x,  t*z*z + c
-    );
-  }
-
-  void main() {
-    // PlaneGeometry vertices are in [-0.5, 0.5] on x/y, z=0.
-    vec3 local = position * uSize * aScale;
-    vec3 rotated;
-    if (aSettled > 0.5) {
-      // Lay flat: rotate -π/2 around X so the +Z plane-normal becomes +Y,
-      // then yaw around world Y by aSettledYaw so settled leaves don't all
-      // face the same direction.
-      vec3 r1 = vec3(local.x, local.z, -local.y);
-      float cy = cos(aSettledYaw);
-      float sy = sin(aSettledYaw);
-      rotated = vec3(cy * r1.x + sy * r1.z, r1.y, -sy * r1.x + cy * r1.z);
-    } else {
-      rotated = axisAngleMat(normalize(aSpinAxis), aAngle) * local;
-    }
-    vec3 wpos = aOffset + rotated;
-
-    vUv = uv;
-    vTint = aTint;
-
-    vec4 worldPosition = vec4(wpos, 1.0);
-    vec4 mvPosition = viewMatrix * worldPosition;
-    gl_Position = projectionMatrix * mvPosition;
-
-    #include <shadowmap_vertex>
-    #include <fog_vertex>
-  }
-`;
-
-const frag = /* glsl */ `
-  #include <common>
-  #include <fog_pars_fragment>
-  #include <shadowmap_pars_fragment>
-
-  uniform sampler2D uLeafMask;
-  uniform vec3 uShadowTint;
-  uniform float uShadowTintStrength;
-
-  varying vec2 vUv;
-  varying vec3 vTint;
-
-  void main() {
-    // Single-channel mask. Hard alphaTest (no blending) — leaves stay
-    // opaque so they sort cleanly against trees / grass / each other.
-    float alpha = texture2D(uLeafMask, vUv).r;
-    if (alpha < 0.1) discard;
-
-    vec3 color = vTint;
-
-    // Same shadow-tint pattern as Grass.js / patchShadowTint: shadowed
-    // pixels blend toward color*shadowTint instead of just darkening.
-    #if defined( USE_SHADOWMAP ) && ( NUM_DIR_LIGHT_SHADOWS > 0 )
-      float _stintSum = 0.0;
-      DirectionalLightShadow _stintDls;
-      #pragma unroll_loop_start
-      for ( int i = 0; i < NUM_DIR_LIGHT_SHADOWS; i ++ ) {
-        _stintDls = directionalLightShadows[ i ];
-        _stintSum += getShadow(
-          directionalShadowMap[ i ],
-          _stintDls.shadowMapSize,
-          _stintDls.shadowIntensity,
-          _stintDls.shadowBias,
-          _stintDls.shadowRadius,
-          vDirectionalShadowCoord[ i ]
-        );
-      }
-      #pragma unroll_loop_end
-      float _stintMask = _stintSum / float( NUM_DIR_LIGHT_SHADOWS );
-      float _stintAmt = clamp( 1.0 - _stintMask, 0.0, 1.0 );
-      vec3 _stintTarget = color * uShadowTint;
-      color = mix( color, _stintTarget, _stintAmt * uShadowTintStrength );
-    #endif
-
-    gl_FragColor = vec4(color, 1.0);
-    #include <fog_fragment>
-  }
-`;
 
 export class Leaves {
   /**
@@ -250,24 +146,29 @@ export class Leaves {
       this.tints[ix + 2] = tint.b;
     }
 
-    this.offsetAttr  = new THREE.InstancedBufferAttribute(this.offsets, 3);
-    this.offsetAttr.setUsage(THREE.DynamicDrawUsage);
-    this.angleAttr   = new THREE.InstancedBufferAttribute(this.angles, 1);
-    this.angleAttr.setUsage(THREE.DynamicDrawUsage);
-    this.settledAttr = new THREE.InstancedBufferAttribute(this.settled, 1);
-    this.settledAttr.setUsage(THREE.DynamicDrawUsage);
-    this.settledYawAttr = new THREE.InstancedBufferAttribute(this.settledYaw, 1);
-    this.settledYawAttr.setUsage(THREE.DynamicDrawUsage);
-    this.scaleAttr   = new THREE.InstancedBufferAttribute(this.scales, 1);
-    this.scaleAttr.setUsage(THREE.DynamicDrawUsage);
+    // WebGPU caps a pipeline at 8 vertex buffers. position + uv + 7 instanced
+    // attrs = 9 overflowed it ("Vertex buffer count (9) exceeds the maximum").
+    // Pack the seven instanced attrs into THREE vec4 buffers + one scalar →
+    // 2 (geometry) + 4 (instanced) = 6 vertex buffers. The packed arrays are
+    // (re)filled from the per-leaf sim arrays by #packBuffers() each frame.
+    this.aOffsetScale = new Float32Array(this.count * 4); // offset.xyz, scale
+    this.aSpinAngle   = new Float32Array(this.count * 4); // spinAxis.xyz, angle
+    this.aTintSettled = new Float32Array(this.count * 4); // tint.xyz, settled
 
-    instGeom.setAttribute('aOffset',     this.offsetAttr);
-    instGeom.setAttribute('aSpinAxis',   new THREE.InstancedBufferAttribute(this.spinAxes, 3));
-    instGeom.setAttribute('aAngle',      this.angleAttr);
-    instGeom.setAttribute('aTint',       new THREE.InstancedBufferAttribute(this.tints, 3));
-    instGeom.setAttribute('aSettled',    this.settledAttr);
-    instGeom.setAttribute('aSettledYaw', this.settledYawAttr);
-    instGeom.setAttribute('aScale',      this.scaleAttr);
+    this.offsetScaleAttr = new THREE.InstancedBufferAttribute(this.aOffsetScale, 4);
+    this.offsetScaleAttr.setUsage(THREE.DynamicDrawUsage);
+    this.spinAngleAttr   = new THREE.InstancedBufferAttribute(this.aSpinAngle, 4);
+    this.spinAngleAttr.setUsage(THREE.DynamicDrawUsage);
+    this.tintSettledAttr = new THREE.InstancedBufferAttribute(this.aTintSettled, 4);
+    this.tintSettledAttr.setUsage(THREE.DynamicDrawUsage);
+    // settledYaw stays a standalone scalar buffer (written in #settleLeaf).
+    this.settledYawAttr  = new THREE.InstancedBufferAttribute(this.settledYaw, 1);
+    this.settledYawAttr.setUsage(THREE.DynamicDrawUsage);
+
+    instGeom.setAttribute('aOffsetScale', this.offsetScaleAttr);
+    instGeom.setAttribute('aSpinAngle',   this.spinAngleAttr);
+    instGeom.setAttribute('aTintSettled', this.tintSettledAttr);
+    instGeom.setAttribute('aSettledYaw',  this.settledYawAttr);
 
     // Texture: single-channel mask, linear-sampled, no color-space conversion
     // (we sample .r as a raw alpha value, gamma would skew the threshold).
@@ -277,36 +178,92 @@ export class Leaves {
     tex.magFilter = THREE.LinearFilter;
     tex.anisotropy = 4;
 
-    // Deep-merge built-in lights + fog uniforms (per-material clones), then
-    // overwrite the wind/own uniforms by reference so the Wind module's
-    // updates propagate live.
-    const uniforms = THREE.UniformsUtils.merge([
-      THREE.UniformsLib.lights,
-      THREE.UniformsLib.fog,
-      {
-        uLeafMask:          { value: tex },
-        uSize:              { value: LEAF_SIZE },
-        uShadowTint:        { value: new THREE.Color(DUSK.shadowTint) },
-        uShadowTintStrength:{ value: 0.6 },
-      },
-    ]);
+    const uSize = uniform(LEAF_SIZE);
 
-    this.material = new THREE.ShaderMaterial({
-      vertexShader: vert,
-      fragmentShader: frag,
-      uniforms,
+    this.material = new MeshLambertNodeMaterial({
       side: THREE.DoubleSide,
       transparent: false,
-      depthWrite: true,
-      fog: true,
-      lights: true,
     });
+    // Hard cutout from the leaf mask's red channel (alphaTest, not blending,
+    // so leaves sort cleanly against trees / each other).
+    this.material.alphaTest = 0.1;
+    this.material.opacityNode = texture(tex, uv()).r;
+    this.material.colorNode = attribute('aTintSettled').xyz;
+    // Flat top-facing normal — gives a gentle, consistent sun/ambient response
+    // across all leaves regardless of their tumble (matches Bruno's RainLines
+    // `normalNode: vec3(0,1,0)` choice for billboard-ish geometry).
+    this.material.normalNode = vec3(0.0, 1.0, 0.0);
+
+    // Per-leaf transform: tumble (Rodrigues axis-angle) while falling, or
+    // lay-flat with a baked yaw once settled. Mesh sits at the origin with
+    // identity transform, so the returned world position passes through cleanly.
+    this.material.positionNode = Fn(() => {
+      const offsetScale = attribute('aOffsetScale'); // .xyz offset, .w scale
+      const spinAngle = attribute('aSpinAngle');     // .xyz axis,   .w angle
+      const settled = attribute('aTintSettled').w;
+      const local = positionGeometry.mul(uSize).mul(offsetScale.w).toVar();
+
+      // Tumbling (Rodrigues): local*c + cross(axis,local)*s + axis*dot(axis,local)*(1-c)
+      const axis = normalize(spinAngle.xyz);
+      const angle = spinAngle.w;
+      const c = cos(angle);
+      const s = sin(angle);
+      const t = float(1.0).sub(c);
+      const rotTumble = local.mul(c)
+        .add(cross(axis, local).mul(s))
+        .add(axis.mul(dot(axis, local).mul(t)));
+
+      // Settled: lay flat (swap Y/Z so the +Z plane-normal points +Y) then
+      // yaw around world-Y by aSettledYaw.
+      const r1 = vec3(local.x, local.z, local.y.negate());
+      const yaw = attribute('aSettledYaw');
+      const cy = cos(yaw);
+      const sy = sin(yaw);
+      const rotSettled = vec3(
+        cy.mul(r1.x).add(sy.mul(r1.z)),
+        r1.y,
+        sy.negate().mul(r1.x).add(cy.mul(r1.z)),
+      );
+
+      const rotated = settled.greaterThan(0.5).select(rotSettled, rotTumble);
+      return offsetScale.xyz.add(rotated);
+    })();
 
     this.mesh = new THREE.Mesh(instGeom, this.material);
     this.mesh.name = 'leaves';
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     this.scene.add(this.mesh);
+
+    // Seed the packed GPU buffers so the first rendered frame is correct even
+    // before update() runs (e.g. leaves disabled on boot).
+    this.#packBuffers();
+  }
+
+  /** Pack the per-leaf sim arrays into the 3 vec4 instanced buffers (+ the
+   *  standalone settledYaw scalar) and flag them for upload. count is small
+   *  (~120) so the per-frame repack is negligible. */
+  #packBuffers() {
+    for (let i = 0; i < this.count; i++) {
+      const i3 = i * 3;
+      const i4 = i * 4;
+      this.aOffsetScale[i4]     = this.offsets[i3];
+      this.aOffsetScale[i4 + 1] = this.offsets[i3 + 1];
+      this.aOffsetScale[i4 + 2] = this.offsets[i3 + 2];
+      this.aOffsetScale[i4 + 3] = this.scales[i];
+      this.aSpinAngle[i4]       = this.spinAxes[i3];
+      this.aSpinAngle[i4 + 1]   = this.spinAxes[i3 + 1];
+      this.aSpinAngle[i4 + 2]   = this.spinAxes[i3 + 2];
+      this.aSpinAngle[i4 + 3]   = this.angles[i];
+      this.aTintSettled[i4]     = this.tints[i3];
+      this.aTintSettled[i4 + 1] = this.tints[i3 + 1];
+      this.aTintSettled[i4 + 2] = this.tints[i3 + 2];
+      this.aTintSettled[i4 + 3] = this.settled[i];
+    }
+    this.offsetScaleAttr.needsUpdate = true;
+    this.spinAngleAttr.needsUpdate = true;
+    this.tintSettledAttr.needsUpdate = true;
+    this.settledYawAttr.needsUpdate = true; // settledYaw written in-place by #settleLeaf
   }
 
   // ── Toggle ───────────────────────────────────────────────────────────────
@@ -426,11 +383,7 @@ export class Leaves {
       }
     }
 
-    this.offsetAttr.needsUpdate = true;
-    this.angleAttr.needsUpdate = true;
-    this.settledAttr.needsUpdate = true;
-    this.settledYawAttr.needsUpdate = true;
-    this.scaleAttr.needsUpdate = true;
+    this.#packBuffers();
   }
 
   #settleLeaf(i, groundY) {

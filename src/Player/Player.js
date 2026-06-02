@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { PlayerController } from './PlayerController.js';
 import { Character } from './Character.js';
 
@@ -12,11 +12,15 @@ export class Player {
   static GRAVITY = -25;
   static JUMP_VELOCITY = 8.5;
   static IDLE_LOOK_AROUND_SECONDS = 8;
-  // Ocean interaction. Must mirror src/Effects/Water.js ISLAND_RADIUS /
-  // WATER_ENTRY_RADIUS. Past WATER_ENTRY the character starts to slow down;
-  // SLOWDOWN_PER_M controls how fast resistance ramps with depth.
-  static WATER_ENTRY_RADIUS = 45;
-  static WATER_SLOWDOWN_PER_M = 0.1;
+  // Ocean/pond interaction. Wading is gated on actual terrain water-depth
+  // (ground dipping below the water surface), NOT a radial ring — the v3
+  // island is r≈60 and the legacy r=120 ring never triggered, so ponds/river
+  // read as dry to gameplay. WATER_SURFACE_Y mirrors Water.WATER_LEVEL_Y.
+  static WATER_SURFACE_Y = -0.15;
+  // Speed falloff per metre of water depth, clamped so the player can always
+  // wade back out. Ankle-deep shore (~0.2 m) barely slows; a full 1.35 m basin
+  // drops to ~40% speed.
+  static WATER_SLOWDOWN_PER_M = 0.45;
   static WATER_SLOWDOWN_MIN = 0.15;
 
   // Natural foot-speed of each locomotion clip in m/s (estimated from typical
@@ -30,11 +34,10 @@ export class Player {
     running: 5.2,
     crouchWalk: 1.35,
   };
-  // Soft clamp just past the wading band — island ends at r=45 and the
-  // ocean floor hits y=-2 by r=57, so anything further lets the player
-  // walk fully submerged with no swim animation. 52 lands the wall at
-  // the beach lip; wading slowdown handles the last ~7m organically.
-  static MAX_TRAVEL_RADIUS = 52;
+  // Soft clamp at the far edge of the world.glb terrain. TODO Phase 5:
+  // tighten this once WorldWater can identify the actual ocean meshes.
+  // Original v1 island used 52 (island ended at r=45, ocean floor at r=57).
+  static MAX_TRAVEL_RADIUS = 150;
   static RESPAWN_FALL_Y = -5;
 
   constructor(scene, playerCamera, terrain = null, loader = null, physics = null) {
@@ -118,16 +121,31 @@ export class Player {
   }
 
   update(delta) {
-    // Ocean wading slowdown — must be set before sample() so the velocity
-    // it returns is already scaled. Distance is XZ-only; depth grows by
-    // 0.1× per metre past the water entry radius and caps at 85% slowdown
-    // (15% original speed) so the player can't get fully stuck.
+    // While frozen (e.g. the lava sink sequence) skip input + normal motion so
+    // an external system can drive the group transform; still advance the
+    // character animation and keep the camera following.
+    if (this._frozen) {
+      this.character?.update?.(delta);
+      this.playerCamera?.follow?.(this.group.position);
+      return;
+    }
+
+    // Wading slowdown — must be set before sample() so the velocity it returns
+    // is already scaled. Depth is the terrain dipping below the water surface
+    // (ponds, river, ocean falloff), so it engages wherever the water visibly
+    // shows, capped at 85% slowdown (15% speed) so the player can't get stuck.
     const dx = this.group.position.x;
     const dz = this.group.position.z;
     const distFromCenter = Math.hypot(dx, dz);
-    if (distFromCenter > Player.WATER_ENTRY_RADIUS) {
-      const depth = (distFromCenter - Player.WATER_ENTRY_RADIUS) * Player.WATER_SLOWDOWN_PER_M;
-      this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - depth);
+    const groundY = this.terrain ? this.terrain.heightAt(dx, dz) : 0;
+    const waterDepth = Player.WATER_SURFACE_Y - groundY;
+    // Only wade-slow when actually down in the water — feet at/below the
+    // surface. On a bridge deck over the river the feet are up on the planks
+    // (the deck collider, not the terrain, is the floor), so skip the slowdown.
+    const submergedFeet = this.group.position.y <= Player.WATER_SURFACE_Y + 0.1;
+    if (waterDepth > 0 && submergedFeet) {
+      const slow = waterDepth * Player.WATER_SLOWDOWN_PER_M;
+      this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - slow);
     } else {
       this.controller.speedMultiplier = 1.0;
     }
@@ -369,12 +387,88 @@ export class Player {
     }
   }
 
+  /** Suspend input + normal motion so an external system can drive the group. */
+  freeze() {
+    this._frozen = true;
+    if (this.controller) this.controller.paused = true;
+  }
+
+  /** Resume normal player control after a freeze(). */
+  unfreeze() {
+    this._frozen = false;
+    if (this.controller) this.controller.paused = false;
+  }
+
+  /**
+   * Snap the player (physics body + group + facing) to a fixed spot. Used when
+   * a mini-game stations the player at a known throwing position.
+   */
+  placeAt(x, y, z, yaw = 0) {
+    if (this.body?.teleport) this.body.teleport(x, y, z);
+    this.group.position.set(x, y, z);
+    this._currentYaw = yaw;
+    this._targetYaw = yaw;
+    this._verticalVelocity = 0;
+  }
+
+  /** Aim the body toward a yaw without moving — update() smooths the turn. */
+  setFacing(yaw) {
+    this._targetYaw = yaw;
+  }
+
+  /** Teleport back to spawn and reset facing/tilt (lava death, etc.). */
+  respawn() {
+    const y = (this.terrain ? this.terrain.heightAt(0, 0) : 0) + 0.1;
+    if (this.body?.teleport) this.body.teleport(0, y, 0);
+    this.group.position.set(0, y, 0);
+    this.group.rotation.set(0, 0, 0);
+    this._currentYaw = 0;
+    this._targetYaw = 0;
+    this._tiltX = 0;
+    this._tiltZ = 0;
+    this._verticalVelocity = 0;
+  }
+
   /** Trigger context-specific gestures (called by Portfolio interactions). */
   point() {
     if (this.character) this.character.play('pointing', { once: true, then: 'idle', interruptible: true });
   }
   wave() {
     if (this.character) this.character.play('waving', { once: true, then: 'idle', interruptible: true });
+  }
+
+  /**
+   * Colour Garden charge-throw. Plays the blended pickup→wind-up→throw clip,
+   * frozen at `holdFrac` of the clip (the cocked wind-up frame) until
+   * releaseChargedAction(). Returns false if the clip isn't loaded so the
+   * caller can fall back to a stand-in. The clip is a non-interruptible
+   * one-shot, so #updateAnimationState leaves it alone while it runs.
+   */
+  playChargedAction(name, holdFrac, rate = 1) {
+    if (!this.character || !this.character.actions[name]) return false;
+    const action = this.character.actions[name];
+    const dur = action.getClip()?.duration ?? 0;
+    const ok = this.character.playCharged(name, dur * holdFrac, { then: 'idle', fade: 0.2 });
+    if (ok) {
+      this._state = name;
+      action.timeScale = rate; // play() reset it to 1; speed the throw clip up
+    }
+    return ok;
+  }
+
+  /** Release the held wind-up so the throw swing completes. */
+  releaseChargedAction() {
+    this.character?.releaseHold?.();
+  }
+
+  /** Normalised 0..1 playhead of a character action (for release timing). */
+  actionProgress(name) {
+    return this.character?.actionProgress?.(name) ?? 0;
+  }
+
+  /** World position of the character's right wrist (the orb tracks it). */
+  getHandWorldPosition(out) {
+    return this.character?.getHandWorldPosition?.(out) ?? null;
   }
 
   /**

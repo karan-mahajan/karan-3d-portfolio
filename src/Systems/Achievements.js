@@ -1,8 +1,10 @@
 /**
- * Achievements — 36 trackable unlocks across exploration, portfolio
- * engagement, actions, world toggles, time milestones, and five hidden
- * ones. Persists progress + unlocked IDs to localStorage so refreshes
- * keep state.
+ * Achievements — trackable unlocks across exploration, portfolio
+ * engagement, actions, world toggles, mini-games, time milestones, and
+ * hidden ones. Each carries a `rarity` (common/rare/epic/legendary) that
+ * drives the toast + panel theming and the unlock chime. Persists progress,
+ * unlocked IDs, and which unlocks have been *seen* to localStorage so
+ * refreshes keep state.
  *
  * Lifecycle:
  *   1. Build once in App ctor.
@@ -19,6 +21,7 @@
 
 const STORAGE_PROGRESS = 'karan-portfolio:achievements:progress';
 const STORAGE_UNLOCKED = 'karan-portfolio:achievements:unlocked';
+const STORAGE_SEEN     = 'karan-portfolio:achievements:seen';
 const STORAGE_TIME     = 'karan-portfolio:achievements:time';
 // Cumulative-time celebrations beyond the last milestone fire every N
 // minutes (the user explicitly asked for "every 5 minutes"). Bounded by
@@ -26,60 +29,69 @@ const STORAGE_TIME     = 'karan-portfolio:achievements:time';
 // past the longest milestone.
 const PARTY_INTERVAL_SEC = 5 * 60;
 
-// Static metadata for all 28 achievements. Targets that key off world
-// state (project count, experience sign count) are declared here so the
-// rest of the system can stay numeric; see ACHIEVEMENT_TARGETS for the
-// dynamic injection point.
+// Static metadata for every achievement. `rarity` (common | rare | epic |
+// legendary) drives toast/panel theming + the unlock chime; omit it to
+// default to 'common'. Targets that key off world state (project count,
+// experience sign count) are declared here so the rest of the system can
+// stay numeric.
 const ACHIEVEMENTS = [
-  // === EXPLORATION (8) ===
+  // === EXPLORATION (9) ===
   { id: 'journey_begins',  name: 'Journey Begins',   description: 'Start your journey',                icon: '🚀', category: 'exploration', target: 1,   secret: false },
   { id: 'first_steps',     name: 'First Steps',      description: 'Move for the first time',           icon: '👟', category: 'exploration', target: 1,   secret: false },
-  { id: 'speed_demon',     name: 'Speed Demon',      description: 'Sprint for 5 seconds straight',     icon: '💨', category: 'exploration', target: 1,   secret: false },
-  { id: 'grand_tour',      name: 'The Grand Tour',   description: 'Visit all 4 portfolio sections',    icon: '🗺️', category: 'exploration', target: 4,   secret: false },
-  { id: 'perimeter_walk',  name: 'Perimeter Walk',   description: 'Reach all 4 edges of the island',   icon: '🧭', category: 'exploration', target: 4,   secret: false },
-  { id: 'off_script',      name: 'Going Off Script', description: 'Walk 15m from any path',            icon: '🌿', category: 'exploration', target: 1,   secret: false },
-  { id: 'aquaman',         name: 'Aquaman',          description: 'Wade waist-deep into the ocean',    icon: '🏊', category: 'exploration', target: 1,   secret: false },
-  { id: 'night_swimmer',   name: 'Night Swimmer',    description: 'Enter the water at night',          icon: '🌊', category: 'exploration', target: 1,   secret: false },
+  { id: 'speed_demon',     name: 'Speed Demon',      description: 'Sprint for 5 seconds straight',     icon: '💨', category: 'exploration', target: 1,   secret: false, rarity: 'rare' },
+  { id: 'grand_tour',      name: 'The Grand Tour',   description: 'Visit all 4 portfolio sections',    icon: '🗺️', category: 'exploration', target: 4,   secret: false, rarity: 'epic' },
+  { id: 'perimeter_walk',  name: 'Perimeter Walk',   description: 'Reach all 4 edges of the island',   icon: '🧭', category: 'exploration', target: 4,   secret: false, rarity: 'epic' },
+  { id: 'off_script',      name: 'Going Off Script', description: 'Walk 15m from any path',            icon: '🌿', category: 'exploration', target: 1,   secret: false, rarity: 'rare' },
+  { id: 'aquaman',         name: 'Aquaman',          description: 'Wade waist-deep into the ocean',    icon: '🏊', category: 'exploration', target: 1,   secret: false, rarity: 'rare' },
+  { id: 'night_swimmer',   name: 'Night Swimmer',    description: 'Enter the water at night',          icon: '🌊', category: 'exploration', target: 1,   secret: false, rarity: 'rare' },
+  { id: 'fast_travel',     name: 'Fast Traveler',    description: 'Teleport via the map',              icon: '✈️', category: 'exploration', target: 1,   secret: false, rarity: 'rare' },
 
   // === PORTFOLIO ENGAGEMENT (6) ===
   { id: 'curious_dev',       name: 'Curious Dev',          description: 'View your first project',       icon: '🔍', category: 'portfolio', target: 1, secret: false },
-  { id: 'full_stack_review', name: 'Full Stack Review',    description: 'View all 5 project billboards', icon: '💻', category: 'portfolio', target: 5, secret: false },
+  { id: 'full_stack_review', name: 'Full Stack Review',    description: 'View all 5 project billboards', icon: '💻', category: 'portfolio', target: 5, secret: false, rarity: 'epic' },
   { id: 'hired',             name: 'Hired!',               description: 'Open the Contact section',      icon: '📞', category: 'portfolio', target: 1, secret: false },
-  { id: 'due_diligence',     name: 'Due Diligence',        description: 'View every experience sign',    icon: '📋', category: 'portfolio', target: 5, secret: false },
+  { id: 'due_diligence',     name: 'Due Diligence',        description: 'View every experience sign',    icon: '📋', category: 'portfolio', target: 5, secret: false, rarity: 'epic' },
   { id: 'skill_scanned',     name: 'Skill Scanned',        description: 'View the skills display',       icon: '⚡', category: 'portfolio', target: 1, secret: false },
-  { id: 'complete_package',  name: 'The Complete Package', description: 'View every interactive element',icon: '🏆', category: 'portfolio', target: 1, secret: false },
+  { id: 'complete_package',  name: 'The Complete Package', description: 'View every interactive element',icon: '🏆', category: 'portfolio', target: 1, secret: false, rarity: 'legendary' },
 
   // === ACTIONS (7) ===
   { id: 'parkour',          name: 'Parkour!',          description: 'Do a backflip',           icon: '🤸', category: 'actions', target: 1,   secret: false },
   { id: 'cirque_du_code',   name: 'Cirque du Code',    description: 'Do a cartwheel',          icon: '🎪', category: 'actions', target: 1,   secret: false },
   { id: 'bully',            name: 'Bully',             description: 'Push an object',          icon: '🫸', category: 'actions', target: 1,   secret: false },
-  { id: 'cloud_jumper',     name: 'Cloud Jumper',      description: 'Jump 20 times',           icon: '☁️', category: 'actions', target: 20,  secret: false },
-  { id: 'footprint_artist', name: 'Footprint Artist',  description: 'Leave 40 footprints',     icon: '👣', category: 'actions', target: 40,  secret: false },
+  { id: 'cloud_jumper',     name: 'Cloud Jumper',      description: 'Jump 20 times',           icon: '☁️', category: 'actions', target: 20,  secret: false, rarity: 'rare' },
+  { id: 'footprint_artist', name: 'Footprint Artist',  description: 'Leave 40 footprints',     icon: '👣', category: 'actions', target: 40,  secret: false, rarity: 'rare' },
   { id: 'afk',              name: 'AFK',               description: 'Stand still for 30 seconds', icon: '🧘', category: 'actions', target: 1,  secret: false },
-  { id: 'marathon_dev',     name: 'Marathon Dev',      description: 'Walk/run 500 total meters', icon: '🏃', category: 'actions', target: 500, secret: false },
+  { id: 'marathon_dev',     name: 'Marathon Dev',      description: 'Walk/run 500 total meters', icon: '🏃', category: 'actions', target: 500, secret: false, rarity: 'epic' },
 
-  // === WEATHER & WORLD (5) ===
+  // === MINI-GAMES (3) ===
+  { id: 'painter',        name: 'Splash of Colour', description: 'Paint a sculpture in the Colour Garden', icon: '🎨', category: 'games', target: 1, secret: false, rarity: 'rare' },
+  { id: 'master_painter', name: 'Master Painter',   description: 'Paint every sculpture in the garden',    icon: '🌈', category: 'games', target: 1, secret: false, rarity: 'legendary' },
+  { id: 'striker',        name: 'Striker',          description: 'Kick the football',                      icon: '⚽', category: 'games', target: 1, secret: false, rarity: 'rare' },
+
+  // === WEATHER & WORLD (6) ===
   { id: 'night_owl',       name: 'Night Owl',       description: 'Switch to night mode',           icon: '🦉', category: 'world', target: 1, secret: false },
   { id: 'early_bird',      name: 'Early Bird',      description: 'Switch back to day mode',        icon: '🐦', category: 'world', target: 1, secret: false },
   { id: 'rain_maker',      name: 'Rain Maker',      description: 'Toggle rain on',                 icon: '🌧️', category: 'world', target: 1, secret: false },
   { id: 'thor_mode',       name: 'Thor Mode',       description: 'Trigger lightning manually',     icon: '⚡', category: 'world', target: 1, secret: false },
-  { id: 'storm_survivor',  name: 'Storm Survivor',  description: 'Stand in rain for 60 seconds',   icon: '☔', category: 'world', target: 1, secret: false },
+  { id: 'storm_survivor',  name: 'Storm Survivor',  description: 'Stand in rain for 60 seconds',   icon: '☔', category: 'world', target: 1, secret: false, rarity: 'rare' },
+  { id: 'snow_day',        name: 'Snow Day',        description: 'Witness the first snowfall',      icon: '❄️', category: 'world', target: 1, secret: false, rarity: 'rare' },
 
-  // === SECRET (5) — names hidden until unlocked ===
-  { id: 'pushy',             name: 'The Bulldozer', description: 'Push 5 different objects',                  icon: '🚜',  category: 'secret', target: 5, secret: true },
-  { id: 'water_flip',        name: 'Splashdown',    description: 'Do a backflip in the water',                icon: '🐬',  category: 'secret', target: 1, secret: true },
-  { id: 'storm_chaser',      name: 'Storm Chaser',  description: 'Trigger lightning 5 times in one session', icon: '🌩️',  category: 'secret', target: 5, secret: true },
-  { id: 'distance_guesser',  name: 'Eagle Eye',     description: 'Guess an island distance within 10m',       icon: '🏝️',  category: 'secret', target: 1, secret: true },
-  { id: 'distance_master',   name: 'Cartographer',  description: 'Guess an island distance exactly right',    icon: '🎯',  category: 'secret', target: 1, secret: true },
+  // === SECRET (6) — names hidden until unlocked ===
+  { id: 'pushy',             name: 'The Bulldozer', description: 'Push 5 different objects',                  icon: '🚜',  category: 'secret', target: 5, secret: true, rarity: 'epic' },
+  { id: 'water_flip',        name: 'Splashdown',    description: 'Do a backflip in the water',                icon: '🐬',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
+  { id: 'storm_chaser',      name: 'Storm Chaser',  description: 'Trigger lightning 5 times in one session', icon: '🌩️',  category: 'secret', target: 5, secret: true, rarity: 'epic' },
+  { id: 'distance_guesser',  name: 'Eagle Eye',     description: 'Guess an island distance within 10m',       icon: '🏝️',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
+  { id: 'distance_master',   name: 'Cartographer',  description: 'Guess an island distance exactly right',    icon: '🎯',  category: 'secret', target: 1, secret: true, rarity: 'legendary' },
+  { id: 'lava_death',        name: 'Floor is Lava', description: 'Get WASTED in the molten pool',             icon: '🌋',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
 
   // === TIME (5) — cumulative time spent in the world, in seconds ===
   // Counter targets are seconds so the progress bar fills smoothly. The
   // displayed description still reads in minutes for readability.
   { id: 'time_5min',  name: 'Tourist',    description: 'Spend 5 minutes exploring',  icon: '⏱️', category: 'time', target: 5  * 60, secret: false },
-  { id: 'time_10min', name: 'Sightseer',  description: 'Spend 10 minutes exploring', icon: '🧳', category: 'time', target: 10 * 60, secret: false },
-  { id: 'time_15min', name: 'Wanderer',   description: 'Spend 15 minutes exploring', icon: '🚶', category: 'time', target: 15 * 60, secret: false },
-  { id: 'time_30min', name: 'Local',      description: 'Spend 30 minutes exploring', icon: '🏘️', category: 'time', target: 30 * 60, secret: false },
-  { id: 'time_60min', name: 'Resident',   description: 'Spend 60 minutes exploring', icon: '🏡', category: 'time', target: 60 * 60, secret: false },
+  { id: 'time_10min', name: 'Sightseer',  description: 'Spend 10 minutes exploring', icon: '🧳', category: 'time', target: 10 * 60, secret: false, rarity: 'rare' },
+  { id: 'time_15min', name: 'Wanderer',   description: 'Spend 15 minutes exploring', icon: '🚶', category: 'time', target: 15 * 60, secret: false, rarity: 'rare' },
+  { id: 'time_30min', name: 'Local',      description: 'Spend 30 minutes exploring', icon: '🏘️', category: 'time', target: 30 * 60, secret: false, rarity: 'epic' },
+  { id: 'time_60min', name: 'Resident',   description: 'Spend 60 minutes exploring', icon: '🏡', category: 'time', target: 60 * 60, secret: false, rarity: 'legendary' },
 ];
 
 const TIME_MILESTONES = [
@@ -100,6 +112,19 @@ export class Achievements {
     this.achievements = ACHIEVEMENTS;
     this.progress = this.#loadProgress();
     this.unlocked = new Set(this.#loadUnlocked());
+    // IDs whose unlock the user has already seen in the panel. Anything
+    // unlocked-but-unseen drives the "NEW" badge on the trophy button.
+    // First run after this feature shipped: no seen-store exists yet, so seed
+    // it with everything already unlocked — otherwise old earned achievements
+    // would all flash a spurious "NEW".
+    let seenInit = this.#loadSeen();
+    if (seenInit === null) {
+      seenInit = Array.from(this.unlocked);
+      this.seen = new Set(seenInit);
+      this.#saveSeen();
+    } else {
+      this.seen = new Set(seenInit);
+    }
     this.listeners = [];
 
     // Counter mirrors. Persisted via `progress[id]` for the numeric ones;
@@ -179,7 +204,9 @@ export class Achievements {
    * timers here; per-edge / per-section state lives in the sets above.
    */
   tick(delta, ctx) {
-    const { playerPos, moving, running, inWater, waterDepth, isNight, isRaining } = ctx;
+    const { playerPos, moving, running, inWater, waterDepth, isNight, isRaining, isSnowing } = ctx;
+
+    if (isSnowing) this.trigger('snow_day');
 
     // Cumulative time on site — even during idle. Persisted every ~5s
     // (not every frame) so the localStorage write doesn't get hammered.
@@ -330,6 +357,22 @@ export class Achievements {
 
   onOffPath() { this.trigger('off_script'); }
 
+  /** Player used a map marker to fast-travel between sections. */
+  onFastTravel() { this.trigger('fast_travel'); }
+
+  /** Player kicked the football. */
+  onFootballKick() { this.trigger('striker'); }
+
+  /** Player sank in the lava and got the WASTED card. */
+  onWasted() { this.trigger('lava_death'); }
+
+  /** A Colour Garden sculpture was painted. `allPainted` is true once every
+   *  sculpture in the field has colour. */
+  onStatuePainted(allPainted = false) {
+    this.trigger('painter');
+    if (allPainted) this.trigger('master_painter');
+  }
+
   /** User clicked "Start your journey" on the welcome overlay. Also fires
    *  on subsequent reloads if the user never completed it before. */
   onJourneyBegin() { this.trigger('journey_begins'); }
@@ -373,6 +416,7 @@ export class Achievements {
       icon: '🎉',
       category: 'time',
       target: minutes,
+      rarity: 'rare',
       _synthetic: true,
     };
     for (const cb of this.listeners) {
@@ -429,6 +473,36 @@ export class Achievements {
     catch (err) { console.warn('[Achievements] unlocked save failed:', err); }
   }
 
+  /** Returns the stored array, or null when the seen-store has never been
+   *  written (so the constructor can seed it from already-unlocked IDs). */
+  #loadSeen() {
+    try {
+      const raw = localStorage.getItem(STORAGE_SEEN);
+      return raw === null ? null : (JSON.parse(raw) || []);
+    } catch { return null; }
+  }
+
+  #saveSeen() {
+    try { localStorage.setItem(STORAGE_SEEN, JSON.stringify(Array.from(this.seen))); }
+    catch (err) { console.warn('[Achievements] seen save failed:', err); }
+  }
+
+  /** Mark every currently-unlocked achievement as seen (called when the panel
+   *  opens) so the trophy "NEW" badge clears. */
+  markAllSeen() {
+    let changed = false;
+    for (const id of this.unlocked) if (!this.seen.has(id)) { this.seen.add(id); changed = true; }
+    if (changed) this.#saveSeen();
+    return changed;
+  }
+
+  /** Count of unlocked achievements the user hasn't opened the panel to see. */
+  getUnseenCount() {
+    let n = 0;
+    for (const id of this.unlocked) if (!this.seen.has(id)) n++;
+    return n;
+  }
+
   /** Read-only view for the panel UI. Secret achievements stay obscured
    *  until they unlock. */
   getAll() {
@@ -437,7 +511,9 @@ export class Achievements {
       const obscured = a.secret && !unlocked;
       return {
         ...a,
+        rarity: a.rarity || 'common',
         unlocked,
+        seen: this.seen.has(a.id),
         current: this.progress[a.id] || 0,
         displayName: obscured ? '???' : a.name,
         displayDescription: obscured ? 'Keep exploring to find out…' : a.description,
@@ -448,4 +524,17 @@ export class Achievements {
 
   getUnlockedCount() { return this.unlocked.size; }
   getTotalCount()    { return this.achievements.length; }
+  /** True once every achievement is unlocked — drives the 100% celebration. */
+  isAllComplete()    { return this.unlocked.size >= this.achievements.length; }
+
+  /** Per-category {unlocked,total} tallies for the panel tab badges. */
+  getCategoryStats() {
+    const stats = {};
+    for (const a of this.achievements) {
+      const s = (stats[a.category] ||= { unlocked: 0, total: 0 });
+      s.total++;
+      if (this.unlocked.has(a.id)) s.unlocked++;
+    }
+    return stats;
+  }
 }

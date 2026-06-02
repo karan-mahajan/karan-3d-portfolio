@@ -39,10 +39,20 @@ body.booting #transition-root {
   overflow: hidden;
 }
 
-.minimap-svg {
+.minimap-canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.minimap-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: inset 0 0 14px rgba(20, 14, 6, 0.4);
 }
 
 .map-ocean {
@@ -150,15 +160,42 @@ body.booting #transition-root {
   pointer-events: none;
 }
 
-.map-breadcrumbs circle {
+.map-player-core {
   fill: var(--map-player);
+  stroke: #fff;
+  stroke-width: 3;
 }
 
-.map-player-arrow path,
-.map-overlay-player path {
+.map-player-heading {
   fill: var(--map-player);
-  stroke: #6b2c12;
-  stroke-width: 1.2;
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.map-player-pulse {
+  fill: none;
+  stroke: var(--map-player);
+  stroke-width: 3;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-player-pulse 1.8s ease-out infinite;
+}
+
+@keyframes map-player-pulse {
+  0% { transform: scale(0.45); opacity: 0.85; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+/* Day/night legibility: a soft light glow keeps coloured markers readable on
+   both the bright day render and the dark night render of the world. */
+.map-overlay-svg .map-star {
+  filter: drop-shadow(0 0 2.5px rgba(255, 255, 255, 0.9));
+}
+
+.map-overlay-player .map-player-core,
+.map-overlay-player .map-player-heading {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 
 .map-tooltip {
@@ -230,51 +267,35 @@ body.booting #transition-root {
   overflow: hidden;
 }
 
-.map-overlay-svg {
-  width: 100%;
-  height: 100%;
+.map-overlay-stage {
+  position: relative;
   min-height: 0;
   border-radius: 12px;
-  background: #ead7ad;
+  overflow: hidden;
+  background: #2b3a40;
+}
+
+.map-overlay-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.map-overlay-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   cursor: crosshair;
 }
 
-.map-preview {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  padding: 0.8rem;
-  border-left: 2px dashed rgba(92, 74, 50, 0.35);
-}
-
-.map-preview-eyebrow {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #8d6b29;
-}
-
-.map-preview h2 {
-  font-family: var(--map-font-display);
-  font-size: clamp(2rem, 5vw, 3.4rem);
-  line-height: 0.9;
-  color: var(--map-ink);
-}
-
-.map-preview img {
-  width: 100%;
-  aspect-ratio: 16 / 10;
-  object-fit: cover;
-  border: 2px solid rgba(92, 74, 50, 0.45);
-  border-radius: 8px;
-  filter: sepia(0.2) saturate(0.85);
-}
-
-.map-preview p {
-  font-size: 0.92rem;
-  line-height: 1.45;
+/* Full-bleed map (no side preview column) — square to match the world render. */
+.map-overlay-panel--full {
+  grid-template-columns: 1fr;
+  width: min(82vh, 92vw);
+  height: min(82vh, 92vw);
 }
 
 .map-close,
@@ -333,6 +354,32 @@ body.booting #transition-root {
   height: 100%;
 }
 
+/* Keyboard focus — visible ring on the interactive map elements. */
+.minimap-shell:focus-visible,
+.map-close:focus-visible,
+.map-reset:focus-visible {
+  outline: 3px solid #ffd27d;
+  outline-offset: 2px;
+}
+
+.map-marker:focus-visible .map-star {
+  outline: none;
+  stroke: #ffd27d;
+  stroke-width: 2.4;
+}
+
+/* Honour reduced-motion: hold the markers still rather than pulsing. */
+@media (prefers-reduced-motion: reduce) {
+  .map-player-pulse {
+    animation: none;
+    opacity: 0;
+  }
+
+  .map-marker.is-discovered .map-star {
+    animation: none;
+  }
+}
+
 .map-debug-canvas {
   position: fixed;
   right: 180px;
@@ -368,24 +415,10 @@ body.booting #transition-root {
 
   .map-overlay-panel {
     width: calc(100vw - 20px);
-    height: min(82vh, 720px);
+    height: min(86vw, 82vh);
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: 1fr;
     gap: 0.5rem;
     padding: 0.7rem;
-  }
-
-  .map-preview {
-    border-left: 0;
-    border-top: 2px dashed rgba(92, 74, 50, 0.35);
-    padding: 0.55rem 0.2rem 0;
-  }
-
-  .map-preview img {
-    display: none;
-  }
-
-  .map-preview h2 {
-    font-size: 2rem;
   }
 }

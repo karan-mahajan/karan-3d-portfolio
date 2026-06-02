@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 /**
  * Single source of truth for the scene's sky / fog / shadow palette.
@@ -25,6 +25,13 @@ export const DUSK = Object.freeze({
 });
 
 /**
+ * @deprecated NO-OP on the WebGPU world. This patches GLSL via `onBeforeCompile`,
+ * which three.js does NOT run for `MeshStandardNodeMaterial` (the consolidated
+ * world props). The chromatic-shadow look is now delivered the palette-safe way:
+ * the PostFX split-tone grade ([Effects/PostFX.js]) nudges shadows toward
+ * `shadowTint` (#7a2da8) + highlights warm, and the per-phase ambient/hemiGround
+ * are biased toward the purple family. Kept only for any future WebGL fallback.
+ *
  * Tint a `MeshStandardMaterial` so shadowed fragments mix toward
  * `baseColor * shadowTint` instead of fading to black.
  *

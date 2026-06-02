@@ -79,6 +79,12 @@ export class PlayerCamera {
     this._target = new THREE.Vector3(0, HEAD_HEIGHT, 0);
     this._tmpOffset = new THREE.Vector3();
     this.locked = false; // when true, update() doesn't move the camera (used by zoom)
+    // Impact shake — decaying positional jitter added after the camera is
+    // placed. Driven by addImpulse() (intro landing today; reusable for any
+    // heavy event). Applied here in the unlocked orbit path AND by
+    // IntroCinematic while it owns the locked camera, so the shake tail
+    // carries smoothly across the cinematic→gameplay handoff.
+    this._shake = 0;
 
     // Dynamic movement-zoom multiplier — applied on top of the user's
     // own controls.distance (preserved). 1.0 = idle, 1.10 = walking,
@@ -308,6 +314,26 @@ export class PlayerCamera {
 
     this.camera.position.copy(this._target).add(this._tmpOffset);
     this.camera.lookAt(this._target);
+    this.applyShake(delta);
+  }
+
+  /** Queue a camera shake. strength is the peak jitter amplitude in metres. */
+  addImpulse(strength = 0.3) {
+    this._shake = Math.min(0.7, Math.max(this._shake, strength));
+  }
+
+  /**
+   * Add decaying random jitter to the already-placed camera, then decay the
+   * amplitude. Called once per frame by whoever owns the camera (update()
+   * when free, IntroCinematic while locked) so the decay only advances once.
+   */
+  applyShake(delta) {
+    if (this._shake <= 0.0005) { this._shake = 0; return; }
+    const a = this._shake;
+    this.camera.position.x += (Math.random() - 0.5) * a;
+    this.camera.position.y += (Math.random() - 0.5) * a * 0.7;
+    this.camera.position.z += (Math.random() - 0.5) * a;
+    this._shake = Math.max(0, a - delta * (a * 5 + 0.25));
   }
 
   /**

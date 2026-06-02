@@ -9,43 +9,15 @@ export const WORLD_BOUNDS = Object.freeze({
 
 export const SPAWN_POSITION = Object.freeze([0, 0, 0]);
 
+// Metadata only (id / name / colour). The real world positions + landing spots
+// are resolved at runtime from the live interaction features (the hut, the
+// skill sphere, the contact board) in App.#buildMapSections — these `position`
+// values are just a fallback if a feature fails to resolve. Experience is not
+// part of the v3 world.
 export const SECTIONS = Object.freeze([
-  {
-    id: 'projects',
-    name: 'Projects',
-    blurb: 'A rotating showcase of selected web and product work.',
-    position: [36, 0, 0],
-    color: '#e86f3a',
-    landingOffset: [-7, 0, -5],
-    facing: Math.PI / 2,
-  },
-  {
-    id: 'experience',
-    name: 'Experience',
-    blurb: 'A northbound trail through roles, teams, and shipped work.',
-    position: [3, 0, 42],
-    color: '#4b8fbd',
-    landingOffset: [5, 0, -8],
-    facing: 0,
-  },
-  {
-    id: 'skills',
-    name: 'Skills',
-    blurb: 'The toolkit board: frontend, backend, CMS, and platform skills.',
-    position: [0, 0, -32],
-    color: '#6f9f36',
-    landingOffset: [5, 0, 8],
-    facing: Math.PI,
-  },
-  {
-    id: 'contact',
-    name: 'Contact',
-    blurb: 'A west-side mailbox for links, socials, and direct contact.',
-    position: [-28, 0, 0],
-    color: '#bf7d2f',
-    landingOffset: [8, 0, -5],
-    facing: -Math.PI / 2,
-  },
+  { id: 'projects', name: 'Projects', position: [33, 0, -32], color: '#e86f3a' },
+  { id: 'skills', name: 'Skills', position: [-34, 0, -36], color: '#6f9f36' },
+  { id: 'contact', name: 'Contact', position: [-13, 0, 36], color: '#bf7d2f' },
 ]);
 
 export const POIS = Object.freeze([]);

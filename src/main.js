@@ -23,8 +23,13 @@ const statusInterval = setInterval(() => {
 }, 900);
 
 let lastPct = 0;
+// Asset byte-progress only covers GLB/texture streaming — but boot() keeps
+// working after that (player + foliage loads, then a multi-second shader
+// prewarm/compile). So map asset ratio to 0–90% and reserve the last 10% for
+// "boot fully resolved", set explicitly in bootstrap(). This fixes the bar
+// sitting at 100% while the world is still compiling.
 function setProgress(ratio) {
-  const raw = Math.min(100, Math.max(0, Math.round(ratio * 100)));
+  const raw = Math.min(90, Math.max(0, Math.round(ratio * 90)));
   // Concurrent loaders fire progress events out of order — a chunky GLB can
   // resolve before smaller earlier ones, so the raw ratio occasionally dips
   // (e.g. 70 → 50 → 70). Clamp upward-only so the number is monotonic.
@@ -34,9 +39,32 @@ function setProgress(ratio) {
   if (loadingPercent) loadingPercent.textContent = `${pct}%`;
 }
 
+/** Snap the bar to a true 100% — only called once boot() has fully resolved. */
+function setProgressComplete() {
+  lastPct = 100;
+  if (loadingBar) loadingBar.style.width = '100%';
+  if (loadingPercent) loadingPercent.textContent = '100%';
+}
+
 async function bootstrap() {
   const app = new App();
   window.__app = app;
+
+  // Browsers block audio until a real user gesture (click / key / tap). There's
+  // no button anymore, so we arm the unlock from the very first frame: ANY
+  // interaction during the (multi-second) loading phase unlocks audio, so by
+  // the time the character lands the impact hit can actually be heard. If the
+  // visitor never interacts before landing, that first hit is silent — a
+  // browser rule no code can bypass. Registered early to maximise the window.
+  const startAudioOnce = () => {
+    app.audio?.start();
+    window.removeEventListener('pointerdown', startAudioOnce);
+    window.removeEventListener('keydown', startAudioOnce);
+    window.removeEventListener('touchstart', startAudioOnce);
+  };
+  window.addEventListener('pointerdown', startAudioOnce, { once: true });
+  window.addEventListener('keydown', startAudioOnce, { once: true });
+  window.addEventListener('touchstart', startAudioOnce, { once: true });
 
   app.addEventListener('progress', (e) => {
     setProgress(e.detail.ratio);
@@ -67,74 +95,34 @@ async function bootstrap() {
     loadingStatus.textContent = 'Ready';
   }
 
-  setProgress(1);
+  // boot() is fully resolved here (assets + player + shader prewarm) — NOW the
+  // world is genuinely ready, so the bar earns its 100%.
+  setProgressComplete();
+  app.achievements?.onJourneyBegin?.();
 
-  // Pause input while the welcome screen is up so the player can't drift
-  // around behind the overlay.
+  // Keep input paused until the cinematic hands off (IntroCinematic.play also
+  // freezes the player; pausing here covers the brief pre-fall beat too).
   if (app.player?.controller) app.player.controller.paused = true;
 
-  const welcomeScreen = document.getElementById('welcome-screen');
-  const startBtn = document.getElementById('welcome-start');
+  // (Audio unlock was armed at the very top of bootstrap so a click during
+  // loading enables the landing-impact sound.)
 
-  // Once the user has clicked Start (or pressed any movement key) we set
-  // this session flag so subsequent reloads in the same tab skip the welcome
-  // overlay entirely. Clearing the tab or closing the session resets it.
-  const STARTED_KEY = 'karan-portfolio:journey-started';
-  const alreadyStarted = sessionStorage.getItem(STARTED_KEY) === '1';
+  // Let the true 100% register for a beat, then drop the loader and fall.
+  await new Promise((r) => setTimeout(r, 420));
+  loadingScreen?.classList.add('hidden');
 
-  const START_KEYS = new Set([
-    'KeyW', 'KeyA', 'KeyS', 'KeyD',
-    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-    'Space', 'Enter',
-  ]);
-  let started = false;
-  const onStart = () => {
-    if (started) return;
-    started = true;
-    sessionStorage.setItem(STARTED_KEY, '1');
-    welcomeScreen?.classList.add('hidden');
-    document.body.classList.remove('booting');
+  // The cinematic always plays through to the landing — clicks during the fall
+  // only unlock audio (armed at the top), they do NOT skip it.
+  try {
+    await (app.intro?.play?.() ?? Promise.resolve());
+  } catch (err) {
+    console.warn('Intro cinematic failed; handing off directly.', err);
     if (app.player?.controller) app.player.controller.paused = false;
-    app.audio?.start();
-    // First-click-of-Start achievement. Safe to call on every onStart fire
-    // since Achievements.trigger() is idempotent (no-op when already
-    // unlocked), so subsequent reloads in the same session don't re-emit.
-    app.achievements?.onJourneyBegin?.();
-    // First-visit coachmarks. Tutorial itself short-circuits on the
-    // localStorage flag, so repeat visitors don't see it.
-    app.tutorial?.start();
-    window.removeEventListener('keydown', onKeyStart);
-  };
-  const onKeyStart = (e) => {
-    if (START_KEYS.has(e.code)) onStart();
-  };
-
-  if (alreadyStarted) {
-    // Fast path: no welcome overlay, just hide loading and unpause input.
-    setTimeout(() => {
-      loadingScreen?.classList.add('hidden');
-      document.body.classList.remove('booting');
-      if (app.player?.controller) app.player.controller.paused = false;
-      started = true;
-      // Need a user gesture to autoplay; first click anywhere triggers ambient.
-      const oneShotAudioStart = () => {
-        app.audio?.start();
-        window.removeEventListener('click', oneShotAudioStart);
-        window.removeEventListener('keydown', oneShotAudioStart);
-      };
-      window.addEventListener('click', oneShotAudioStart, { once: true });
-      window.addEventListener('keydown', oneShotAudioStart, { once: true });
-      app.tutorial?.start();
-    }, 280);
-  } else {
-    // First-time-in-this-session path: show the welcome overlay.
-    setTimeout(() => {
-      loadingScreen?.classList.add('hidden');
-      welcomeScreen?.classList.remove('hidden');
-    }, 480);
-    startBtn?.addEventListener('click', onStart, { once: true });
-    window.addEventListener('keydown', onKeyStart);
   }
+
+  // Reveal the HUD (compass + button stacks) and start first-visit coachmarks.
+  document.body.classList.remove('booting');
+  app.tutorial?.start();
 }
 
 if (document.readyState === 'loading') {

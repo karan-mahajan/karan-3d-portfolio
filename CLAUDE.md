@@ -94,8 +94,7 @@ src/Portfolio/          # Billboards (single Project Showcase), Signs, Interacti
 src/Effects/            # Fireflies, Water, Rain, Thunderstorm, Leaves, Footprints, WindLines, PostFX
 src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast/Panel, MiniMap, MapOverlay, MapMarkers, Discovery, coords, map.css
 src/Travel/             # TransitionFX (iris wipe), Teleport, Navmask (A* nav grid), ClickToMove (auto-walk)
-src/Systems/            # Achievements (34 unlocks + time tracker), DistanceGame (shore mini-game)
-src/Torch/TorchLight.js # night-mode hand-attached torch + F-aim shoulder IK
+src/Systems/            # Achievements (42 unlocks + time tracker), DistanceGame (shore mini-game)
 src/Audio/AudioManager.js # howler (ambient + footsteps + ui chimes + splashes)
 static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/, wildlife/
 ```
@@ -103,15 +102,20 @@ static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/,
 ## World layout
 
 - Spawn at (0, 0.02, 0). Player faces north (+Z).
-- Island radius ≈ 45m; shore slope 45→57m down to y=-2 ocean floor.
-- **Projects** — east, **single Project Showcase** screen at `PROJECTS_CENTER`
-  (Billboards.js) that cycles through projects. Replaced the old per-project
-  fan; legacy `world.billboards.items[0]` is the showcase itself.
-- **Experience** — north, signs along `SECTION_POSITIONS.experiencePath`
-- **Skills** — south, around `SECTION_POSITIONS.skills`
-- **Contact** — west, around `SECTION_POSITIONS.contact`
-- Past r=45 player wades (→ 15% speed); past r=120 soft-clamps back. Below
-  y=-5 respawns at origin.
+- v2 Blender world (post-2026-05-27 resize): walkable perimeter r ≈ 60m,
+  terrain mesh ±96.85m, ocean plane ±105m, cardinal sections at ±52.15m.
+  Mountains pulled to scale 0.7 of original (far_snow at y≈126), lighthouse
+  islet east edge at x=-106.85 (10m offshore). See [tools/blender/scripts/resize-world.py](tools/blender/scripts/resize-world.py)
+  + [tighten-backdrop.py](tools/blender/scripts/tighten-backdrop.py) for the
+  exact transforms applied to the source blend.
+- **Projects** — east at +52.15m, **single Project Showcase** screen at
+  `PROJECTS_CENTER` (Billboards.js) that cycles through projects.
+- **Experience** — north at +52.15m, signs along `SECTION_POSITIONS.experiencePath`
+- **Skills** — south at -52.15m, around `SECTION_POSITIONS.skills`
+- **Contact** — west at -52.15m, around `SECTION_POSITIONS.contact`
+- Runtime wade/clamp/respawn thresholds (`Past r=45 wades, r=120 clamps,
+  y=-5 respawns`) PREDATE the v2 build — they're still calibrated for the
+  legacy procedural island and likely need updating to match r≈60 walkable.
 - Distant islands ring the horizon (DistantIslands.js) — visual only, no colliders.
 - `Nature.addExclusion(x, z, r)` keeps trees out of clearings; always exclude
   new sections so trees don't clip props.
@@ -126,7 +130,7 @@ physics.step → player.update → playerCamera.update → discovery.update
 → fireflies → water → rain → thunderstorm → windLines → leaves
 → footprints → audio.tick → achievements.tick → distanceGame.update
 → sun + shadow follow player → timeOfDay.tick → streetLights.update
-→ torchLight.tick → water.preRender → postfx.render
+→ water.preRender → postfx.render
 ```
 
 ## Conventions
@@ -135,7 +139,7 @@ physics.step → player.update → playerCamera.update → discovery.update
   `progress` events; main.js drives the loading-bar fill.
 - `session-storage` flag `karan-portfolio:journey-started` skips the welcome
   overlay on subsequent reloads. Loading + welcome overlays must sit above
-  ALL HUD layers (torch hint, compass, achievement toast — they hide until
+  ALL HUD layers (compass, achievement toast — they hide until
   overlays clear).
 - Controller is **paused** while overlays (loading, welcome, interaction
   modal, action one-shots) are up, then unpaused.
@@ -144,17 +148,16 @@ physics.step → player.update → playerCamera.update → discovery.update
   Rapier's kinematic-position character controller; football is the only
   dynamic body. Variable timestep — known wart, not yet fixed.
 - Fog tinted `#ffb084`, range 65→165, so distant trees fade into sunset.
-- **Achievements** (`Systems/Achievements.js`): 34 unlocks, time tracker, toast
-  on unlock, full panel on key. Persists to localStorage. App tick feeds it
+- **Achievements** (`Systems/Achievements.js`): 42 unlocks w/ rarity tiers
+  (common→legendary), time tracker, rarity-themed toast on unlock, full panel
+  on trophy click or `J` (completion %, per-category badges, NEW badge, 100%
+  celebration). Persists to localStorage. App tick feeds it
   player pos / moving / running / grounded / inWater / mode / isRaining.
 - **Tutorial** (`UI/Tutorial.js`): first-visit coachmarks for WASD/joystick,
   drag-to-look, zoom. Detects look/zoom from raw input events, NOT camera
   state (camera-controls smoothes and gives false positives).
 - **Compass** (`UI/Compass.js`): camera-linked HUD ring, rotates with camera
   yaw, hidden on mobile.
-- **Torch** (`Torch/TorchLight.js`): night-only, hand-attached mesh, F to aim
-  mouse beam with smoothed one-bone IK on the shoulder. Suppressed while
-  modals/interactions are open.
 - **Distance-guess** (`Systems/DistanceGame.js`): mini-game at the shore.
   Exact-only wins; the win card auto-dismisses.
 - **Map system** (`UI/MiniMap.js`, `UI/MapOverlay.js`, `Travel/*`): parchment
@@ -182,17 +185,17 @@ driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
 
 ## Known parked work (don't surprise the user with rewrites)
 
-- **Push is a comedy gag** — trees/rocks/signs/billboards/compass are push
-  spots so [ActionPrompts.js](src/Portfolio/ActionPrompts.js) can rotate a
-  joke pool. Real pushables: crate + bag. Lying-down props (`kind: 'log'`)
-  excluded (standing anim mismatch). Don't "fix" without confirmation.
-- **B (backflip) / C (cartwheel)** don't raycast for clearance — flag if you
-  add similar global animations.
-- **Furniture pass removed** (commit 12e494a) — don't re-add without asking.
-  Grass cleared around interactable props so colliders match visuals (cd996b7).
+- **Push is a comedy gag** — trees/rocks/signs/billboards/compass are push spots
+  so [ActionPrompts.js](src/Portfolio/ActionPrompts.js) rotates a joke pool. Real
+  pushables: crate + bag. Lying-down props (`kind: 'log'`) excluded. Don't "fix".
+- **B (backflip) / C (cartwheel)** don't raycast for clearance.
+- **Furniture pass removed** (12e494a) — don't re-add without asking.
+- **Material/perf system is user-validated — don't break.** GLB mats → ~2 shared
+  node materials + spatial-chunk STATIC-prop merge in [GlbV3World.js](src/World/GlbV3World.js).
+  NEVER merge/re-material animated or name-looked-up meshes (skillSphere_/lava/
+  miscFx/bonfire_/terrain). Rules: docs/v3-runtime/material-consolidation-analysis.md.
 
 ## When in doubt
 
 - [App.js](src/App.js) = wiring. [World.js](src/World/World.js) = load order.
-- [Interaction.js](src/Portfolio/Interaction.js) + [ActionPrompts.js](src/Portfolio/ActionPrompts.js) = how the player triggers things.
 - If an asset/animation isn't in `static/`, **ask** (rule 1).

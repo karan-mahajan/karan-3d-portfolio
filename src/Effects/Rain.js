@@ -1,4 +1,9 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
+import {
+  Fn, attribute, varying, float, vec3, vec4,
+  positionLocal, modelViewMatrix, cameraProjectionMatrix,
+} from 'three/tsl';
 
 /**
  * Light rain. Two layers:
@@ -15,27 +20,6 @@ const AREA = 70;            // half-extent of the rain volume
 const FALL_SPEED = 18;      // units per second
 const SPAWN_HEIGHT = 28;
 const STORAGE_KEY = 'karan-portfolio:rain-off';
-
-const dropVert = /* glsl */ `
-  attribute vec3 aOffset;   // current world position
-  attribute float aSpeed;
-  uniform float uTime;
-  varying float vAlpha;
-
-  void main() {
-    vec3 pos = position + aOffset;
-    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
-    gl_Position = projectionMatrix * mv;
-    // Fade by distance so drops in the far horizon don't clutter.
-    vAlpha = clamp(1.0 - (-mv.z) / 65.0, 0.0, 1.0);
-  }
-`;
-const dropFrag = /* glsl */ `
-  varying float vAlpha;
-  void main() {
-    gl_FragColor = vec4(0.78, 0.85, 0.95, 0.35 * vAlpha);
-  }
-`;
 
 export class Rain {
   constructor(scene, camera, { count = DEFAULT_RAIN_COUNT, splashBudget = 8 } = {}) {
@@ -93,13 +77,26 @@ export class Rain {
     instGeom.setAttribute('aOffset', new THREE.InstancedBufferAttribute(this.offsets, 3));
     instGeom.setAttribute('aSpeed',  new THREE.InstancedBufferAttribute(this.speeds, 1));
 
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: dropVert,
-      fragmentShader: dropFrag,
+    // B0/WebGPU: ported from the raw-GLSL ShaderMaterial to a
+    // MeshBasicNodeMaterial. Each drop is an instanced 2-vertex line segment;
+    // `aOffset` positions it within the camera-centred box (the LineSegments
+    // mesh itself is re-positioned to the camera each frame in update()).
+    // The view-depth fade is computed in the vertex node and varied to the
+    // fragment.
+    const mat = new MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
-      uniforms: { uTime: { value: 0 } },
     });
+    const vAlpha = varying(float(0), 'vRainAlpha');
+    mat.vertexNode = Fn(() => {
+      const local = positionLocal.add(attribute('aOffset'));
+      const view = modelViewMatrix.mul(vec4(local, 1.0));
+      // Fade by distance so drops in the far horizon don't clutter.
+      vAlpha.assign(view.z.negate().div(65.0).oneMinus().clamp(0.0, 1.0));
+      return cameraProjectionMatrix.mul(view);
+    })();
+    mat.colorNode = vec3(0.78, 0.85, 0.95);
+    mat.opacityNode = vAlpha.mul(0.35);
 
     this.drops = new THREE.LineSegments(instGeom, mat);
     this.drops.frustumCulled = false;

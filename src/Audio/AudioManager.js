@@ -60,8 +60,9 @@ const VOL = {
   // over the ambient stack). With the −18% ambient pass above, this
   // sits well above any background bed.
   thunder: 1.0,
-  jump: 0.55,
+  jump: 0.45,
   bump: 0.5,
+  landingImpact: 1.0,
   landWater: 0.55,
   landGrass: 0.45,
   landStone: 0.55,
@@ -69,6 +70,7 @@ const VOL = {
   objectSlide: 0.4,
   // Continuous scrape loop volume during a sustained push hold.
   pushHold: 0.35,
+  brickHit: 0.6,
   kick: 0.9,
   punchBag: 0.75,
   flip: 0.55,
@@ -78,7 +80,12 @@ const VOL = {
   rainWaterMax: 0.303,
   // Per-step footstep volume (multiplied by per-surface trim below).
   footstep: 0.45,
-  footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95 },
+  // Water clips are a touch quieter at source (soft recording) so they get a
+  // small lift; wood planks are crisp so they sit at unity.
+  footstepSurfaceTrim: { grass: 1.0, stone: 0.85, sand: 0.95, water: 1.15, wood: 1.0, snow: 1.05, snowRun: 1.05 },
+  // Big splash when jumping / landing in water (replaces splashEntry as the
+  // water-entry one-shot).
+  waterJump: 0.6,
   // UI clicks — kept gentle so they don't punch through the ambient bed.
   click: 0.45,
   toggle: 0.45,
@@ -92,6 +99,13 @@ const VOL = {
   teleportArrive: 0.34,
   nope: 0.28,
   flagDrop: 0.25,
+  // Colour Garden paint-throw one-shots. Sources were peak-normalised on import
+  // so these trims set their relative balance — splat/bloom carry the payoff.
+  paintScoop: 0.5,
+  paintCharge: 0.4,
+  paintThrow: 0.55,
+  paintSplat: 0.75,
+  paintBloom: 0.6,
 };
 
 const AMBIENT_CROSSFADE_S = 3.0;
@@ -123,6 +137,13 @@ const SOUND_FILES = {
     loop: false,
     vol: VOL.splashEntry,
   },
+  // Colour Garden paint-throw one-shots (dedicated samples, dropped in by the
+  // user, trimmed + peak-normalised on import).
+  paintScoop: { src: "/sounds/paint-scoop.mp3", loop: false, vol: VOL.paintScoop },
+  paintCharge: { src: "/sounds/paint-charge.mp3", loop: false, vol: VOL.paintCharge },
+  paintThrow: { src: "/sounds/paint-throw.mp3", loop: false, vol: VOL.paintThrow },
+  paintSplat: { src: "/sounds/paint-splat.mp3", loop: false, vol: VOL.paintSplat },
+  paintBloom: { src: "/sounds/paint-bloom.mp3", loop: false, vol: VOL.paintBloom },
   // Weather — thunder uses the real recorded sample (set per-call by
   // Thunderstorm with delay + intensity). The procedural noise fallback
   // inside playThunder only fires if the sample failed to load.
@@ -136,6 +157,9 @@ const SOUND_FILES = {
   landWater: { src: "/sounds/land-water.mp3", loop: false, vol: VOL.landWater },
   landGrass: { src: "/sounds/land-grass.mp3", loop: false, vol: VOL.landGrass },
   landStone: { src: "/sounds/land-stone.mp3", loop: false, vol: VOL.landStone },
+  // Intro cinematic — the superhero ground-impact hit (CC0). Loud: it's the
+  // dramatic beat the whole arrival builds to.
+  landingImpact: { src: "/sounds/landing-impact.mp3", loop: false, vol: VOL.landingImpact },
   // Footstep variants — picked at random per step. Pool size per surface
   // determined by what's in the Kenney pack: grass 4, stone 4, sand 3.
   stepGrass1: {
@@ -181,6 +205,28 @@ const SOUND_FILES = {
   stepSand1: { src: "/sounds/step-sand-1.mp3", loop: false, vol: VOL.footstep },
   stepSand2: { src: "/sounds/step-sand-2.mp3", loop: false, vol: VOL.footstep },
   stepSand3: { src: "/sounds/step-sand-3.mp3", loop: false, vol: VOL.footstep },
+  // Wading footsteps — walking IN water (replaces the old auto wading-splash
+  // cadence in Water.js). User-recorded, sliced + peak-normalized.
+  stepWater1: { src: "/sounds/step-water-1.mp3", loop: false, vol: VOL.footstep },
+  stepWater2: { src: "/sounds/step-water-2.mp3", loop: false, vol: VOL.footstep },
+  stepWater3: { src: "/sounds/step-water-3.mp3", loop: false, vol: VOL.footstep },
+  stepWater4: { src: "/sounds/step-water-4.mp3", loop: false, vol: VOL.footstep },
+  // Bridge-deck footsteps — fire when the player is on bridge01/bridge02.
+  stepWood1: { src: "/sounds/step-wood-1.mp3", loop: false, vol: VOL.footstep },
+  stepWood2: { src: "/sounds/step-wood-2.mp3", loop: false, vol: VOL.footstep },
+  stepWood3: { src: "/sounds/step-wood-3.mp3", loop: false, vol: VOL.footstep },
+  stepWood4: { src: "/sounds/step-wood-4.mp3", loop: false, vol: VOL.footstep },
+  // Snow footsteps — discrete crunches cut from the snow-walk / snow-run clips.
+  stepSnow1: { src: "/sounds/step-snow-1.mp3", loop: false, vol: VOL.footstep },
+  stepSnow2: { src: "/sounds/step-snow-2.mp3", loop: false, vol: VOL.footstep },
+  stepSnow3: { src: "/sounds/step-snow-3.mp3", loop: false, vol: VOL.footstep },
+  stepSnow4: { src: "/sounds/step-snow-4.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun1: { src: "/sounds/step-snowrun-1.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun2: { src: "/sounds/step-snowrun-2.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun3: { src: "/sounds/step-snowrun-3.mp3", loop: false, vol: VOL.footstep },
+  stepSnowRun4: { src: "/sounds/step-snowrun-4.mp3", loop: false, vol: VOL.footstep },
+  // Splash one-shot when the player jumps / lands in the water.
+  splashJump: { src: "/sounds/splash-jump.mp3", loop: false, vol: VOL.waterJump },
   // Interaction / UI
   push: { src: "/sounds/push.mp3", loop: false, vol: VOL.push },
   objectSlide: {
@@ -203,6 +249,26 @@ const SOUND_FILES = {
     src: "/sounds/object-slide.mp3",
     loop: true,
     vol: 0,
+  },
+  brickHit1: {
+    src: "/sounds/hits/bricks/24445%20brick%20light%20hitting-full-2.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
+  brickHit2: {
+    src: "/sounds/hits/bricks/41559%20Stone%20brick%20fall%20hit%2001-full-1.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
+  brickHit3: {
+    src: "/sounds/hits/bricks/41563%20Stone%20brick%20fall%20hit%2005-full-1.mp3",
+    loop: false,
+    vol: VOL.brickHit,
+  },
+  brickHit4: {
+    src: "/sounds/hits/bricks/BrickSetDown_BW.5803-1.mp3",
+    loop: false,
+    vol: VOL.brickHit,
   },
   click: { src: "/sounds/interact-click.mp3", loop: false, vol: VOL.click },
   toggleClick: { src: "/sounds/toggle.mp3", loop: false, vol: VOL.toggle },
@@ -232,9 +298,15 @@ const STEP_POOLS = {
   grass: ["stepGrass1", "stepGrass2", "stepGrass3", "stepGrass4"],
   stone: ["stepStone1", "stepStone2", "stepStone3", "stepStone4"],
   sand: ["stepSand1", "stepSand2", "stepSand3"],
-  // 'water' surface re-uses the existing splash-light wading sound (handled
-  // in playFootstep) so a single pool is enough.
+  water: ["stepWater1", "stepWater2", "stepWater3", "stepWater4"],
+  wood: ["stepWood1", "stepWood2", "stepWood3", "stepWood4"],
+  // Snow crunch — only used while a storm has covered the ground (App swaps the
+  // surface to snow/snowRun). Separate walk vs run packs from the source clips.
+  snow: ["stepSnow1", "stepSnow2", "stepSnow3", "stepSnow4"],
+  snowRun: ["stepSnowRun1", "stepSnowRun2", "stepSnowRun3", "stepSnowRun4"],
 };
+
+const BRICK_HIT_KEYS = ["brickHit1", "brickHit2", "brickHit3", "brickHit4"];
 
 export class AudioManager {
   constructor() {
@@ -251,6 +323,8 @@ export class AudioManager {
     this._wasRainOn = false;
     this._rainOn = false;
     this._ambientDuck = 1;
+    this._lastBrickHitKey = -1;
+    this._lastBrickHitAt = -Infinity;
 
     /** Visual footprint cadence hook — see header comment in old version. */
     this.onStep = null;
@@ -366,8 +440,11 @@ export class AudioManager {
     if (!this._started || this.muted || this._focusLost) return;
 
     // Landing audio is dispatched from App.js so the surface (water vs.
-    // ground) is known. Here we only track the jump leg.
-    if (this._wasGrounded === true && grounded === false) this.playJump();
+    // ground) is known. Here we only track the jump leg. Jumping from water
+    // skips the dry jump grunt — the water-entry splash (playWaterJump) takes
+    // preference for anything in/over the water.
+    if (this._wasGrounded === true && grounded === false && surface !== "water")
+      this.playJump();
     this._wasGrounded = grounded;
 
     // Rain layer + thunder. _rainOn is cached so setOceanProximity can gate
@@ -461,6 +538,62 @@ export class AudioManager {
     h.volume(volume * (entry ? VOL.splashEntry : VOL.splashLight), id);
   }
 
+  /** Colour Garden: wet scoop when the hand lifts paint from a pot. */
+  playPaintScoop() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintScoop;
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.rate(0.94 + Math.random() * 0.12, id);
+  }
+
+  /** Colour Garden: rising charge hum, held from F-press until stopPaintCharge().
+   *  The sample is ~5s but a throw releases in ~1s, so it MUST be cut on release
+   *  (a short fade avoids a click). */
+  playPaintCharge() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintCharge;
+    if (!h || h.state() !== "loaded") return;
+    this.stopPaintCharge();
+    this._paintChargeId = h.play();
+  }
+  stopPaintCharge() {
+    const h = this.howls.paintCharge;
+    if (!h || this._paintChargeId == null) return;
+    const id = this._paintChargeId;
+    this._paintChargeId = null;
+    h.fade(VOL.paintCharge, 0, 90, id);
+    h.once("fade", () => h.stop(id), id);
+  }
+
+  /** Colour Garden: throw whoosh as the orb leaves the hand. */
+  playPaintThrow() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintThrow;
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.rate(0.95 + Math.random() * 0.1, id);
+  }
+
+  /** Colour Garden: magic shimmer as a sculpture blooms grey→colour. */
+  playPaintBloom() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintBloom;
+    if (!h || h.state() !== "loaded") return;
+    h.play();
+  }
+
+  /** Colour Garden paint-orb impact. Pitched + jittered so repeated throws
+   *  don't sound identical. */
+  playSplat({ volume = 1.0 } = {}) {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.paintSplat;
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.rate(0.92 + Math.random() * 0.16, id);
+    h.volume(volume * VOL.paintSplat, id);
+  }
+
   playJump() {
     const h = this.howls.jump;
     if (h && h.state() === "loaded") {
@@ -471,14 +604,13 @@ export class AudioManager {
     this.#proceduralJump();
   }
 
-  /** Landing on any surface. Maps surface → land sample. */
+  /** Landing on any surface. Maps surface → land sample. Water is handled by
+   *  playWaterJump (fired on water-entry from Water.js), so a water landing
+   *  here is skipped to avoid double-splashing. */
   playLand(surface = "grass") {
+    if (surface === "water") return;
     const key =
-      surface === "water"
-        ? "landWater"
-        : surface === "stone"
-          ? "landStone"
-          : "landGrass";
+      surface === "stone" || surface === "wood" ? "landStone" : "landGrass";
     const h = this.howls[key];
     if (h && h.state() === "loaded") {
       const id = h.play();
@@ -486,15 +618,31 @@ export class AudioManager {
     }
   }
 
+  /** Big splash one-shot for jumping / dropping into the water. Fired from
+   *  Water.js the moment the player's feet cross below the water line (covers
+   *  jumping in from land and re-entering after a jump while wading). Falls
+   *  back to the lighter entry splash if the dedicated sample is missing. */
+  playWaterJump() {
+    if (this.muted || this._focusLost) return;
+    const h = this.howls.splashJump;
+    if (h && h.state() === "loaded") {
+      const id = h.play();
+      h.rate(0.96 + Math.random() * 0.08, id);
+      return;
+    }
+    this.playSplash({ entry: true });
+  }
+
+  /** Intro-cinematic ground impact — the big superhero landing hit. */
+  playLandingImpact() {
+    const h = this.howls.landingImpact;
+    if (h && h.state() === "loaded") h.play();
+  }
+
   /** Picks a random sample from the surface's footstep pool. Water steps
    *  re-use the existing wading splash so we don't double-up. */
   playFootstep(surface = "grass", alt = false) {
     if (this.muted || this._focusLost) return;
-    if (surface === "water") {
-      // The wading splash audio is already triggered by Water.js per its own
-      // cadence; emitting a step here would double-up. Skip.
-      return;
-    }
     const pool = STEP_POOLS[surface] || STEP_POOLS.grass;
     const key = pool[Math.floor(Math.random() * pool.length)];
     const h = this.howls[key];
@@ -723,6 +871,26 @@ export class AudioManager {
     }, 280);
   }
 
+  /** Bruno-style brick impact: random non-repeating sample, force-shaped gain. */
+  playBrickHit(force = 0, _position = null) {
+    if (this.muted || this._focusLost) return;
+    const now = performance.now();
+    if (now - this._lastBrickHitAt < 100) return;
+
+    const forceVolume = Math.max(0, Math.min(1, (force - 5) / 15)) ** 2;
+    if (forceVolume <= 0.001) return;
+
+    const delta = 1 + Math.floor(Math.random() * Math.max(1, BRICK_HIT_KEYS.length - 1));
+    this._lastBrickHitKey = (this._lastBrickHitKey + delta) % BRICK_HIT_KEYS.length;
+    this._lastBrickHitAt = now;
+
+    const h = this.howls[BRICK_HIT_KEYS[this._lastBrickHitKey]];
+    if (!h || h.state() !== "loaded") return;
+    const id = h.play();
+    h.volume(VOL.brickHit * forceVolume, id);
+    h.rate(0.9 + Math.random() * 0.2, id);
+  }
+
   /** Flip whoosh — fires on backflip or cartwheel. */
   playFlip() {
     if (this.muted || this._focusLost) return;
@@ -810,28 +978,53 @@ export class AudioManager {
   /** Rising 3-note triangle chime fired when an Achievement unlocks. Uses
    *  Howler.ctx so it inherits mute + focus loss like the other procedural
    *  fallbacks. */
-  playAchievement() {
+  /** Unlock chime. Rarer tiers play a longer, richer arpeggio so the ear can
+   *  tell a one-off from a legendary without looking. */
+  playAchievement(rarity = "common") {
     const ctx = this.#ctx();
     const dest = this.#dest();
     if (!ctx || !dest || this.muted || this._focusLost) return;
     const now = ctx.currentTime;
-    [
-      { f: 880, t: 0.0 }, // A5
-      { f: 1109, t: 0.12 }, // C#6
-      { f: 1319, t: 0.24 }, // E6
-    ].forEach(({ f, t }) => {
+    // Note ladders per tier (Hz). Common = a quick major triad; legendary adds
+    // a sparkly upper run + a held root for weight.
+    const LADDERS = {
+      common: [880, 1109, 1319],
+      rare: [880, 1109, 1319, 1760],
+      epic: [659, 880, 1109, 1319, 1760],
+      legendary: [523, 659, 880, 1109, 1319, 1760, 2217],
+    };
+    const ladder = LADDERS[rarity] || LADDERS.common;
+    const step = rarity === "legendary" ? 0.1 : 0.12;
+    const isBig = rarity === "epic" || rarity === "legendary";
+    ladder.forEach((f, i) => {
+      const t = i * step;
       const osc = ctx.createOscillator();
-      osc.type = "triangle";
+      osc.type = isBig ? "sine" : "triangle";
       osc.frequency.value = f;
       const gain = ctx.createGain();
+      const peak = isBig ? 0.22 : 0.25;
       gain.gain.setValueAtTime(0, now + t);
-      gain.gain.linearRampToValueAtTime(0.25, now + t + 0.03);
+      gain.gain.linearRampToValueAtTime(peak, now + t + 0.03);
       gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.5);
       osc.connect(gain);
       gain.connect(dest);
       osc.start(now + t);
       osc.stop(now + t + 0.55);
     });
+    // Legendary gets a soft held root underneath the run for extra heft.
+    if (rarity === "legendary") {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = 261; // C4
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.14, now + 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 1.25);
+    }
   }
 
   playWelcome() {

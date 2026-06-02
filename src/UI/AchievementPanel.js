@@ -1,11 +1,12 @@
 /**
- * AchievementPanel — full-screen overlay listing all 28 achievements.
+ * AchievementPanel — full-screen overlay listing every achievement.
  *
- * Opens via the trophy button (built in this module's ctor and appended to
- * the bottom-left stack alongside the other UI buttons). Closes on the ×
- * button, on backdrop click, or on Escape. The list is filterable by
- * category tabs; unlocked items sort to the top within whatever filter
- * is active.
+ * Opens via the trophy button (built in this module's ctor) or the J key.
+ * Closes on the × button, on backdrop click, or on Escape. The list is
+ * filterable by category tabs (each showing an x/y badge); within a filter,
+ * unlocked items sort to the top, then locked items by closest-to-unlocking
+ * so the player can see what to chase next. A summary bar shows total
+ * completion %, and a one-shot celebration fires at 100%.
  *
  * The whole panel + button DOM is constructed here rather than living in
  * index.html so the achievement system is self-contained and easy to
@@ -21,6 +22,11 @@ export class AchievementPanel {
     this.achievements = achievements;
     this.audio = audio;
     this.currentCategory = 'all';
+    // The 100% celebration fires once, ever — remember across reloads.
+    this._celebrated = (() => {
+      try { return localStorage.getItem('karan-portfolio:achievements:celebrated') === '1'; }
+      catch { return false; }
+    })();
 
     this.#buildButton();
     this.#buildPanel();
@@ -39,13 +45,15 @@ export class AchievementPanel {
     btn.type = 'button';
     btn.className = 'ui-btn trophy-btn';
     btn.setAttribute('aria-label', 'Achievements');
-    btn.setAttribute('title', 'Achievements');
+    btn.setAttribute('title', 'Achievements (J)');
     btn.innerHTML = `
       <span class="trophy-icon">🏆</span>
       <span class="trophy-count" id="trophy-count">0/0</span>
+      <span class="trophy-new" id="trophy-new" hidden>NEW</span>
     `;
     document.body.appendChild(btn);
     this._btn = btn;
+    this._newBadge = btn.querySelector('#trophy-new');
   }
 
   // ── Panel overlay ─────────────────────────────────────────────────────
@@ -71,11 +79,16 @@ export class AchievementPanel {
           <div class="panel-counter" id="panel-counter">0 / 0</div>
           <button class="panel-close" id="panel-close" aria-label="Close">✕</button>
         </div>
+        <div class="achievement-summary">
+          <div class="summary-bar"><div class="summary-bar-fill" id="summary-bar-fill"></div></div>
+          <div class="summary-pct" id="summary-pct">0%</div>
+        </div>
         <div class="achievement-categories">
           <button class="category-tab active" data-category="all">All</button>
           <button class="category-tab" data-category="exploration">Exploration</button>
           <button class="category-tab" data-category="portfolio">Portfolio</button>
           <button class="category-tab" data-category="actions">Actions</button>
+          <button class="category-tab" data-category="games">Games</button>
           <button class="category-tab" data-category="world">World</button>
           <button class="category-tab" data-category="time">Time</button>
           <button class="category-tab" data-category="secret">Secret</button>
@@ -87,6 +100,8 @@ export class AchievementPanel {
     this._panel = panel;
     this._listEl = panel.querySelector('#achievement-list');
     this._counterEl = panel.querySelector('#panel-counter');
+    this._summaryFill = panel.querySelector('#summary-bar-fill');
+    this._summaryPct = panel.querySelector('#summary-pct');
     this._backdrop = panel.querySelector('.achievement-panel-backdrop');
     this._tabs = Array.from(panel.querySelectorAll('.category-tab'));
   }
@@ -104,7 +119,14 @@ export class AchievementPanel {
       });
     }
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'Escape' && this.isOpen()) this.close();
+      if (e.code === 'Escape' && this.isOpen()) { this.close(); return; }
+      // J toggles the panel — ignore when a modifier is held or focus is in a
+      // text field so it never eats real typing.
+      if (e.code === 'KeyJ' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const el = document.activeElement;
+        const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        if (!typing) { e.preventDefault(); this.toggle(); }
+      }
     });
   }
 
@@ -116,6 +138,8 @@ export class AchievementPanel {
 
   open() {
     if (!this._panel || this.isOpen()) return;
+    // Opening the panel = the user has now seen every pending unlock.
+    this.achievements.markAllSeen?.();
     this.#renderList();
     this.#refreshCounter();
     this._panel.classList.remove('hidden');
@@ -142,10 +166,17 @@ export class AchievementPanel {
       ? all
       : all.filter((a) => a.category === this.currentCategory);
 
-    // Unlocked first within the active filter, otherwise stable order.
+    // Unlocked first within the active filter; among the locked ones, surface
+    // whatever is closest to unlocking so the player can see what to chase.
+    const ratio = (x) => (x.target > 0 ? Math.min(1, x.current / x.target) : 0);
     filtered.sort((a, b) => {
-      if (a.unlocked && !b.unlocked) return -1;
-      if (!a.unlocked && b.unlocked) return 1;
+      if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
+      if (!a.unlocked) {
+        // Secret achievements have no readable progress hint — sink them below
+        // the visible "almost there" ones.
+        if (a.secret !== b.secret) return a.secret ? 1 : -1;
+        return ratio(b) - ratio(a);
+      }
       return 0;
     });
 
@@ -159,21 +190,26 @@ export class AchievementPanel {
    *  layout with stray HTML in the future. */
   #itemNode(a) {
     const percent = Math.min(100, (a.current / a.target) * 100);
+    const rarity = a.rarity || 'common';
     const item = document.createElement('div');
-    item.className = `achievement-item ${a.unlocked ? 'unlocked' : 'locked'}`;
+    item.className = `achievement-item rarity-${rarity} ${a.unlocked ? 'unlocked' : 'locked'}`;
+    // A trophy-hall medal: a rarity-ringed medallion crest, a tier tag, the
+    // name/desc, and a progress rail — not a flat list row.
     item.innerHTML = `
-      <div class="achievement-icon"></div>
-      <div class="achievement-info">
-        <div class="achievement-name"></div>
-        <div class="achievement-desc"></div>
-        <div class="achievement-progress-row">
-          <div class="achievement-bar"><div class="achievement-bar-fill"></div></div>
-          <span class="achievement-counter"></span>
-        </div>
+      <div class="medal">
+        <div class="medal-face"><span class="achievement-icon"></span></div>
+        ${a.unlocked ? '<div class="achievement-check">✓</div>' : ''}
       </div>
-      ${a.unlocked ? '<div class="achievement-check">✓</div>' : ''}
+      <div class="rarity-tag"></div>
+      <div class="achievement-name"></div>
+      <div class="achievement-desc"></div>
+      <div class="achievement-progress-row">
+        <div class="achievement-bar"><div class="achievement-bar-fill"></div></div>
+        <span class="achievement-counter"></span>
+      </div>
     `;
     item.querySelector('.achievement-icon').textContent = a.displayIcon;
+    item.querySelector('.rarity-tag').textContent = (a.secret && !a.unlocked) ? 'secret' : rarity;
     item.querySelector('.achievement-name').textContent = a.displayName;
     item.querySelector('.achievement-desc').textContent = a.displayDescription;
     item.querySelector('.achievement-bar-fill').style.width = `${percent}%`;
@@ -200,10 +236,82 @@ export class AchievementPanel {
   #refreshCounter() {
     const u = this.achievements.getUnlockedCount();
     const t = this.achievements.getTotalCount();
+    const pct = t > 0 ? Math.round((u / t) * 100) : 0;
     const chip = document.getElementById('trophy-count');
     if (chip) chip.textContent = `${u}/${t}`;
     if (this._counterEl) this._counterEl.textContent = `${u} / ${t}`;
+    if (this._summaryFill) this._summaryFill.style.width = `${pct}%`;
+    if (this._summaryPct) this._summaryPct.textContent = `${pct}%`;
+
+    this.#updateNewBadge();
+    this.#updateCategoryBadges();
+
+    // One-shot 100% celebration.
+    if (this.achievements.isAllComplete?.() && !this._celebrated) {
+      this._celebrated = true;
+      try { localStorage.setItem('karan-portfolio:achievements:celebrated', '1'); } catch { /* non-fatal */ }
+      this.#celebrate();
+    }
+
     // Re-render the list if the panel happens to be open during the unlock.
     if (this.isOpen()) this.#renderList();
+  }
+
+  /** Show/hide the "NEW" pill on the trophy button + a pulse class when there
+   *  are unlocked-but-unseen achievements. */
+  #updateNewBadge() {
+    if (!this._newBadge) return;
+    const unseen = this.achievements.getUnseenCount?.() || 0;
+    this._newBadge.hidden = unseen === 0;
+    this._btn?.classList.toggle('has-new', unseen > 0);
+  }
+
+  /** Stamp each category tab with its x/y completion. */
+  #updateCategoryBadges() {
+    const stats = this.achievements.getCategoryStats?.() || {};
+    const total = { unlocked: this.achievements.getUnlockedCount(), total: this.achievements.getTotalCount() };
+    for (const tab of this._tabs) {
+      const cat = tab.dataset.category || 'all';
+      const s = cat === 'all' ? total : stats[cat];
+      let badge = tab.querySelector('.tab-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'tab-badge';
+        tab.appendChild(badge);
+      }
+      badge.textContent = s ? `${s.unlocked}/${s.total}` : '0/0';
+      tab.classList.toggle('tab-complete', !!s && s.unlocked >= s.total);
+    }
+  }
+
+  /** Full-screen confetti + banner when every achievement is unlocked. */
+  #celebrate() {
+    const el = document.createElement('div');
+    el.className = 'achievement-celebration';
+    el.setAttribute('role', 'status');
+    const colors = ['#ffcf3a', '#b15cff', '#4aa3ff', '#5be37a', '#ff6b9d'];
+    let confetti = '';
+    for (let i = 0; i < 60; i++) {
+      const left = Math.round((i * 137) % 100); // deterministic spread, no RNG
+      const delay = (i % 12) * 0.12;
+      const dur = 2.4 + (i % 7) * 0.25;
+      const c = colors[i % colors.length];
+      confetti += `<span class="confetti" style="left:${left}%;background:${c};animation-delay:${delay}s;animation-duration:${dur}s"></span>`;
+    }
+    el.innerHTML = `
+      <div class="celebration-confetti">${confetti}</div>
+      <div class="celebration-card">
+        <div class="celebration-trophy">🏆</div>
+        <div class="celebration-title">100% Complete!</div>
+        <div class="celebration-sub">You unlocked every achievement. Legend.</div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    this.audio?.playAchievement?.('legendary');
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 600);
+    }, 5200);
   }
 }

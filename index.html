@@ -11,8 +11,10 @@
 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Karan's World — Interactive 3D Portfolio | Karan Mahajan</title>
-    <meta name="description" content="Walk through a 3D world to explore the work of Karan Mahajan — a Web Developer building with Next.js, WordPress, and Drupal. Each direction reveals projects, skills, experience, or contact." />
+    <title>Karan Mahajan — Full Stack Web Developer (Next.js, WordPress, Drupal) | 3D Portfolio</title>
+    <meta name="description" content="Karan Mahajan is a Full Stack Web Developer specializing in Next.js, React, WordPress, and Drupal. Explore his projects, skills, and experience by walking through an interactive 3D portfolio world." />
+    <meta name="keywords" content="Karan Mahajan, Full Stack Web Developer, Next.js Developer, React Developer, WordPress Developer, Drupal Developer, headless CMS, web developer Windsor, 3D portfolio, Three.js" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <meta name="author" content="Karan Mahajan" />
     <meta name="theme-color" content="#ffb084" />
     <link rel="canonical" href="https://world.karanmahajan.ca/" />
@@ -36,6 +38,119 @@
     <meta name="twitter:image" content="https://world.karanmahajan.ca/opengraph-image.png" />
     <meta name="twitter:image:alt" content="Karan's World — a 3D walkable portfolio by Karan Mahajan" />
 
+    <!-- Structured data (schema.org JSON-LD) — helps Google rich results and
+         AI search engines (ChatGPT, Perplexity, Google AI Overviews) understand
+         who Karan is and cite him accurately. Mirrors src/Portfolio/*Data.js. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Person",
+          "@id": "https://world.karanmahajan.ca/#karan",
+          "name": "Karan Mahajan",
+          "url": "https://world.karanmahajan.ca/",
+          "image": "https://world.karanmahajan.ca/opengraph-image.png",
+          "jobTitle": "Full Stack Web Developer",
+          "email": "mailto:karanmahajan321@gmail.com",
+          "description": "Full Stack Web Developer specializing in Next.js, React, WordPress, and Drupal, building scalable CMS-driven and headless web architectures.",
+          "knowsAbout": [
+            "Next.js", "React", "TypeScript", "JavaScript", "Tailwind CSS",
+            "WordPress", "Drupal", "WooCommerce", "Node.js", "Django", "Python",
+            "PostgreSQL", "MongoDB", "MySQL", "GraphQL", "REST APIs", "AWS",
+            "Headless CMS", "Web Accessibility (WCAG)", "Stripe"
+          ],
+          "worksFor": {
+            "@type": "Organization",
+            "name": "Skylar Media Group"
+          },
+          "alumniOf": {
+            "@type": "CollegeOrUniversity",
+            "name": "University of Windsor"
+          },
+          "mainEntityOfPage": "https://karanmahajan.ca/",
+          "sameAs": [
+            "https://karanmahajan.ca/",
+            "https://www.linkedin.com/in/karan-mahajan/",
+            "https://github.com/karan-mahajan"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://world.karanmahajan.ca/#website",
+          "url": "https://world.karanmahajan.ca/",
+          "name": "Karan's World — Interactive 3D Portfolio",
+          "description": "An interactive, walkable 3D portfolio for Full Stack Web Developer Karan Mahajan.",
+          "author": { "@id": "https://world.karanmahajan.ca/#karan" },
+          "inLanguage": "en"
+        },
+        {
+          "@type": "ItemList",
+          "name": "Selected projects by Karan Mahajan",
+          "itemListElement": [
+            {
+              "@type": "ListItem",
+              "position": 1,
+              "item": {
+                "@type": "CreativeWork",
+                "name": "Alectra Utilities",
+                "url": "https://alectrautilities.com",
+                "description": "Enterprise Drupal CMS for an Ontario utility — complex content workflows, scheduled transitions, and Pantheon deployments.",
+                "creator": { "@id": "https://world.karanmahajan.ca/#karan" },
+                "keywords": "Drupal, PHP, Pantheon, Lando"
+              }
+            },
+            {
+              "@type": "ListItem",
+              "position": 2,
+              "item": {
+                "@type": "CreativeWork",
+                "name": "RPRA Website",
+                "url": "https://rpra.ca",
+                "description": "Full QA audit and development for Ontario's Resource Productivity and Recovery Authority — custom tooling, plugin management, and Git deployment pipelines.",
+                "creator": { "@id": "https://world.karanmahajan.ca/#karan" },
+                "keywords": "WordPress, PHP, Git, Pantheon"
+              }
+            },
+            {
+              "@type": "ListItem",
+              "position": 3,
+              "item": {
+                "@type": "CreativeWork",
+                "name": "Interstone",
+                "description": "WooCommerce store with WebP image compression, REST API integrations, and Wordfence security across environments.",
+                "creator": { "@id": "https://world.karanmahajan.ca/#karan" },
+                "keywords": "WordPress, WooCommerce, REST API, PHP"
+              }
+            },
+            {
+              "@type": "ListItem",
+              "position": 4,
+              "item": {
+                "@type": "CreativeWork",
+                "name": "findabl",
+                "description": "Next.js app with Apollo GraphQL, dynamic employee profiles, CSP enforcement, and SSR optimizations.",
+                "creator": { "@id": "https://world.karanmahajan.ca/#karan" },
+                "keywords": "Next.js, React, GraphQL, Apollo"
+              }
+            },
+            {
+              "@type": "ListItem",
+              "position": 5,
+              "item": {
+                "@type": "CreativeWork",
+                "name": "Trimark Windows",
+                "description": "ExpressionEngine project with an isolated landing-page system and PHP form handlers using Mailjet and Postmark.",
+                "creator": { "@id": "https://world.karanmahajan.ca/#karan" },
+                "keywords": "ExpressionEngine, PHP, Mailjet"
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -51,44 +166,72 @@
     height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <!-- End Google Tag Manager (noscript) -->
 
+    <!--
+      Crawlable / accessible content layer. The 3D experience renders to the
+      opaque <canvas> above this, so sighted JS users never see it — but search
+      engines, AI crawlers (GPTBot, ClaudeBot, PerplexityBot…) and screen
+      readers read the real text here. Keep this in sync with the data in
+      src/Portfolio/*Data.js. This is genuine page content, not cloaking.
+    -->
+    <main class="seo-content">
+      <h1>Karan Mahajan — Full Stack Web Developer</h1>
+      <p>
+        Karan Mahajan is a Full Stack Web Developer who builds scalable,
+        CMS-driven and headless web architectures with Next.js, React,
+        WordPress, and Drupal. This site presents his work as an interactive,
+        walkable 3D portfolio. For a detailed, text-based overview of his work,
+        visit his main portfolio at
+        <a href="https://karanmahajan.ca/" rel="noopener">karanmahajan.ca</a>.
+        Open to full-time roles, freelance projects, and interesting
+        collaborations.
+      </p>
+
+      <h2>Skills &amp; Technologies</h2>
+      <ul>
+        <li><strong>Frontend:</strong> Next.js, React, TypeScript, Tailwind CSS, HTML, CSS, JavaScript, Material UI, Bootstrap</li>
+        <li><strong>CMS:</strong> WordPress, Drupal, Wix, ExpressionEngine</li>
+        <li><strong>Backend &amp; Databases:</strong> Node.js, Django, Python, PostgreSQL, MongoDB, MySQL, Java</li>
+        <li><strong>DevOps &amp; Tools:</strong> AWS, Jenkins, Git, Pantheon, Jira, Figma</li>
+        <li><strong>Other:</strong> GraphQL, REST APIs, Stripe, WooCommerce, JWT/OAuth, WCAG accessibility</li>
+      </ul>
+
+      <h2>Experience</h2>
+      <ul>
+        <li><strong>Full Stack Web Developer</strong>, Skylar Media Group (Feb 2025 – Present) — Scalable CMS-driven and headless architectures across WordPress, Drupal, Next.js, and React.</li>
+        <li><strong>Programming Research Assistant</strong>, University of Windsor (May 2024 – Aug 2024) — Frontend redesign of a client platform, dynamic UI components, and CMS architecture management.</li>
+        <li><strong>Software Engineer</strong>, Recro (Jul 2022 – Mar 2023) — Reusable React component library with cross-framework support and accessibility standards.</li>
+        <li><strong>Software Craftsperson</strong>, Launch Ventures (Oct 2021 – Jul 2022) — Responsive PWAs in React/Next.js with dashboards and Node.js APIs over MongoDB.</li>
+        <li><strong>Member of Technical Staff</strong>, MetricStream (Jul 2019 – Oct 2021) — MySQL optimization, JavaScript frontend, Java backend, and AWS + Jenkins pipelines.</li>
+      </ul>
+
+      <h2>Selected Projects</h2>
+      <ul>
+        <li><strong><a href="https://alectrautilities.com" rel="noopener">Alectra Utilities</a></strong> — Enterprise Drupal CMS for an Ontario utility. Complex content workflows, scheduled transitions, Pantheon deployments. (Drupal, PHP, Pantheon, Lando)</li>
+        <li><strong><a href="https://rpra.ca" rel="noopener">RPRA Website</a></strong> — Full QA audit and development for Ontario's resource productivity authority. Custom tooling, plugin management, Git deployment pipelines. (WordPress, PHP, Git, Pantheon)</li>
+        <li><strong>Interstone</strong> — WooCommerce store with WebP image compression, REST API integrations, and Wordfence security across environments. (WordPress, WooCommerce, REST API, PHP)</li>
+        <li><strong>findabl</strong> — Next.js app with Apollo GraphQL, dynamic employee profiles, CSP enforcement, and SSR optimizations. (Next.js, React, GraphQL, Apollo)</li>
+        <li><strong>Trimark Windows</strong> — ExpressionEngine project with an isolated landing-page system and PHP form handlers using Mailjet and Postmark. (ExpressionEngine, PHP, Mailjet)</li>
+      </ul>
+
+      <h2>Contact</h2>
+      <ul>
+        <li>Main portfolio: <a href="https://karanmahajan.ca/" rel="noopener">karanmahajan.ca</a></li>
+        <li>Email: <a href="mailto:karanmahajan321@gmail.com">karanmahajan321@gmail.com</a></li>
+        <li>LinkedIn: <a href="https://www.linkedin.com/in/karan-mahajan/" rel="noopener">linkedin.com/in/karan-mahajan</a></li>
+        <li>GitHub: <a href="https://github.com/karan-mahajan" rel="noopener">github.com/karan-mahajan</a></li>
+      </ul>
+    </main>
+
     <canvas id="canvas"></canvas>
     <div id="loading-screen" class="overlay">
+      <div class="loading-sky" aria-hidden="true"></div>
       <div class="loading-inner">
-        <div class="loading-title">KARAN MAHAJAN</div>
+        <div class="loading-eyebrow">interactive portfolio</div>
+        <div class="loading-title">KARAN'S WORLD</div>
         <div class="loading-sub">Building the world…</div>
         <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
         <div class="loading-percent" id="loading-percent">0%</div>
         <div class="loading-status" id="loading-status">Warming up the lights…</div>
-      </div>
-    </div>
-    <div id="welcome-screen" class="overlay hidden">
-      <div class="welcome-inner">
-        <div class="welcome-eyebrow">portfolio</div>
-        <div class="welcome-title">KARAN'S WORLD</div>
-        <div class="welcome-sub">A walk-through portfolio. Each direction reveals a section.</div>
-        <div class="welcome-compass" aria-hidden="true">
-          <div class="compass-card">
-            <span class="compass-arrow">↑</span>
-            <span class="compass-label">Experience</span>
-          </div>
-          <div class="compass-row">
-            <div class="compass-card">
-              <span class="compass-arrow">←</span>
-              <span class="compass-label">Contact</span>
-            </div>
-            <div class="compass-card compass-center">↻</div>
-            <div class="compass-card">
-              <span class="compass-arrow">→</span>
-              <span class="compass-label">Projects</span>
-            </div>
-          </div>
-          <div class="compass-card">
-            <span class="compass-arrow">↓</span>
-            <span class="compass-label">Skills</span>
-          </div>
-        </div>
-        <button id="welcome-start" class="welcome-start">Start your journey</button>
-        <div class="welcome-hint">Look around with your mouse · Walk with WASD</div>
       </div>
     </div>
     <div id="ui-overlay"></div>

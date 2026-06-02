@@ -1,9 +1,9 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import gsap from 'gsap';
 import { SECTIONS } from '../Portfolio/WorldMap.js';
 
 export class ClickToMove {
-  constructor({ player, playerCamera, controller, navmask, scene, terrain, audio }) {
+  constructor({ player, playerCamera, controller, navmask, scene, terrain, audio, sections = SECTIONS }) {
     this.player = player;
     this.playerCamera = playerCamera;
     this.controller = controller;
@@ -11,6 +11,7 @@ export class ClickToMove {
     this.scene = scene;
     this.terrain = terrain;
     this.audio = audio;
+    this.sections = sections;
     this.target = null;
     this.path = [];
     this.waypointIndex = 0;
@@ -157,7 +158,7 @@ export class ClickToMove {
     if (!this.target) return null;
     let best = null;
     let bestD = 10;
-    for (const section of SECTIONS) {
+    for (const section of this.sections) {
       const [sx, , sz] = section.position;
       const d = Math.hypot(this.target.x - sx, this.target.z - sz);
       if (d < bestD) {

@@ -1,8 +1,9 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 /**
@@ -39,6 +40,9 @@ export class Loader extends EventTarget {
 
     this.fbx = new FBXLoader(this.manager);
     this.texture = new THREE.TextureLoader(this.manager);
+    // EXR loader for the float terrain masks (terrainGrass.exr) — the runtime
+    // grass/terrain shader samples its channels. Renderer-agnostic JS decode.
+    this.exr = new EXRLoader(this.manager);
   }
 
   attachRenderer(renderer) {
@@ -57,6 +61,17 @@ export class Loader extends EventTarget {
   loadTexture(url) {
     return new Promise((resolve, reject) => {
       this.texture.load(url, resolve, undefined, reject);
+    });
+  }
+
+  /**
+   * Load a floating-point EXR as a data texture (used for the terrain grass
+   * mask). The result samples as linear data — callers set wrap/filter and
+   * mark `colorSpace = NoColorSpace` since the channels are masks, not colour.
+   */
+  loadEXR(url) {
+    return new Promise((resolve, reject) => {
+      this.exr.load(url, resolve, undefined, reject);
     });
   }
 
