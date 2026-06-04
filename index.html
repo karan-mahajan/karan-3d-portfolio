@@ -9,6 +9,22 @@
     })(window,document,'script','dataLayer','GTM-TFN8MHCZ');</script>
     <!-- End Google Tag Manager -->
 
+    <!-- Console gate: visitors should never see dev logs. Silence
+         log/info/debug/warn unless the page is opened with ?debug; errors
+         always pass through so real crashes stay diagnosable. -->
+    <script>
+      (function () {
+        try {
+          if (new URLSearchParams(location.search).has('debug')) return;
+          var noop = function () {};
+          console.log = noop;
+          console.info = noop;
+          console.debug = noop;
+          console.warn = noop;
+        } catch (e) {}
+      })();
+    </script>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Karan Mahajan — Full Stack Web Developer (Next.js, WordPress, Drupal) | 3D Portfolio</title>

@@ -26,6 +26,7 @@ import {
   WORLD_BOUNDS,
 } from "./Portfolio/WorldMap.js";
 import { Achievements } from "./Systems/Achievements.js";
+import { ControlHints } from "./Systems/ControlHints.js";
 import { DistanceGame } from "./Systems/DistanceGame.js";
 import { LavaHazard } from "./Systems/LavaHazard.js";
 import { ClickToMove } from "./Travel/ClickToMove.js";
@@ -722,6 +723,9 @@ export class App extends EventTarget {
     const loadInteractables = () =>
       this.interactables
         .load()
+        // Warm the football's pipeline off-thread once it's in the scene, so it
+        // doesn't compile the first time the player turns to look at it.
+        .then(() => this.#warmShadersInBackground())
         .catch((err) => console.warn("[Interactables] load failed:", err));
     if (typeof requestIdleCallback === "function") {
       requestIdleCallback(loadInteractables, { timeout: 4000 });
@@ -756,6 +760,11 @@ export class App extends EventTarget {
     this.tutorial = new Tutorial({
       controller: this.player.controller,
     });
+
+    // Contextual control nudges (Shift-to-run after ~11s walking, Space-to-jump
+    // after ~15s) for players who haven't found them. Desktop-only, self-gated
+    // by localStorage (twice ever / once per session / never once used).
+    this.controlHints = new ControlHints();
 
     // Now that Signs + Billboards exist, wire the player ref so the
     // character spotlight / fill light can follow.
@@ -865,6 +874,10 @@ export class App extends EventTarget {
           });
           if (this.timeOfDay) this.timeOfDay.fireflies = this.fireflies;
         }
+        // These were added to the scene AFTER the reveal-time warm ran, so
+        // their pipelines are still cold — re-warm off-thread now, before the
+        // player walks into bonfire/lava/animal view and pays the lazy compile.
+        this.#warmShadersInBackground();
       } catch (err) {
         console.warn("[App] deferred world systems failed:", err);
       }
@@ -883,7 +896,12 @@ export class App extends EventTarget {
     // (only if it was wanted; a visitor who'd disabled it stays dry). setEnabled
     // is the wrapped version, so the auto-storm + button sync in lockstep.
     if (this._rainWanted) {
-      setTimeout(() => this.rain?.setEnabled?.(true), 5000);
+      setTimeout(() => {
+        this.rain?.setEnabled?.(true);
+        // Warm the rain/splash pipelines off-thread once enabled, so the first
+        // raindrop frame doesn't compile under the player.
+        this.#warmShadersInBackground();
+      }, 5000);
     }
 
     // Leaves were held off the spawn frame — release them ~8s after launch.
@@ -1574,10 +1592,18 @@ export class App extends EventTarget {
     // Jump achievement — count every air-out transition (same edge used
     // for the audio cue). Fires for both Space-jumps and any future
     // launch-into-air mechanic.
-    if (this._wasGroundedApp === true && _grounded === false) {
+    const airedOut = this._wasGroundedApp === true && _grounded === false;
+    if (airedOut) {
       this.achievements?.onJump?.();
     }
     this._wasGroundedApp = _grounded;
+    // Contextual control nudges — reads moving/running + the jump edge above.
+    this.controlHints?.update(frameDelta, {
+      moving: !!sample?.moving,
+      running: this.player.controller.isRunning,
+      jumped: airedOut,
+      paused: this.player.controller.paused,
+    });
     // Keep ambient bed in sync with day/night flips. Only push on change so
     // ad-hoc `audio.setMode(...)` calls (probes, debug) aren't stomped each
     // frame.
