@@ -58,6 +58,7 @@ export class UIController {
       this.#updateWelcomeHint();
       this.#buildJoystick();
       this.#buildInteractPill();
+      this.#buildExitButton();
       this.#buildActionGrid();
       this.#suppressCanvasGestures();
     }
@@ -310,6 +311,28 @@ export class UIController {
     });
   }
 
+  /**
+   * Skills (SkillSphere) and Contact (ContactBoard) are entered immersively
+   * and only leave on ESC — unreachable on touch. This floating button shows
+   * while one of those modes is active and dispatches Escape to exit. The
+   * Projects hut + outdoor showcase already carry their own panel × close.
+   */
+  #buildExitButton() {
+    const btn = document.createElement('button');
+    btn.id = 'mobile-exit';
+    btn.type = 'button';
+    btn.className = 'hidden';
+    btn.setAttribute('aria-label', 'Exit');
+    btn.innerHTML = `<span class="exit-icon">✕</span><span class="exit-label">Exit</span>`;
+    document.body.appendChild(btn);
+    this._exitBtn = btn;
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.#dispatchKey('Escape');
+    });
+  }
+
   // ── Mobile: action grid ────────────────────────────────────────────────
 
   #buildActionGrid() {
@@ -455,8 +478,18 @@ export class UIController {
   tick() {
     if (!this.isMobile) return;
     this.#syncInteractPill();
+    this.#syncExitButton();
     this.#syncPushButton();
     this.#syncDanceButton();
+  }
+
+  #syncExitButton() {
+    if (!this._exitBtn) return;
+    const ix = this.interaction;
+    // Only Skills + Contact lack an on-screen close; the projects/showcase
+    // panel carries its own ×, so don't double up there.
+    const needsExit = !!(ix && (ix.skillOpen || ix.contactOpen));
+    this._exitBtn.classList.toggle('hidden', !needsExit);
   }
 
   #syncInteractPill() {
@@ -464,7 +497,7 @@ export class UIController {
     const ix = this.interaction;
     // While a focused panel is open, the pill should be hidden — the panel
     // owns the screen and has its own × close.
-    if (ix && (ix.activeIndex !== -1 || ix.contactOpen || ix.skillOpen)) {
+    if (ix && (ix.activeIndex !== -1 || ix.contactOpen || ix.skillOpen || ix.projectsOpen)) {
       this._interactBtn.classList.add('hidden');
       return;
     }
