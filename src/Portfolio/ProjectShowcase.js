@@ -367,12 +367,20 @@ export class ProjectShowcase {
     ctx.fillText(`${index + 1} / ${this.projects.length}`, w - 40, imageH + 40);
     ctx.textAlign = 'left';
 
+    // Year · category meta line under the title.
+    const meta = [project.year, project.category].filter(Boolean).join('  ·  ');
+    if (meta) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.font = '600 18px Rajdhani, sans-serif';
+      ctx.fillText(meta.toUpperCase(), 40, imageH + 78);
+    }
+
     // Tech tag pills.
     const tags = project.tech || [];
     const tagFontSize = 22;
     ctx.font = `600 ${tagFontSize}px Rajdhani, sans-serif`;
     let tagX = 40;
-    const tagY = imageH + 92;
+    const tagY = imageH + 104;
     const tagH = 38;
     const padX = 14;
     const padY = 8;

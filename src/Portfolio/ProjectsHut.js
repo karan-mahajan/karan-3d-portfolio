@@ -463,10 +463,18 @@ export class ProjectsHut {
     ctx.fillText(`${index + 1} / ${this.projects.length}`, w - 40, imageH + 40);
     ctx.textAlign = 'left';
 
+    // Year · category meta line under the title.
+    const meta = [project.year, project.category].filter(Boolean).join('  ·  ');
+    if (meta) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.font = '600 18px Rajdhani, sans-serif';
+      ctx.fillText(meta.toUpperCase(), 40, imageH + 78);
+    }
+
     const tags = project.tech || [];
     ctx.font = `600 22px Rajdhani, sans-serif`;
     let tagX = 40;
-    const tagY = imageH + 92;
+    const tagY = imageH + 104;
     const tagH = 38;
     const padX = 14;
     const padY = 8;
@@ -518,7 +526,7 @@ export class ProjectsHut {
 
   #installDom() {
     this.hintEl = document.createElement('div');
-    this.hintEl.className = 'skill-sphere-hint hidden';
+    this.hintEl.className = 'skill-sphere-hint projects-hut-hint hidden';
     this.hintEl.innerHTML = `
       <span class="skill-sphere-kicker">Inside Projects</span>
       <strong>Browse the work</strong>

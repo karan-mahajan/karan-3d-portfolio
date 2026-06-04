@@ -222,6 +222,16 @@ export class Tutorial {
   #detectLook() { return this.#lookFired; }
   #detectZoom() { return this.#zoomFired; }
 
+  // Heuristic: distinguish a trackpad from a wheel mouse. Trackpads emit
+  // horizontal deltas, sub-pixel/fractional deltas, momentum, or a pinch's
+  // ctrl+wheel — a notched mouse wheel does none of these.
+  #isTrackpadWheel(e) {
+    if (e.ctrlKey) return true;                                   // pinch-zoom
+    if (Math.abs(e.deltaX) > 0) return true;                      // two-finger pan
+    if (e.deltaMode === 0 && !Number.isInteger(e.deltaY)) return true; // fractional px
+    return false;
+  }
+
   #attachInputListeners() {
     const canvas = document.getElementById('canvas');
 
@@ -251,7 +261,11 @@ export class Tutorial {
       this.#dragLast = null;
     };
     this.#onWheel = (e) => {
-      if (Math.abs(e.deltaY) > 0) this.#zoomFired = true;
+      if (Math.abs(e.deltaY) > 0 || Math.abs(e.deltaX) > 0) this.#zoomFired = true;
+      // A trackpad gesture (two-finger pan, momentum scroll, or pinch) IS the
+      // look/zoom interaction — a trackpad user has effectively already turned
+      // the camera, so the "Click + drag" coachmark is redundant. Retire it.
+      if (this.#isTrackpadWheel(e)) this.#lookFired = true;
     };
 
     // ── Mobile: single-touch swipe (look) + two-finger pinch (zoom) ─────

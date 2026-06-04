@@ -1,6 +1,7 @@
 import gsap from "gsap";
 import * as THREE from "three";
 import { resume } from "./ResumeData.js";
+import { getProjectField } from "./PortfolioData.js";
 
 const PROXIMITY = 4.5; // distance from billboard to show prompt
 const RESUME_PROXIMITY = 4;
@@ -76,12 +77,20 @@ export class Interaction {
     this.panelEl.className = "project-panel hidden";
     this.panelEl.innerHTML = `
       <button class="panel-close" aria-label="Close">×</button>
-      <div class="panel-accent"></div>
-      <h2 class="panel-title"></h2>
-      <p class="panel-description"></p>
-      <div class="panel-tech"></div>
-      <div class="panel-actions">
-        <a class="panel-link" target="_blank" rel="noopener noreferrer">Open Site ↗</a>
+      <div class="panel-scroll">
+        <div class="panel-accent"></div>
+        <h2 class="panel-title"></h2>
+        <p class="panel-meta"></p>
+        <div class="panel-description"></div>
+        <section class="panel-section panel-problem hidden"><h3>The Problem</h3><p></p></section>
+        <section class="panel-section panel-solution hidden"><h3>The Solution</h3><p></p></section>
+        <section class="panel-section panel-impact hidden"><h3>Impact</h3><p></p></section>
+        <ul class="panel-highlights hidden"></ul>
+        <div class="panel-tech"></div>
+        <div class="panel-actions">
+          <a class="panel-link" target="_blank" rel="noopener noreferrer">Open Site ↗</a>
+          <a class="panel-github" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+        </div>
       </div>
       <nav class="panel-nav">
         <button class="panel-prev" aria-label="Previous">← Prev</button>
@@ -92,15 +101,21 @@ export class Interaction {
     `;
     document.body.appendChild(this.panelEl);
 
+    // Panel controls are context-aware: inside the Projects hut they drive the
+    // hut (so touch users — who have no arrow keys or ESC — can browse + exit),
+    // otherwise they drive the single outdoor showcase.
     this.panelEl
       .querySelector(".panel-close")
-      .addEventListener("click", () => this.exit());
+      .addEventListener("click", () =>
+        this.projectsOpen ? this.closeProjects() : this.exit());
     this.panelEl
       .querySelector(".panel-prev")
-      .addEventListener("click", () => this.cycle(-1));
+      .addEventListener("click", () =>
+        this.projectsOpen ? this.projectsHutNav(-1) : this.cycle(-1));
     this.panelEl
       .querySelector(".panel-next")
-      .addEventListener("click", () => this.cycle(+1));
+      .addEventListener("click", () =>
+        this.projectsOpen ? this.projectsHutNav(+1) : this.cycle(+1));
 
     // ── Resume overlay ─────────────────────────────────────────────────────
     // Mirrors the contact-panel structure so existing .contact-panel CSS
@@ -147,8 +162,8 @@ export class Interaction {
         else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
       } else if (this.projectsOpen) {
-        if (e.code === "ArrowLeft" || e.code === "KeyA") this.projectsHut.prev();
-        else if (e.code === "ArrowRight" || e.code === "KeyD") this.projectsHut.next();
+        if (e.code === "ArrowLeft" || e.code === "KeyA") this.projectsHutNav(-1);
+        else if (e.code === "ArrowRight" || e.code === "KeyD") this.projectsHutNav(+1);
       } else if (this.activeIndex !== -1) {
         if (e.code === "ArrowLeft") this.cycle(-1);
         else if (e.code === "ArrowRight") this.cycle(+1);
@@ -273,7 +288,9 @@ export class Interaction {
     this._returnLook.copy(this._returnPos).add(this._returnDir);
 
     this.#animateTo(item, /*incoming*/ true);
-    this.#populatePanel(item);
+    const total = this.billboards.projects?.length ?? this.billboards.items.length;
+    this.panelEl.classList.remove("projects-mode");
+    this.#populatePanel(item.project, item.index, total);
   }
 
   cycle(direction) {
@@ -289,7 +306,7 @@ export class Interaction {
     if (this.billboards.setIndex) this.billboards.setIndex(next);
     const item = this.billboards.items[0];
     if (item) {
-      this.#populatePanel(item);
+      this.#populatePanel(item.project, item.index, n);
       this.achievements?.onProjectViewed?.(item.project?.name);
     }
   }
@@ -458,39 +475,121 @@ export class Interaction {
     if (!this.projectsHut || this.projectsOpen) return;
     this.#hidePrompt();
     this.projectsHut.enter();
+    this.#showProjectsPanel();
   }
 
   closeProjects() {
     this.projectsHut?.exit?.();
+    this.panelEl.classList.add("hidden");
+    this.panelEl.classList.remove("projects-mode");
   }
 
-  #populatePanel(item) {
-    const p = item.project;
-    this.panelEl.querySelector(".panel-title").textContent = p.name;
-    this.panelEl.querySelector(".panel-description").textContent =
-      p.description;
-    this.panelEl.querySelector(".panel-accent").style.background = p.color;
+  /** Step the hut board and keep the detail panel in sync. */
+  projectsHutNav(direction) {
+    if (!this.projectsHut) return;
+    if (direction < 0) this.projectsHut.prev();
+    else this.projectsHut.next();
+    this.#showProjectsPanel();
+  }
 
-    const techEl = this.panelEl.querySelector(".panel-tech");
+  /**
+   * Populate + reveal the shared detail panel for the hut's current project.
+   * `projects-mode` hides the panel's own nav/close/hint — the hut owns
+   * navigation (arrow keys) and its centred hint shows the controls.
+   */
+  #showProjectsPanel() {
+    const hut = this.projectsHut;
+    const project = hut.projects?.[hut.currentIndex];
+    if (!project) return;
+    this.panelEl.classList.add("projects-mode");
+    this.#populatePanel(project, hut.currentIndex, hut.projects.length);
+    this.panelEl.classList.remove("hidden");
+  }
+
+  #populatePanel(p, index, total) {
+    const panel = this.panelEl;
+
+    panel.querySelector(".panel-title").textContent = p.name;
+    panel.querySelector(".panel-accent").style.background = p.color;
+
+    // Meta row: year · category · role — drop empty parts so we never render
+    // dangling separators.
+    const meta = [
+      getProjectField(p, "year", ""),
+      getProjectField(p, "category", ""),
+      getProjectField(p, "role", ""),
+    ].filter(Boolean).join("  ·  ");
+    panel.querySelector(".panel-meta").textContent = meta;
+
+    // Description: split blank-line-separated paragraphs into <p> blocks so a
+    // long narrative reads as paragraphs rather than one wall of text.
+    const descEl = panel.querySelector(".panel-description");
+    descEl.innerHTML = "";
+    const desc = getProjectField(p, "description", getProjectField(p, "summary"));
+    for (const para of String(desc).split(/\n\s*\n/)) {
+      const text = para.trim();
+      if (!text) continue;
+      const el = document.createElement("p");
+      el.textContent = text;
+      descEl.appendChild(el);
+    }
+
+    // Case-study sections — wired now, dormant until the data is populated.
+    this.#toggleSection(".panel-problem", getProjectField(p, "problem", ""));
+    this.#toggleSection(".panel-solution", getProjectField(p, "solution", ""));
+    this.#toggleSection(".panel-impact", getProjectField(p, "impact", ""));
+
+    const highlights = Array.isArray(p.highlights) ? p.highlights : [];
+    const hl = panel.querySelector(".panel-highlights");
+    hl.innerHTML = "";
+    if (highlights.length) {
+      for (const h of highlights) {
+        const li = document.createElement("li");
+        li.textContent = h;
+        hl.appendChild(li);
+      }
+      hl.classList.remove("hidden");
+    } else {
+      hl.classList.add("hidden");
+    }
+
+    const techEl = panel.querySelector(".panel-tech");
     techEl.innerHTML = "";
-    for (const t of p.tech) {
+    for (const t of p.tech || []) {
       const pill = document.createElement("span");
       pill.className = "tech-pill";
       pill.textContent = t;
       techEl.appendChild(pill);
     }
 
-    const link = this.panelEl.querySelector(".panel-link");
-    if (p.url) {
-      link.href = p.url;
+    this.#toggleLink(".panel-link", getProjectField(p, "liveUrl"));
+    this.#toggleLink(".panel-github", getProjectField(p, "github"));
+
+    const counter = panel.querySelector(".panel-counter");
+    counter.textContent = `${index + 1} / ${total}`;
+
+    // Long descriptions scroll — reset to the top whenever content swaps.
+    panel.querySelector(".panel-scroll").scrollTop = 0;
+  }
+
+  #toggleSection(selector, text) {
+    const el = this.panelEl.querySelector(selector);
+    if (text) {
+      el.querySelector("p").textContent = text;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  }
+
+  #toggleLink(selector, href) {
+    const link = this.panelEl.querySelector(selector);
+    if (href) {
+      link.href = href;
       link.style.display = "";
     } else {
       link.removeAttribute("href");
       link.style.display = "none";
     }
-
-    const counter = this.panelEl.querySelector(".panel-counter");
-    const total = this.billboards.projects?.length ?? this.billboards.items.length;
-    counter.textContent = `${item.index + 1} / ${total}`;
   }
 }
