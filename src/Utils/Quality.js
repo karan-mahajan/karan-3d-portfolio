@@ -7,6 +7,10 @@ const PROFILES = {
     // Full water shader: refraction, caustics, whitecaps, shoreline foam,
     // noise-broken normal. Dropped to false on medium/low (see Water.js).
     waterHighDetail: true,
+    // Foliage leaf-card "shell" — a double-sided, alpha-tested SDF overdraw
+    // pass on top of every canopy/bush core. Pure fill-rate; dropped on
+    // medium/low so weaker GPUs render foliage as just the solid core blob.
+    foliageShell: true,
     rainCount: 1200,
     rainSplashBudget: 8,
     leafCount: 120,
@@ -32,6 +36,7 @@ const PROFILES = {
     maxPhysicsSteps: 4,
     grassMultiplier: 0.62,
     waterHighDetail: false,
+    foliageShell: false,
     rainCount: 700,
     rainSplashBudget: 5,
     leafCount: 75,
@@ -53,6 +58,7 @@ const PROFILES = {
     maxPhysicsSteps: 3,
     grassMultiplier: 0.35,
     waterHighDetail: false,
+    foliageShell: false,
     rainCount: 360,
     rainSplashBudget: 2,
     leafCount: 36,

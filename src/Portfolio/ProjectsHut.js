@@ -161,7 +161,13 @@ export class ProjectsHut {
     this.#installCollider();
     this.#installDom();
     this.#applyIndex(0, /* immediate */ true);
-    this.#kickOffImagePreload();
+    // Defer art preload off the boot critical path — the board isn't visible
+    // until the player reaches it, so loading now only steals boot bandwidth.
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => this.#kickOffImagePreload(), { timeout: 8000 });
+    } else {
+      setTimeout(() => this.#kickOffImagePreload(), 4000);
+    }
   }
 
   // ── Proximity ──────────────────────────────────────────────────────────────

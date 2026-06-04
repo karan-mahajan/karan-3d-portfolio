@@ -14,11 +14,11 @@ import { Physics } from "./Physics/Physics.js";
 import { Player } from "./Player/Player.js";
 import { PlayerCamera } from "./Player/PlayerCamera.js";
 import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
+import { ContactBoard } from "./Portfolio/ContactBoard.js";
 import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
-import { SkillSphere } from "./Portfolio/SkillSphere.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
-import { ContactBoard } from "./Portfolio/ContactBoard.js";
+import { SkillSphere } from "./Portfolio/SkillSphere.js";
 import {
   BLOCKERS,
   LAMPS,
@@ -27,6 +27,7 @@ import {
 } from "./Portfolio/WorldMap.js";
 import { Achievements } from "./Systems/Achievements.js";
 import { DistanceGame } from "./Systems/DistanceGame.js";
+import { LavaHazard } from "./Systems/LavaHazard.js";
 import { ClickToMove } from "./Travel/ClickToMove.js";
 import { IntroCinematic } from "./Travel/IntroCinematic.js";
 import { Navmask } from "./Travel/Navmask.js";
@@ -42,19 +43,18 @@ import { MapSnapshot } from "./UI/MapSnapshot.js";
 import { MiniMap } from "./UI/MiniMap.js";
 import { Tutorial } from "./UI/Tutorial.js";
 import { UIController } from "./UI/UIController.js";
+import { Wasted } from "./UI/Wasted.js";
 import { Debug } from "./Utils/Debug.js";
 import { Loader } from "./Utils/Loader.js";
 import { detectQuality } from "./Utils/Quality.js";
 import { Sizes } from "./Utils/Sizes.js";
 import { AnimatedProps } from "./World/AnimatedProps.js";
 import { Bonfires } from "./World/Bonfires.js";
+import { Environment } from "./World/Environment.js";
 import { Flowers } from "./World/Flowers.js";
 import { Foliage } from "./World/Foliage.js";
-import { Environment } from "./World/Environment.js";
 import { Grass } from "./World/Grass.js";
 import { Lava } from "./World/Lava.js";
-import { LavaHazard } from "./Systems/LavaHazard.js";
-import { Wasted } from "./UI/Wasted.js";
 import { Lights } from "./World/Lights.js";
 import { DUSK } from "./World/Palette.js";
 import { Sun } from "./World/Sun.js";
@@ -117,13 +117,14 @@ export class App extends EventTarget {
     // constructed in boot() (and wired into TimeOfDay) once the world is loaded.
     this.grass = null;
     this.bonfires = null;
+    // Fireflies are a NIGHT effect and first load always opens on day (see
+    // TimeOfDay), so they're constructed with the other deferred world systems
+    // after spawn — invisible at launch anyway, and one less first-frame shader.
+    this.fireflies = null;
 
     // Atmospheric effects — added during construction so they exist on first
     // frame; they don't depend on async loaded assets. All ported to TSL node
     // materials (B0-finish) so they render natively on the WebGPU backend.
-    this.fireflies = new Fireflies(this.scene, {
-      count: this.quality.fireflyCount,
-    });
     // Water (pools + river) is created during world.loadAssets so it can
     // register Nature exclusions before nature.load() scatters props. The
     // reference is grabbed in boot() once the world has loaded.
@@ -132,6 +133,14 @@ export class App extends EventTarget {
       count: this.quality.rainCount,
       splashBudget: this.quality.rainSplashBudget,
     });
+    // Don't rain ON the spawn — the first frames should be clear. Remember the
+    // intended state (default on, unless the visitor disabled it before) and
+    // force rain off WITHOUT persisting; ~5s after launch it switches on if it
+    // was wanted. Thunderstorm.setActive() below reads this, so it stays calm
+    // at spawn too. See the deferred re-enable in boot().
+    this._rainWanted = this.rain.enabled;
+    this.rain.enabled = false;
+    this.rain.group.visible = false;
     // Automatic snow cycle: falling flakes + accumulation on every snow-aware
     // material, driven by the shared snowCoverage/snowFall uniforms. Independent
     // of the manual rain toggle and of time-of-day.
@@ -146,6 +155,11 @@ export class App extends EventTarget {
       count: this.quality.leafCount,
       maxSettled: this.quality.maxSettledLeaves,
     });
+    // Leaves used to rain down the instant the world appeared. Hold them off the
+    // spawn frame; the boot tail releases them ~8s in, after which the tick
+    // gates them against snow (the two weather looks never overlap).
+    this._leavesUnlocked = false;
+    this.leaves.setActive(false);
     // Footprints — persistent flat decals dropped on each footstep. Cadence
     // is driven by AudioManager.onStep (set up after boot) so visual prints
     // and audio steps stay aligned. Path tile positions are plumbed in
@@ -226,9 +240,11 @@ export class App extends EventTarget {
       audio: this.audio,
     });
     this.achievements.onUnlock((a) => {
+      // Toast + chime only. The old camera-punch / slow-mo "felt" beat moved
+      // the whole screen on unlock, which read as a jarring shake — dropped so
+      // an achievement is a clean notification, not a screen event.
       this.achievementToast.show(a);
-      this.audio?.playAchievement?.(a.rarity || 'common');
-      this.#playUnlockBeat(a.rarity || 'common');
+      this.audio?.playAchievement?.(a.rarity || "common");
     });
     // Wrap Rain.setEnabled one more time so the on-edge fires onToggleRain.
     // The thunderstorm wrap above already chained an outer wrapper; this
@@ -302,7 +318,8 @@ export class App extends EventTarget {
   // Per-phase button icon (feather-style) + accent colour data-attr.
   static #TOD_ICONS = {
     day: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
-    night: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>',
+    night:
+      '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/></svg>',
     dawn: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="2" x2="12" y2="9"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="8 6 12 2 16 6"/></svg>',
     dusk: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="9" x2="12" y2="2"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="16 5 12 9 8 5"/></svg>',
   };
@@ -329,122 +346,37 @@ export class App extends EventTarget {
   }
 
   /**
-   * Pre-compile shader programs for BOTH the day and night lighting
-   * configurations. THREE's shader cache key includes the active light
-   * count; when our visibility toggles flip the rim + 5 pool point lights
-   * on/off, the count changes and every material's program has to be
-   * fetched anew. The fetch is LAZY — programs are compiled the first
-   * time a material is actually rendered with that light count. Without
-   * pre-warm, the first toggle in each direction compiles materials
-   * currently on screen, but subsequent player movement uncovers more
-   * geometry whose materials then JIT-compile mid-walk → the lag spike.
+   * Background shader warm. compileAsync compiles pipelines off the main thread
+   * (KHR_parallel_shader_compile on WebGL2, async pipeline creation on WebGPU),
+   * so firing it un-awaited after the reveal warms the scene's programs while
+   * the intro cinematic plays — shrinking the per-frame lazy-compile hitches
+   * without ever blocking the loader. Best-effort: a failure just means the
+   * first frames pay the lazy compile, which the cinematic already tolerates.
    *
-   * Strategy: snap to night, force visibility toggles to settle, call
-   * compileAsync on the whole scene; snap back to the original mode,
-   * settle, compile again. Both program variants now sit warm in the
-   * cache. The user pays this cost once during the post-load window
-   * (where waiting is expected) instead of during gameplay.
+   * NOTE: deliberately NOT awaited in boot(). An awaited / synchronous compile
+   * is what froze the tab at "stuck at 90%" on the WebGL2 fallback — see boot().
    */
-  async #prewarmDayNightShaders() {
+  async #warmShadersInBackground() {
     if (!this.renderer || !this.scene || !this.camera) return;
     if (typeof this.renderer.compileAsync !== "function") return; // r152+
-    const original = this.timeOfDay.mode;
-    const originalProgress = this.timeOfDay.progress;
-    const playerPos = this.player?.position ?? { x: 0, y: 0, z: 0 };
-    const prewarmGroup = this.#createShaderPrewarmGroup();
-    if (prewarmGroup) this.scene.add(prewarmGroup);
-
-    // Force a lighting config by writing `mode` (jumps the cycle to that
-    // phase's peak + applies instantly) so compileAsync warms both day and
-    // night shader variants. frameDelta 0 = the cycle doesn't advance during
-    // the settle tick.
-    const applyAndSettle = (mode) => {
-      this.timeOfDay.mode = mode;
-      this.timeOfDay.reapply();
-      this.timeOfDay.tick(playerPos, this.camera, 0, 0);
-    };
-
-    try {
-      applyAndSettle(original === "day" ? "night" : "day");
-      await this.renderer.compileAsync(this.scene, this.camera);
-      applyAndSettle(original);
-      await this.renderer.compileAsync(this.scene, this.camera);
-    } catch (err) {
-      console.warn("[App] shader prewarm failed:", err);
-    } finally {
-      // Restore the real clock-based starting position so the cycle resumes
-      // where it would have been (not pinned to the day/night peak).
-      this.timeOfDay.progress = originalProgress;
-      this.timeOfDay.reapply();
-      if (prewarmGroup) {
-        this.scene.remove(prewarmGroup);
-        const geometries = new Set();
-        prewarmGroup.traverse((obj) => {
-          if (obj.geometry) geometries.add(obj.geometry);
-        });
-        for (const geometry of geometries) geometry.dispose();
-      }
-    }
+    await this.renderer.compileAsync(this.scene, this.camera);
   }
 
-  #createShaderPrewarmGroup() {
-    const materials = this.world?.glb?.getShaderPrewarmMaterials?.() ?? [];
-    if (!materials.length) return null;
-
-    const group = new THREE.Group();
-    group.name = "shader-prewarm-proxies";
-    const makeGeometry = () => {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(
-          [-0.05, 0, 0, 0.05, 0, 0, 0, 0.1, 0],
-          3,
-        ),
-      );
-      geometry.setAttribute(
-        "normal",
-        new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3),
-      );
-      geometry.setAttribute(
-        "color",
-        new THREE.Float32BufferAttribute(
-          [1, 1, 1, 1, 1, 0.7, 0.4, 0.6, 0.4, 1, 0.7, 1],
-          4,
-        ),
-      );
-      geometry.setAttribute(
-        "worldEmissive",
-        new THREE.Float32BufferAttribute(
-          [0, 0, 0, 0.2, 0.1, 0, 0, 0.2, 0.1],
-          3,
-        ),
-      );
-      geometry.setAttribute(
-        "worldRoughness",
-        new THREE.Float32BufferAttribute([0.35, 0.7, 0.9], 1),
-      );
-      geometry.computeBoundingSphere();
-      return geometry;
+  /**
+   * Defer the one-time top-down map snapshot off the reveal path. It renders
+   * ~the whole scene, so on a cold cache it triggers a synchronous compile that
+   * would re-freeze the loader if run inline. An idle callback lets the reveal
+   * and the cinematic's opening beats happen first.
+   */
+  #scheduleMapSnapshot() {
+    const run = () => {
+      this.#captureMapSnapshot();
     };
-
-    materials.forEach((material, index) => {
-      const mesh = new THREE.Mesh(makeGeometry(), material);
-      mesh.name = `shader-prewarm:${material.name}:mesh`;
-      mesh.frustumCulled = false;
-      mesh.position.set(index * 0.01, -999, 0);
-      group.add(mesh);
-
-      const inst = new THREE.InstancedMesh(makeGeometry(), material, 1);
-      inst.name = `shader-prewarm:${material.name}:instanced`;
-      inst.frustumCulled = false;
-      inst.position.set(index * 0.01, -999.2, 0);
-      inst.setMatrixAt(0, new THREE.Matrix4());
-      inst.instanceMatrix.needsUpdate = true;
-      group.add(inst);
-    });
-
-    return group;
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(run, { timeout: 3000 });
+    } else {
+      setTimeout(run, 1500);
+    }
   }
 
   /** Loads characters / models; resolves to a summary the loader UI can use. */
@@ -453,6 +385,13 @@ export class App extends EventTarget {
     // WebGPURenderer is constructed synchronously but must finish its async
     // device/adapter handshake before any render/compute runs.
     await this.renderer.init();
+    // Many laptops/browsers lack WebGPU — WebGPURenderer then silently falls
+    // back to WebGL2. Log which backend we got so a frozen-on-load report can
+    // be traced (the slow first-visit compile differs sharply between the two).
+    this._isWebGPU = this.renderer.backend?.isWebGPUBackend === true;
+    console.log(
+      `[App] render backend: ${this._isWebGPU ? "WebGPU" : "WebGL2 fallback"}`,
+    );
     // KTX2 format detection needs the live backend (hasFeature) — safe only
     // after init(). Detects which compressed formats this GPU supports so the
     // transcoder picks the right path for any KTX2 textures.
@@ -485,7 +424,7 @@ export class App extends EventTarget {
     // a full carpet well below 820; tune the base to taste.
     const grassSub = Math.max(
       64,
-      Math.round(450 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
+      Math.round(400 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
     );
     this.grass = new Grass(
       this.scene,
@@ -586,6 +525,7 @@ export class App extends EventTarget {
         this.wind,
         foliageSDF,
         foliageClouds,
+        { shell: this.quality.foliageShell !== false },
       );
       this.foliage.setSunDirection(this.timeOfDay.sunOffset);
       this.world.foliage = this.foliage;
@@ -603,37 +543,19 @@ export class App extends EventTarget {
       this.world.flowers = this.flowers;
     }
 
-    // Phase F — point lights, bonfire visuals, lava glow, and animated props
-    // from Blender reference anchors (refPoleLight_*/refBonfire_* lights,
-    // lavaRef_pool glow, animalPivot_*/airDancerPivot_* motion).
-    const v3refs = this.world.glb?.refs;
-    if (v3refs) {
-      this.worldLights = new Lights(this.scene, v3refs);
-      this.bonfires = await new Bonfires(
-        this.scene,
-        v3refs,
-        this.wind,
-      ).load();
-      this.lava = new Lava(this.scene, this.wind, v3refs, this.physics);
-      // Lava death sequence — step in, sink, "WASTED", respawn at base. The
-      // hazard reads player.character lazily at sink time, so wiring it here
-      // (player already exists; avatar may still be loading) is fine.
-      if (this.player) {
-        this.wasted = new Wasted();
-        this.lavaHazard = new LavaHazard({
-          player: this.player,
-          lava: this.lava,
-          wasted: this.wasted,
-          achievements: this.achievements,
-        });
-      }
-      this.animatedProps = new AnimatedProps(
-        this.scene,
-        this.world.terrain,
-        v3refs,
-        this.physics,
-      );
-    }
+    // The point-light RIG is built NOW (not deferred) even though its lamps sit
+    // away from spawn: it adds PointLights to the scene, and adding lights later
+    // changes the shader light-count → every lit material (incl. the character)
+    // recompiles → a one-frame "character flickers invisible" pop. Built here at
+    // intensity 0 (no visual cost, no asset load) the count is final before the
+    // character first compiles behind the loader. The HEAVY visuals (bonfire
+    // meshes, lava textures, animals) still defer — they add no lights.
+    const v3lightRefs = this.world?.glb?.refs;
+    if (v3lightRefs) this.worldLights = new Lights(this.scene, v3lightRefs);
+
+    // Remaining Phase F (bonfire visuals, lava glow + hazard, animated props)
+    // sits away from spawn and loads assets, so it's deferred to after launch
+    // in #scheduleDeferredWorldSystems(); the tick null-guards every consumer.
 
     // Phase 1 of the World v2 swap: DistantIslands has been removed. The
     // Blender-authored world.glb will eventually provide horizon mountain
@@ -741,7 +663,7 @@ export class App extends EventTarget {
     // Colour Garden — Blender-authored paint-throw toy loaded from its own GLB
     // (kept out of the world prop-merge so each statue stays paintable). Awaited
     // so its static colliders register before gameplay; the GLB is tiny.
-    const { ColourGarden } = await import('./Portfolio/ColourGarden.js');
+    const { ColourGarden } = await import("./Portfolio/ColourGarden.js");
     this.colourGarden = new ColourGarden({
       scene: this.scene,
       physics: this.physics,
@@ -793,11 +715,19 @@ export class App extends EventTarget {
       this.actionPrompts,
       this.world.terrain,
     );
-    // Fire and forget — props load asynchronously and self-register triggers
-    // as each one settles. No need to block the boot resolution on this.
-    this.interactables
-      .load()
-      .catch((err) => console.warn("[Interactables] load failed:", err));
+    // The football is never visible at spawn (it sits out in a field), so its
+    // GLB shouldn't compete with the world's assets during the critical load.
+    // Defer the load to an idle callback after launch; it self-registers its
+    // kick trigger once it settles. Fire-and-forget — never blocks boot.
+    const loadInteractables = () =>
+      this.interactables
+        .load()
+        .catch((err) => console.warn("[Interactables] load failed:", err));
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(loadInteractables, { timeout: 4000 });
+    } else {
+      setTimeout(loadInteractables, 2000);
+    }
 
     // UI redesign controller — owns desktop layout (top-left + bottom-left
     // stacks, bottom-right controls panel) and, on touch devices, the
@@ -837,35 +767,128 @@ export class App extends EventTarget {
     // the right intensity (TimeOfDay was built before they existed).
     this.timeOfDay.reapply();
 
-    // Keep shader compilation behind the loading screen; otherwise the first
-    // walk into a far section can still pay a driver compile on the visible frame.
-    this.shaderPrewarmPromise = this.#prewarmDayNightShaders()
-      .catch((err) => {
-        console.warn("[App] deferred prewarm failed:", err);
-      });
-    await this.shaderPrewarmPromise;
-    this._shaderReady = true;
-
     // Sync the current toggle-button icon to the auto-detected mode.
     this.#syncTimeOfDayButton();
+
+    // Reveal is NOT gated on shader compilation. A synchronous compile freezes
+    // the tab — on the WebGL2 fallback the whole-scene compile blocks the main
+    // thread for many seconds (the "stuck at 90%, can't interact" report), and
+    // even a cold WebGPU first frame stalls. So we start the loop and let the
+    // world reveal behind the moving intro cinematic, where pipelines compile
+    // across frames and the camera motion masks the brief hitches — instead of
+    // a frozen loading bar. boot() now resolves as soon as the world is built.
+    this._shaderReady = true;
 
     // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
     // longer re-schedules itself via requestAnimationFrame.
     this.renderer.setAnimationLoop(this.#tick);
 
-    // One-time top-down render of the world for the map. Runs now that the
-    // render loop is live (so every lighting system — sun, world lights, sky,
-    // water — is frame-driven), forced to day, while the welcome overlay still
-    // covers the screen. The map is never re-rendered after this, so opening it
-    // later is a pure canvas blit with zero frame cost.
-    this.#captureMapSnapshot();
+    // The loop is now live but the loading screen still covers the canvas. Hold
+    // boot here for a few REAL frames so the cold-cache pipeline compiles (scene
+    // pass + post-FX) burn off BEHIND the loader instead of as a visible 1–2s
+    // glitch the instant the world is revealed. #waitFrames advances on the live
+    // loop, so it naturally waits through the heavy first compile frame. Capped
+    // so a slow GPU still reveals promptly rather than hanging here.
+    await Promise.race([
+      this.#waitFrames(5),
+      new Promise((r) => setTimeout(r, 2500)),
+    ]);
+
+    // Background warm: compileAsync is off-thread (KHR_parallel_shader_compile
+    // on WebGL2, async pipeline creation on WebGPU) so firing it un-awaited
+    // warms scene pipelines while the cinematic plays, shrinking the per-frame
+    // lazy-compile hitches — without ever blocking the reveal. Best-effort.
+    this.shaderPrewarmPromise = this.#warmShadersInBackground().catch((err) =>
+      console.warn("[App] background shader warm failed:", err),
+    );
+
     this.#scheduleDeferredAnimationWarmup();
+    // The one-time top-down map render compiles ~the whole scene synchronously,
+    // so running it inline would re-freeze the loader. Defer it behind the
+    // cinematic (idle callback); the map overlay tolerates a not-yet-ready
+    // snapshot for the first second or two.
+    this.#scheduleMapSnapshot();
+    // Distant world systems (lava + hazard, bonfires, animals/air dancers,
+    // world point lights) all sit away from the spawn pad — stream them in
+    // after the first frame so they don't delay the reveal. Tick guards each.
+    this.#scheduleDeferredWorldSystems();
     if (this.debug?.enabled) {
       console.log(
         `[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`,
       );
     }
     return { character: characterResult, world: worldResult };
+  }
+
+  /**
+   * Construct the away-from-spawn world systems after launch (lava + hazard,
+   * bonfires, animated animals/dancers, world point lights). Extracted from the
+   * old inline "Phase F" so the reveal isn't blocked on their meshes/textures/
+   * light-count shader recompiles. Idempotent-ish: only runs once. Every
+   * consumer null-guards these, so they simply appear a beat after spawn.
+   */
+  #scheduleDeferredWorldSystems() {
+    const run = async () => {
+      const v3refs = this.world?.glb?.refs;
+      if (!v3refs || this.lava || this.bonfires) return; // already done / no refs
+      try {
+        // worldLights is built at boot (not here) — adding lights post-reveal
+        // recompiles every lit material → character flicker. See boot().
+        this.bonfires = await new Bonfires(
+          this.scene,
+          v3refs,
+          this.wind,
+        ).load();
+        this.lava = new Lava(this.scene, this.wind, v3refs, this.physics);
+        // Hazard reads player.character lazily at sink time, so wiring it now is fine.
+        if (this.player) {
+          this.wasted = new Wasted();
+          this.lavaHazard = new LavaHazard({
+            player: this.player,
+            lava: this.lava,
+            wasted: this.wasted,
+            achievements: this.achievements,
+          });
+        }
+        this.animatedProps = new AnimatedProps(
+          this.scene,
+          this.world.terrain,
+          v3refs,
+          this.physics,
+        );
+        // Fireflies are a night-only effect — build them now (post-spawn) and
+        // wire them into the day/night driver so they light up when night
+        // arrives. Invisible during the forced day-start, so no rush.
+        if (!this.fireflies) {
+          this.fireflies = new Fireflies(this.scene, {
+            count: this.quality.fireflyCount,
+          });
+          if (this.timeOfDay) this.timeOfDay.fireflies = this.fireflies;
+        }
+      } catch (err) {
+        console.warn("[App] deferred world systems failed:", err);
+      }
+    };
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => run(), { timeout: 2500 });
+    } else {
+      setTimeout(run, 1200);
+    }
+
+    // First load always opens on DAY; ~12s after spawn, ease to the visitor's
+    // real local time and resume the automatic day/night cycle.
+    setTimeout(() => this.timeOfDay?.easeToClock?.(), 12000);
+
+    // Rain was forced off so the spawn is clear — switch it on ~5s after launch
+    // (only if it was wanted; a visitor who'd disabled it stays dry). setEnabled
+    // is the wrapped version, so the auto-storm + button sync in lockstep.
+    if (this._rainWanted) {
+      setTimeout(() => this.rain?.setEnabled?.(true), 5000);
+    }
+
+    // Leaves were held off the spawn frame — release them ~8s after launch.
+    // From here the tick keeps them suppressed whenever it's snowing.
+    setTimeout(() => { this._leavesUnlocked = true; }, 8000);
   }
 
   #scheduleDeferredAnimationWarmup() {
@@ -1073,7 +1096,13 @@ export class App extends EventTarget {
     const out = [];
     const add = (id, center, landing) => {
       const m = meta[id] ?? { id, name: id, color: "#d4a017" };
-      out.push({ id, name: m.name, color: m.color, position: [center.x, 0, center.z], landing });
+      out.push({
+        id,
+        name: m.name,
+        color: m.color,
+        position: [center.x, 0, center.z],
+        landing,
+      });
     };
 
     const hut = this.projectsHut;
@@ -1369,24 +1398,6 @@ export class App extends EventTarget {
     this._slowMoLeft = duration;
   }
 
-  /**
-   * The "felt" half of an achievement unlock — a camera punch and (for the
-   * rarer tiers) a brief slow-mo so the moment lands like a game beat instead
-   * of a passive notification. Scaled by rarity; commons stay subtle so the
-   * early-game flurry (first steps, journey begins…) doesn't feel spammy.
-   * Skipped inside the Colour Garden, which already drives its own slow-mo.
-   */
-  #playUnlockBeat(rarity) {
-    if (this.colourGarden?.inGameMode) return;
-    // Commons are banner-only (they fire in clusters during the movement
-    // tutorial — a camera shake there reads as a glitch). Rare+ get a punch,
-    // epic/legendary additionally freeze the world for a beat.
-    const punch = { rare: 0.22, epic: 0.34, legendary: 0.5 }[rarity] ?? 0;
-    if (punch > 0) this.playerCamera?.addImpulse?.(punch);
-    if (rarity === 'epic') this.triggerSlowMo(0.4, 0.7);
-    else if (rarity === 'legendary') this.triggerSlowMo(0.28, 1.1);
-  }
-
   #tick = () => {
     // Skip 5 of every 6 frames while the tab is hidden. Don't burn the
     // clock's delta on the skipped frames — getDelta() is only called on
@@ -1468,10 +1479,14 @@ export class App extends EventTarget {
     // Grass's wind sway is driven by the shared Wind clock; the per-frame work
     // here is feeding player position/speed so blades bend while walking and
     // ripple locally around the legs while running.
+    const camFwd = (this._camFwd ??= new THREE.Vector3());
+    this.camera.getWorldDirection(camFwd);
     this.grass?.setPlayerPos(this.player.position, {
       velocity: sample?.velocity,
       speed: sample?.speed ?? 0,
       running: this.player.controller.isRunning,
+      camDir: { x: camFwd.x, z: camFwd.z },
+      camPos: { x: this.camera.position.x, z: this.camera.position.z },
     });
     // Foliage parts/flutters around the player (bushes at walking height,
     // canopies when jumped into) — driven by the player's 3D position.
@@ -1501,7 +1516,8 @@ export class App extends EventTarget {
     // prompts don't appear over the mini-game HUD.
     if (this.actionPrompts && !inGarden)
       this.actionPrompts.tick(this.player.position, frameDelta);
-    if (this.interaction && !inGarden) this.interaction.tick(this.player.position);
+    if (this.interaction && !inGarden)
+      this.interaction.tick(this.player.position);
     if (this.skillSphere) this.skillSphere.update(frameDelta);
     if (this.projectsHut) this.projectsHut.update(frameDelta);
     if (this.contactBoard) this.contactBoard.update(elapsed);
@@ -1509,7 +1525,7 @@ export class App extends EventTarget {
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
-    this.fireflies.update(elapsed);
+    if (this.fireflies) this.fireflies.update(elapsed);
     if (this.groundBreak) this.groundBreak.update(frameDelta);
     if (this.water) {
       // Rain wetness drives the water's rain-impact rings.
@@ -1524,6 +1540,9 @@ export class App extends EventTarget {
     this.snow.update(scaledDelta);
     this.thunderstorm.update(frameDelta, this.player.position);
     this.windLines.update(scaledDelta, this.player.position);
+    // Leaves only fall once released (~8s post-spawn) and never while it snows —
+    // autumn drift and a snowstorm can't share the sky.
+    this.leaves.setActive(this._leavesUnlocked && !this.weather.isSnowing);
     this.leaves.update(scaledDelta, this.player.position);
     const _grounded = this.player._grounded !== false;
     this.footprints.update(frameDelta);
@@ -1600,8 +1619,7 @@ export class App extends EventTarget {
       const waterDepth = Math.max(0, Player.WATER_SURFACE_Y - groundY);
       // Gate on the player's feet height (ppos.y is feet) so standing on a
       // bridge deck over the pond/river doesn't register as in-water.
-      const inWater =
-        waterDepth > 0 && ppos.y <= Player.WATER_SURFACE_Y + 0.1;
+      const inWater = waterDepth > 0 && ppos.y <= Player.WATER_SURFACE_Y + 0.1;
       this.achievements.tick(frameDelta, {
         playerPos: ppos,
         moving: !!sample?.moving,

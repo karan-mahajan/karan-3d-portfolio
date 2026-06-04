@@ -209,8 +209,10 @@ const CYCLE_SECONDS = 150; // 2.5-minute full cycle
 const NIGHT_THRESHOLD = 0.5833;
 // Night should pass quickly — the dark arc (NIGHT_THRESHOLD→1.0 ≈ 42% of the
 // cycle ≈ 62s at the base rate) is fast-forwarded to NIGHT_SECONDS wall-clock.
-// Day keeps the slow base rate, so we get long days + short nights.
-const NIGHT_SECONDS = 10;
+// Day keeps the slow base rate, so we get long days + short nights. The night
+// arc is split into ~12s dusk→night + ~10s dark hold + ~12s night→dawn
+// (CYCLE_STOPS 0.73 / 0.853), so NIGHT_SECONDS ≈ that sum; no sub-phase < 10s.
+const NIGHT_SECONDS = 34;
 const NIGHT_SPEEDUP = ((1 - NIGHT_THRESHOLD) * CYCLE_SECONDS) / NIGHT_SECONDS;
 // The four selectable phases and the cycle position each one peaks at. The UI
 // lets the visitor jump to any of these; the cycle then keeps advancing.
@@ -219,9 +221,26 @@ const PHASE_ORDER = ["dawn", "day", "dusk", "night"];
 // Keyframe stops around the cycle (sorted; DAWN repeats at 1.0 for the wrap).
 const CYCLE_STOPS = [
   { at: 0.0, palette: DAWN_PALETTE },
+  // DAWN is likewise held flat (0.0→0.06) so the sunrise lingers instead of
+  // immediately lerping toward day. This stretch runs at the base day rate
+  // (1/CYCLE_SECONDS progress/s), so 0.06 span ≈ 9s of held dawn.
+  { at: 0.06, palette: DAWN_PALETTE },
   { at: 0.3, palette: DAY_PALETTE },
+  // DUSK is held flat (0.513→0.58) too, so golden hour lingers instead of
+  // peaking for an instant and then being rushed into night by the speed-up
+  // that kicks in at NIGHT_THRESHOLD (0.5833). This plateau sits entirely on
+  // the slow base-rate side, so its 0.067 span ≈ 10s of held dusk. 0.58 (dusk
+  // phase peak) is the plateau's end, so jumping to "dusk" lands in full dusk.
+  { at: 0.513, palette: DUSK_PALETTE },
   { at: 0.58, palette: DUSK_PALETTE },
-  { at: 0.75, palette: NIGHT_PALETTE },
+  // NIGHT is held flat across a plateau (0.73→0.853) rather than touched at a
+  // single instant, so the dark phase actually lingers instead of ramping
+  // dusk→night→dawn straight through. Plateau width × NIGHT_SECONDS sets how
+  // long it reads as truly dark (≈10s here); 0.75 (night phase peak) sits
+  // inside it so jumping to "night" lands in full dark. The wider dusk→night
+  // (0.5833→0.73) and night→dawn (0.853→1.0) spans give ~12s twilight ramps.
+  { at: 0.73, palette: NIGHT_PALETTE },
+  { at: 0.853, palette: NIGHT_PALETTE },
   { at: 1.0, palette: DAWN_PALETTE },
 ];
 // Palette fields interpolated each frame: colours (lerped in RGB) + scalars.
@@ -312,12 +331,13 @@ export class TimeOfDay {
 
     // ── Continuous-cycle state ──
     // `_raw` is the raw progress accumulator (may run past 1.0 mid-tween); the
-    // public `progress` getter normalises it to [0,1). Init from the real
-    // clock so first load matches the actual time of day, then auto-advance.
-    this._raw = progressFromClock();
-    // When the user clicks the toggle the cycle pauses (and a gsap tween drives
-    // `_raw` to the target phase); auto-advance resumes only if unpaused.
-    this.paused = false;
+    // public `progress` getter normalises it to [0,1). FIRST LOAD ALWAYS OPENS
+    // ON DAY: visitors should land in a bright, readable world regardless of
+    // their local time. `paused` holds the cycle on the day peak until
+    // easeToClock() (scheduled ~12s after spawn) settles to the real local time
+    // and resumes the automatic cycle.
+    this._raw = 0.3; // day peak
+    this.paused = true; // hold day until easeToClock() runs
     this._mode = this.#modeAt(this.progress);
     this._tween = null;
 
@@ -409,6 +429,35 @@ export class TimeOfDay {
     });
     if (phase === "night" || phase === "dusk") this.achievements?.onToggleNight?.();
     else this.achievements?.onToggleDay?.();
+  }
+
+  /**
+   * Ease from the forced day-start to the REAL local-clock time, then resume
+   * the automatic cycle. Called ~12s after spawn so visitors always open on a
+   * bright day, which then settles to the actual time of day. Eases FORWARD
+   * (sky never runs backwards); if it's already daytime the change is a no-op
+   * resume.
+   */
+  easeToClock(duration = 4.0) {
+    this._tween?.kill?.();
+    const target = progressFromClock();
+    const fwd = (((target - this.progress) % 1) + 1) % 1; // forward distance [0,1)
+    if (fwd < 0.04) {
+      // Real time is already ~day — just hand back to the automatic cycle.
+      this.paused = false;
+      return;
+    }
+    this.paused = true;
+    this._tween = gsap.to(this, {
+      _raw: this._raw + fwd,
+      duration,
+      ease: "sine.inOut",
+      onComplete: () => {
+        this._raw = ((this._raw % 1) + 1) % 1;
+        this._tween = null;
+        this.paused = false;
+      },
+    });
   }
 
   /** Advance the selector to the next phase in order (dawn→day→dusk→night→…). */

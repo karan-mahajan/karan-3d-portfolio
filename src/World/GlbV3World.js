@@ -355,7 +355,7 @@ export class GlbV3World {
 
     // 0b. Tile/slab art for the painted paths. Sampled by world XZ in the
     // terrain ground material; tolerate failure (paths fall back to flat stone).
-    const tileFile = manifest.tileTexture ?? "tiles.png";
+    const tileFile = manifest.tileTexture ?? "tiles.webp";
     const tilePromise = this.loader
       .loadTexture(GlbV3World.ASSET_BASE + tileFile)
       .then((tex) => {

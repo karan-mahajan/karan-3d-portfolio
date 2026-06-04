@@ -87,39 +87,18 @@ export class IntroCinematic {
     const groundY = this.terrain ? this.terrain.heightAt(0, 0) : 0;
     this._groundY = groundY;
 
-    if (IntroCinematic.prefersReducedMotion() || !this.player.character) {
-      this.#instantLand(groundY);
-      this.#finish();
-      return Promise.resolve();
-    }
-
-    // Freeze the player: input + motion off, animation + camera-follow stay on.
-    this.player.freeze();
-    this.playerCamera.locked = true;
-
-    // Place the character high above spawn, facing north, falling.
-    const g = this.player.group;
-    g.position.set(0, groundY + FALL_HEIGHT, 0);
-    g.rotation.set(0, 0, 0);
-    this.player._currentYaw = 0;
-    this.player._targetYaw = 0;
-    this.player._tiltX = 0;
-    this.player._tiltZ = 0;
-    this.player.character.play('falling', { fade: 0.1 });
-
-    // Camera keyframes. Start high and to the side (wide world-reveal); end at
-    // the normal resting third-person offset behind the player.
-    const mobileZoom = this.playerCamera._mobileZoom ?? 1;
-    this._startCamPos.set(11, groundY + FALL_HEIGHT + 6, -19);
-    this.#sphericalOffset(REST_DIST * mobileZoom, REST_AZ, REST_POLAR, this._tmp);
-    this._endCamPos.set(0, groundY + HEAD, 0).add(this._tmp);
-
-    this._t = 0;
-    this._impactDone = false;
-    this._phase = 'descent';
-    this.active = true;
-
-    return new Promise((resolve) => { this._resolve = resolve; });
+    // Hero descent removed (2026-06): the aerial fall framed the ENTIRE island
+    // at once — the worst-case view for the GPU (maximum geometry in the
+    // frustum) and the worst moment to show it (shaders still warming on a cold
+    // load), so the first impression was a laggy half-built world seen from the
+    // sky. Spawning straight in at ground level gives a tight, cheap-to-render
+    // view that's ready immediately. The descent code below (#impact/#handoff/
+    // update + keyframe fields) is retained but dormant — `active` never flips
+    // true, so App's tick never drives it.
+    this.#instantLand(groundY);
+    this.onLanded?.();
+    this.#finish();
+    return Promise.resolve();
   }
 
   /** Per-frame, called from App's tick while active. */

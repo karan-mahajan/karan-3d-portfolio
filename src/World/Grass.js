@@ -78,6 +78,10 @@ const DRY_FRACTION = 0.1;
 // [PRESENCE..FULL] → height [MIN_VISIBLE..1] so any grassy land grows a
 // near-full blade. Raise MIN_VISIBLE / lower FULL_AT for even denser cover.
 const GRASS_CULL = 0.03; // G ≤ this → no blade at all
+// View cull: a blade whose direction-from-camera dots BELOW this against the
+// camera forward is clearly behind the view and gets lifted out. -0.35 ≈ >110°
+// off-axis, so it only drops blades well outside the frustum (no edge pop).
+const GRASS_VIEW_CULL = -0.35;
 const GRASS_PRESENCE = 0.03; // G where blades start growing
 const GRASS_FULL_AT = 0.42; // G where blades reach full height
 const GRASS_MIN_VISIBLE = 0.55; // blade height floor wherever any grass exists
@@ -249,6 +253,9 @@ export class Grass {
     this.uPlayerDir = uniform(vec2(0, 1));
     this.uPlayerSpeed = uniform(0);
     this.uPlayerRunning = uniform(0);
+    // Camera XZ forward + position for the view cull (see GRASS_VIEW_CULL).
+    this.uCameraDir = uniform(vec2(0, 1));
+    this.uCameraPos = uniform(vec2(0, 0));
 
     const invSpan = 1 / (this.gridBounds * 2);
 
@@ -371,6 +378,14 @@ export class Grass {
       // now keeps a full blade.
       world.y.addAssign(step(maskG, GRASS_CULL).mul(100.0));
 
+      // View cull — the window wraps 360° around the player but only the
+      // forward wedge is on-screen, so lift blades clearly BEHIND the camera
+      // out of view. Roughly halves rendered blades with no visible change.
+      const toCam = worldXZ.sub(this.uCameraPos).toVar();
+      const camDist = max(length(toCam), 0.001);
+      const viewDot = toCam.div(camDist).dot(this.uCameraDir);
+      world.y.addAssign(step(viewDot, GRASS_VIEW_CULL).mul(100.0));
+
       vBladeH.assign(hb);
       vDry.assign(dry);
       return world;
@@ -427,6 +442,15 @@ export class Grass {
     this.uPlayerDir.value.copy(this._lastMoveDir);
     this.uPlayerSpeed.value = speed;
     this.uPlayerRunning.value = state.running ? 1 : 0;
+
+    // Camera XZ forward + position drive the view cull. Normalised in the XZ
+    // plane (camera pitch is irrelevant to a horizontal behind/in-front test).
+    if (state.camDir) {
+      this.uCameraDir.value.set(state.camDir.x, state.camDir.z).normalize();
+    }
+    if (state.camPos) {
+      this.uCameraPos.value.set(state.camPos.x, state.camPos.z);
+    }
   }
 
   /** Day/night tint (TimeOfDay.applyInstant) — normalised against the day ref. */

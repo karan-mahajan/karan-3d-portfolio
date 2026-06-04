@@ -47,9 +47,14 @@ const SPIN_MAX = 1.2;
 // Recycle fade: when an over-pool settled leaf is chosen for recycling we
 // shrink it to 0 over FADE_DURATION before respawning at the top.
 const FADE_DURATION = 0.5;
-// Lift settled leaves a hair above the heightfield to avoid Z-fighting
-// against the painted terrain.
-const SETTLE_LIFT = 0.02;
+// Lift settled leaves clear of the heightfield. 0.02 was barely above the
+// painted terrain — flat, edge-on and often lost in the grass base, so leaves
+// looked like they vanished the instant they landed. A larger lift keeps the
+// resting quad readable from the third-person camera without floating.
+const SETTLE_LIFT = 0.06;
+// Settled leaves lie flat (near edge-on from a low camera) so they read much
+// smaller than a tumbling one. Scale the resting quad up so it stays visible.
+const SETTLE_SCALE = 1.6;
 // Only settle when the heightfield is above this — under it we're over the
 // shore slope / ocean and the leaf should respawn instead of resting on water.
 const SETTLE_MIN_GROUND_Y = 0.0;
@@ -82,6 +87,10 @@ export class Leaves {
     this.count = Math.max(8, Math.floor(count));
     this.maxSettled = Math.max(0, Math.floor(maxSettled));
     this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
+    // Runtime gate, separate from the persisted `enabled` toggle. App holds
+    // leaves off the spawn frame and suppresses them while it's snowing — both
+    // without overwriting the visitor's saved leaves-on/off preference.
+    this._active = true;
 
     this.#buildMesh();
     this.mesh.visible = this.enabled;
@@ -269,11 +278,19 @@ export class Leaves {
   // ── Toggle ───────────────────────────────────────────────────────────────
   setEnabled(value) {
     this.enabled = value;
-    this.mesh.visible = value;
+    this.mesh.visible = value && this._active;
     localStorage.setItem(STORAGE_KEY, value ? '1' : '0');
     this.#updateButton();
   }
   toggle() { this.setEnabled(!this.enabled); }
+
+  /** Runtime suppression that does NOT touch the persisted preference. App
+   *  drives this each frame: false during the spawn hold and while it snows. */
+  setActive(value) {
+    if (this._active === value) return;
+    this._active = value;
+    this.mesh.visible = this.enabled && value;
+  }
 
   #installButton() {
     const btn = document.createElement('button');
@@ -299,7 +316,7 @@ export class Leaves {
    * @param {THREE.Vector3} playerPos
    */
   update(delta, playerPos) {
-    if (!this.enabled) return;
+    if (!this.enabled || !this._active) return;
 
     this._elapsed += delta;
     const dir = this.wind.uniforms.uWindDir.value;
@@ -392,7 +409,7 @@ export class Leaves {
     this.settled[i] = 1;
     this.settledYaw[i] = Math.random() * Math.PI * 2;
     this.landedAt[i] = this._elapsed;
-    this.scales[i] = 1.0;
+    this.scales[i] = SETTLE_SCALE;
     this._settledCount++;
   }
 

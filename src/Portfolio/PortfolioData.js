@@ -18,7 +18,7 @@
 export const portfolio = {
   name: "Karan Mahajan",
   title: "Full Stack Developer",
-  photo: "/textures/screenshots/karan.jpg",
+  photo: "/textures/screenshots/karan.webp",
   projects: [
     {
       name: "Alectra Utilities",
@@ -33,7 +33,7 @@ export const portfolio = {
       links: { live: "https://alectrautilities.com", github: null, caseStudy: null },
       url: "https://alectrautilities.com",
       color: "#00e5ff",
-      image: "/textures/screenshots/alectra.png",
+      image: "/textures/screenshots/alectra.webp",
     },
     {
       name: "RPRA Website",
@@ -63,7 +63,7 @@ export const portfolio = {
       links: { live: "", github: null, caseStudy: null },
       url: "",
       color: "#39ff14",
-      image: "/textures/screenshots/interstone.png",
+      image: "/textures/screenshots/interstone.webp",
     },
     {
       name: "findabl",
@@ -78,7 +78,7 @@ export const portfolio = {
       links: { live: "", github: null, caseStudy: null },
       url: "",
       color: "#ff6b9d",
-      image: "/textures/screenshots/findabl.png",
+      image: "/textures/screenshots/findabl.webp",
     },
     {
       name: "Trimark Windows",

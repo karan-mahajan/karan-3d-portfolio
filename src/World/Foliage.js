@@ -103,11 +103,14 @@ export class Foliage {
    * @param {Array<{key:string, refs:Array<{position:THREE.Vector3, scale:number}>,
    *                colorA:string, colorB:string}>} clouds
    */
-  constructor(scene, wind, sdfTexture, clouds = []) {
+  constructor(scene, wind, sdfTexture, clouds = [], { shell = true } = {}) {
     this.scene = scene;
     this.wind = wind;
     this.sdf = sdfTexture;
     this.clouds = [];
+    // When false (medium/low tiers) the leaf-card shell overdraw pass is
+    // skipped — foliage renders as just the opaque core blob to save fill-rate.
+    this.shellEnabled = shell;
 
     // Two-tone lighting direction (lit vs shaded side of the blob), pushed each
     // frame from TimeOfDay.sunOffset via setSunDirection(). Seeded to a daytime
@@ -262,7 +265,6 @@ export class Foliage {
     // Per-instance attributes (shared between core + shell so they stay glued).
     const attribs = this.#instanceAttribs(refs, cloud.key);
     const coreGeom = this.#instanced(this.coreGeometry, attribs, refs.length);
-    const shellGeom = this.#instanced(this.shellGeometry, attribs, refs.length);
 
     // 1. Opaque core — fills the interior so the blob is never see-through.
     const coreMat = new MeshLambertNodeMaterial({ side: THREE.FrontSide });
@@ -275,27 +277,33 @@ export class Foliage {
     core.frustumCulled = false;
     core.castShadow = false;
     core.receiveShadow = true;
-
-    // 2. Leaf-card shell — ragged SDF edge over the core.
-    const shellMat = new MeshLambertNodeMaterial({ side: THREE.DoubleSide });
-    shellMat.positionNode = this.#positionNode();
-    shellMat.normalNode = this.#normalNode();
-    shellMat.opacityNode = Fn(() => {
-      const angle = this.wind.offsetNode(attribute('aCenter').xz).length().mul(WIND_FLUTTER);
-      const rotated = rotateUV(uv(), angle, vec2(0.5));
-      return texture(this.sdf, rotated).r;
-    })();
-    shellMat.alphaTest = SDF_THRESHOLD;
-    shellMat.colorNode = this.#colorNode(colorANode, colorBNode);
-    shellMat.emissiveNode = snowEmissive(snowMask({ low: 0.25, high: 0.7 }));
-    const shell = new THREE.Mesh(shellGeom, shellMat);
-    shell.name = `foliage:${cloud.key}`;
-    shell.frustumCulled = false;
-    shell.castShadow = false;
-    shell.receiveShadow = true;
-
     this.scene.add(core);
-    this.scene.add(shell);
+
+    // 2. Leaf-card shell — ragged SDF edge over the core. Skipped on
+    // medium/low tiers (this.shellEnabled === false) to save the overdraw pass.
+    let shell = null;
+    let shellGeom = null;
+    let shellMat = null;
+    if (this.shellEnabled) {
+      shellGeom = this.#instanced(this.shellGeometry, attribs, refs.length);
+      shellMat = new MeshLambertNodeMaterial({ side: THREE.DoubleSide });
+      shellMat.positionNode = this.#positionNode();
+      shellMat.normalNode = this.#normalNode();
+      shellMat.opacityNode = Fn(() => {
+        const angle = this.wind.offsetNode(attribute('aCenter').xz).length().mul(WIND_FLUTTER);
+        const rotated = rotateUV(uv(), angle, vec2(0.5));
+        return texture(this.sdf, rotated).r;
+      })();
+      shellMat.alphaTest = SDF_THRESHOLD;
+      shellMat.colorNode = this.#colorNode(colorANode, colorBNode);
+      shellMat.emissiveNode = snowEmissive(snowMask({ low: 0.25, high: 0.7 }));
+      shell = new THREE.Mesh(shellGeom, shellMat);
+      shell.name = `foliage:${cloud.key}`;
+      shell.frustumCulled = false;
+      shell.castShadow = false;
+      shell.receiveShadow = true;
+      this.scene.add(shell);
+    }
 
     this.clouds.push({
       key: cloud.key, mesh: shell, core, coreGeom, shellGeom,
@@ -367,11 +375,11 @@ export class Foliage {
 
   dispose() {
     for (const c of this.clouds) {
-      this.scene.remove(c.mesh);
+      if (c.mesh) this.scene.remove(c.mesh); // shell may be gated off (medium/low)
       this.scene.remove(c.core);
       c.coreGeom?.dispose();
       c.shellGeom?.dispose();
-      c.material.dispose();
+      c.material?.dispose();
       c.coreMat.dispose();
     }
     this.shellGeometry?.dispose();

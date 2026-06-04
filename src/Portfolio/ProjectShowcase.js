@@ -78,7 +78,14 @@ export class ProjectShowcase {
     this.items = [];
     this.#buildScreen();
     this.#applyIndex(0, /*immediate*/ true);
-    this.#kickOffImagePreload();
+    // Project screens aren't visible until the player walks up to them, so the
+    // art must NOT compete with the world's assets during boot. Preload when
+    // the browser is idle (after the critical load), not in the constructor.
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => this.#kickOffImagePreload(), { timeout: 8000 });
+    } else {
+      setTimeout(() => this.#kickOffImagePreload(), 4000);
+    }
   }
 
   // ── Build ────────────────────────────────────────────────────────────────
