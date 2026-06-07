@@ -329,12 +329,35 @@ export class GlbV3World {
   /** Load + parse the world per the manifest, populate buckets, run assertions. */
   async load(physics, opts = {}) {
     this.audio = opts.audio ?? null;
+
+    // Boot-phase timing — gated behind ?timing=1 so it's silent normally. Each
+    // mark() records the elapsed time since the previous mark; the breakdown is
+    // logged at the end. Use this to find the real synchronous bottleneck (the
+    // multi-second main-thread block reported on the WebGL2 fallback) before
+    // restructuring the load — the material consolidation + chunk merge are the
+    // prime suspects, but measure, don't guess.
+    // Stashed INCREMENTALLY on window.__worldTiming (initialised here) so it
+    // survives a partial/failed parse — the last entry shows which phase was
+    // reached before it stopped. Read with `__worldTiming` in the console.
+    const timing = window.location?.search?.includes("timing");
+    const _tStart = performance.now();
+    let _tPrev = _tStart;
+    window.__worldTiming = [];
+    const mark = (label) => {
+      const now = performance.now();
+      const ms = now - _tPrev;
+      _tPrev = now;
+      window.__worldTiming.push(`${ms.toFixed(1)}ms  ${label}`);
+      if (timing) console.log(`[world] ${ms.toFixed(1)}ms  ${label}`);
+    };
+
     const manifest = await fetch(GlbV3World.MANIFEST_PATH).then((r) => {
       if (!r.ok)
         throw new Error(`GlbV3World: manifest fetch failed (${r.status})`);
       return r.json();
     });
     this.manifest = manifest;
+    mark("manifest fetch");
 
     if (manifest.grassGrid?.bounds)
       this.grassGrid.bounds = manifest.grassGrid.bounds;
@@ -385,6 +408,7 @@ export class GlbV3World {
       });
 
     await Promise.all([maskPromise, tilePromise]);
+    mark("mask + tile textures");
 
     // 1. Monolithic geometry — load all in parallel, add to the scene.
     const monolithic = manifest.monolithic ?? [];
@@ -402,6 +426,7 @@ export class GlbV3World {
           }),
       ),
     );
+    mark(`GLB load + parse (${loaded.filter(Boolean).length} files)`);
 
     for (const item of loaded) {
       if (!item) continue;
@@ -448,6 +473,8 @@ export class GlbV3World {
       }
     }
 
+    mark("per-system processing (terrain bake, colliders, tree foliage)");
+
     if (physics?.ready) this.#registerBridgeColliders(physics);
     // Footstep-surface footprints for flat stone props. MUST run before the
     // static-chunk merge below (line ~440) — the merge erases the slab/
@@ -456,6 +483,7 @@ export class GlbV3World {
     // Stamp those flat-stone footprints into the grass mask so blades don't
     // poke up through the slab tops (the mask alone doesn't carve them out).
     this.#carveGrassMaskHoles();
+    mark("bridge colliders + stone surfaces + grass-mask carve");
 
     // 1b. Instanced bricks — the authored stone paving (pave/kerb/pile). Other
     // instanced systems (rocks/flowers) stay deferred; only bricks are wired so
@@ -469,6 +497,7 @@ export class GlbV3World {
         physics,
       );
     }
+    mark("instanced bricks");
 
     // 1c. Instanced rocks (SOLID — exact trimesh colliders added inside
     // #loadInstancedSystem). The reference empties carry baked world matrices, so
@@ -478,6 +507,7 @@ export class GlbV3World {
       (e) => e.system === "rocks",
     );
     if (rocksEntry) await this.#loadInstancedSystem(rocksEntry, physics);
+    mark("instanced rocks (trimesh colliders)");
 
     // Flowers are NOT static InstancedMeshes — the Flowers class (App.boot, needs
     // the shared Wind) builds them as wind-swaying, player-parting clumps. Collect
@@ -487,6 +517,7 @@ export class GlbV3World {
     );
     if (flowersEntry)
       this.flowerGroups = await this.#collectFlowerGroups(flowersEntry);
+    mark("flower groups");
 
     // 2. Colliders — parse the proxy GLB, build Rapier shapes, discard meshes.
     if (manifest.colliders?.file && physics) {
@@ -495,6 +526,7 @@ export class GlbV3World {
         physics,
       );
     }
+    mark("colliders.glb");
 
     // 3. References — typed empties map (kept live under root for pivots).
     if (manifest.references?.file) {
@@ -502,10 +534,18 @@ export class GlbV3World {
         GlbV3World.ASSET_BASE + manifest.references.file,
       );
     }
+    mark("references.glb");
 
     this.#consolidateBakedWorldMaterials();
+    mark("material consolidation");
     this.#mergeStaticWorldChunks();
+    mark("static chunk merge");
     this.#assertBootInvariants();
+    mark("boot invariants");
+
+    const _total = performance.now() - _tStart;
+    window.__worldTiming.push(`=== total ${_total.toFixed(0)}ms ===`);
+    if (timing) console.log(`[world] DONE total ${_total.toFixed(0)}ms`);
     return this;
   }
 

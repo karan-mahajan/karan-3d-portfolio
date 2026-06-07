@@ -70,6 +70,11 @@ import { World } from "./World/World.js";
  * Core application: scene, renderer, camera, render loop, async asset boot.
  */
 export class App extends EventTarget {
+  // Per-tab counter of stalled WebGPU init attempts (sessionStorage). After two
+  // stalls the renderer is rebuilt on WebGL2 (#initRenderer); a clean init
+  // clears it so the next visit tries WebGPU again.
+  static GPU_RETRY_KEY = "karan-portfolio:gpu-init-retry";
+
   constructor() {
     super();
     this.canvas = document.getElementById("canvas");
@@ -410,9 +415,29 @@ export class App extends EventTarget {
   /** Loads characters / models; resolves to a summary the loader UI can use. */
   async boot() {
     const bootStart = performance.now();
+    // Boot-phase timing — gated behind ?timing=1 (pairs with the finer-grained
+    // breakdown inside GlbV3World.load). Shows how much of total boot is the
+    // world parse vs renderer/physics init vs character vs portfolio wiring.
+    // Stashed INCREMENTALLY on window.__bootTiming (initialised here, before the
+    // first await) so it survives a partial/failed boot — the last entry shows
+    // exactly which phase was reached before it stopped. Read with `__bootTiming`
+    // in the console. `undefined` there means a stale bundle (this code never
+    // ran); `[]` means boot died before even renderer.init finished.
+    const timing = window.location?.search?.includes("timing");
+    let _tBoot = bootStart;
+    window.__bootTiming = [];
+    const bootMark = (label) => {
+      const now = performance.now();
+      const ms = now - _tBoot;
+      _tBoot = now;
+      window.__bootTiming.push(`${ms.toFixed(1)}ms  ${label}`);
+      if (timing) console.log(`[boot] ${ms.toFixed(1)}ms  ${label}`);
+    };
     // WebGPURenderer is constructed synchronously but must finish its async
-    // device/adapter handshake before any render/compute runs.
-    await this.renderer.init();
+    // device/adapter handshake before any render/compute runs. That handshake
+    // can stall for tens of seconds under GPU-process contention, so guard it
+    // with a timeout + auto-reload + WebGL2 fallback instead of hanging at 5%.
+    await this.#initRendererWithFallback();
     // Many laptops/browsers lack WebGPU — WebGPURenderer then silently falls
     // back to WebGL2. Log which backend we got so a frozen-on-load report can
     // be traced (the slow first-visit compile differs sharply between the two).
@@ -424,7 +449,9 @@ export class App extends EventTarget {
     // after init(). Detects which compressed formats this GPU supports so the
     // transcoder picks the right path for any KTX2 textures.
     this.loader.attachRenderer(this.renderer);
+    bootMark("renderer.init");
     await this.physics.init();
+    bootMark("physics.init");
 
     // Phase 1 of World v2: the heightfield is now baked from world.glb so
     // physics.addStaticGround MUST run after world.loadAssets — the terrain
@@ -440,19 +467,20 @@ export class App extends EventTarget {
     });
 
     const worldResult = await worldLoadPromise;
+    bootMark("world.loadAssets");
     this.physics.addStaticGround(this.world.terrain);
 
     // Grass — v3 runtime TSL blade field. Built now that the terrain
     // heightfield + Blender grass mask exist. Blade count scales with the
     // quality tier (√multiplier keeps the per-blade area roughly constant).
-    // The base below was lowered from the original 820 to cut grass blade
-    // count (N² over the ~76 m window) — the biggest steady-FPS lever on
-    // desktop GPUs, since the field was oversampled (~116 blades/m² at 820,
-    // far past Bruno's lush look). The 0.5 m arched blades still overlap into
-    // a full carpet well below 820; tune the base to taste.
+    // The base below was lowered 820 → 400 → 300 to cut grass blade count
+    // (N² over the ~76 m window) — the biggest steady-FPS lever on desktop GPUs
+    // and the WebGL2 fallback, since the field was oversampled (~116 blades/m²
+    // at 820). 300 high-tier = 90k blades, just above Bruno's ~78k (280²); the
+    // 0.5 m arched blades still overlap into a full carpet. Tune to taste.
     const grassSub = Math.max(
       64,
-      Math.round(400 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
+      Math.round(280 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
     );
     this.grass = new Grass(
       this.scene,
@@ -478,7 +506,9 @@ export class App extends EventTarget {
     );
     this.playerCamera.follow(this.player.position, true);
 
+    bootMark("grass + player");
     const characterResult = await this.player.loadCharacter();
+    bootMark("character load");
 
     // Intro cinematic — the first-arrival fall-from-sky sequence. GroundBreak
     // owns the procedural impact FX; both run as a pre-gameplay layer. main.js
@@ -836,6 +866,8 @@ export class App extends EventTarget {
     // a frozen loading bar. boot() now resolves as soon as the world is built.
     this._shaderReady = true;
 
+    bootMark("water + foliage + portfolio + map wiring");
+
     // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
     // longer re-schedules itself via requestAnimationFrame.
     this.renderer.setAnimationLoop(this.#tick);
@@ -874,6 +906,11 @@ export class App extends EventTarget {
         `[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`,
       );
     }
+    const _bootTotal = performance.now() - bootStart;
+    window.__bootTiming.push(
+      `=== total ${_bootTotal.toFixed(0)}ms (backend: ${this._isWebGPU ? "WebGPU" : "WebGL2 fallback"}) ===`,
+    );
+    if (timing) console.log(`[boot] DONE total ${_bootTotal.toFixed(0)}ms`);
     return { character: characterResult, world: worldResult };
   }
 
@@ -954,7 +991,9 @@ export class App extends EventTarget {
 
     // Leaves were held off the spawn frame — release them ~8s after launch.
     // From here the tick keeps them suppressed whenever it's snowing.
-    setTimeout(() => { this._leavesUnlocked = true; }, 8000);
+    setTimeout(() => {
+      this._leavesUnlocked = true;
+    }, 8000);
   }
 
   #scheduleDeferredAnimationWarmup() {
@@ -1427,11 +1466,20 @@ export class App extends EventTarget {
   }
 
   #initRenderer() {
+    // Force the WebGL2 backend when either: (a) ?forceWebGL=1 is set (manual
+    // repro/measure), or (b) two prior WebGPU init attempts this tab session
+    // stalled (see #initRendererWithFallback) — WebGPU device acquisition was
+    // observed hanging up to ~60s in Chrome, so the third load drops to the
+    // mature WebGL2 path rather than gambling on another stall.
+    const forceWebGL =
+      window.location?.search?.includes("forceWebGL") ||
+      Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0) >= 2;
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
       antialias: true,
       powerPreference: "high-performance",
       alpha: false,
+      forceWebGL,
     });
     this.renderer.setPixelRatio(this.sizes.pixelRatio);
     this.renderer.setSize(this.sizes.width, this.sizes.height);
@@ -1458,6 +1506,49 @@ export class App extends EventTarget {
     // KTX2 format detection is deferred to boot() — on WebGPURenderer,
     // detectSupport() calls renderer.hasFeature(), which throws until the
     // backend finishes its async init(). See boot().
+  }
+
+  /**
+   * Await renderer.init() without ever hanging forever on it. WebGPU is much
+   * faster at runtime than the WebGL2 fallback (it runs the TSL shaders
+   * natively), so we want WebGPU whenever the machine can do it — a first-time
+   * visitor dropped onto laggy WebGL2 doesn't come back. A COLD GPU process
+   * (incognito, first launch) can take several seconds to hand over a WebGPU
+   * device, so we deliberately WAIT for it (behind the loading screen) rather
+   * than bail early to WebGL2. (An earlier 3s adapter probe was downgrading
+   * cold-but-capable machines — notably incognito — to WebGL2 unnecessarily.)
+   * Only a genuine stall (>12s — the wedged ~60s case) triggers a reload; the
+   * first two reloads retry WebGPU (the GPU process often warms between
+   * attempts), the third forces WebGL2 as a true last resort (#initRenderer
+   * reads the counter). A clean init clears the counter so the next visit tries
+   * WebGPU again — and __bootTiming stays [] only if it's still mid-stall.
+   */
+  async #initRendererWithFallback() {
+    const attempts = Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0);
+    try {
+      await Promise.race([
+        this.renderer.init(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("renderer.init timeout")), 12000),
+        ),
+      ]);
+      // Success — reset the counter so a future flaky session starts on WebGPU.
+      sessionStorage.removeItem(App.GPU_RETRY_KEY);
+    } catch (err) {
+      if (attempts < 2) {
+        sessionStorage.setItem(App.GPU_RETRY_KEY, String(attempts + 1));
+        console.warn(
+          `[App] ${err.message} (attempt ${attempts + 1}/2) — reloading ${
+            attempts + 1 >= 2 ? "on the WebGL2 fallback" : "to retry WebGPU"
+          }`,
+        );
+        location.reload();
+        await new Promise(() => {}); // halt boot; the reload re-enters cleanly
+      }
+      // Retries exhausted (even WebGL2 init failed) — re-throw so main.js shows
+      // its "Failed to load" message instead of a silent 5% hang.
+      throw err;
+    }
   }
 
   #initScene() {

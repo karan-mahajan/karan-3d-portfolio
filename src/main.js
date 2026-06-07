@@ -7,6 +7,10 @@ const loadingScreen = document.getElementById('loading-screen');
 const loadingBar = document.getElementById('loading-bar-fill');
 const loadingPercent = document.getElementById('loading-percent');
 const loadingStatus = document.getElementById('loading-status');
+const loadingHint = document.getElementById('loading-hint');
+const loadingRefresh = document.getElementById('loading-refresh');
+
+loadingRefresh?.addEventListener('click', () => window.location.reload());
 
 const statuses = [
   'Growing the forest…',
@@ -22,28 +26,57 @@ const statusInterval = setInterval(() => {
   if (loadingStatus) loadingStatus.textContent = statuses[statusIndex];
 }, 900);
 
-let lastPct = 0;
-// Asset byte-progress only covers GLB/texture streaming — but boot() keeps
-// working after that (player + foliage loads, then a multi-second shader
-// prewarm/compile). So map asset ratio to 0–90% and reserve the last 10% for
-// "boot fully resolved", set explicitly in bootstrap(). This fixes the bar
-// sitting at 100% while the world is still compiling.
-function setProgress(ratio) {
-  const raw = Math.min(90, Math.max(0, Math.round(ratio * 90)));
-  // Concurrent loaders fire progress events out of order — a chunky GLB can
-  // resolve before smaller earlier ones, so the raw ratio occasionally dips
-  // (e.g. 70 → 50 → 70). Clamp upward-only so the number is monotonic.
-  const pct = Math.max(lastPct, raw);
-  lastPct = pct;
+// ── Smooth "trickle" loading bar ───────────────────────────────────────────
+// The honest problem: the dominant boot cost is opaque GPU shader/pipeline
+// compilation, which emits NO progress signal — so a byte-accurate bar sits
+// frozen (the old "stuck at 5%"). Instead the bar always eases toward an
+// asymptotic ceiling over time (it never looks frozen), while real asset
+// byte-progress raises a floor underneath it; it only snaps to a true 100% once
+// boot() actually resolves. If a single attempt runs long, a "taking longer
+// than usual / refresh" hint fades in (the renderer also auto-reloads at 12s).
+const loadStart = performance.now();
+let assetFloor = 0; // 0..70, from real asset byte-progress
+let displayed = 0; // % currently shown
+let booted = false;
+let hintShown = false;
+const HINT_AFTER_MS = 9000;
+
+function tickBar() {
+  const elapsedMs = performance.now() - loadStart;
+  let target;
+  if (booted) {
+    target = 100;
+  } else {
+    // Asymptotic creep toward (but never past) 93%: ~37% @2s, ~63% @5s,
+    // ~86% @10s. Real asset progress can push the floor higher than the creep.
+    const creep = 93 * (1 - Math.exp(-elapsedMs / 4000));
+    target = Math.max(creep, assetFloor);
+  }
+  displayed += (target - displayed) * (booted ? 0.3 : 0.08);
+  if (booted && displayed > 99.5) displayed = 100;
+  const pct = Math.min(100, Math.floor(displayed));
   if (loadingBar) loadingBar.style.width = `${pct}%`;
   if (loadingPercent) loadingPercent.textContent = `${pct}%`;
+
+  if (!booted && !hintShown && elapsedMs > HINT_AFTER_MS) {
+    hintShown = true;
+    loadingHint?.removeAttribute('hidden');
+  }
+
+  if (pct >= 100 && booted) return; // finished — stop the rAF loop
+  requestAnimationFrame(tickBar);
+}
+requestAnimationFrame(tickBar);
+
+/** Feed real asset byte-progress (0..1) — raises the bar's floor only. */
+function setProgress(ratio) {
+  assetFloor = Math.max(assetFloor, Math.min(70, Math.max(0, ratio * 70)));
 }
 
-/** Snap the bar to a true 100% — only called once boot() has fully resolved. */
+/** Mark boot fully resolved — the trickle then eases to a true 100%. */
 function setProgressComplete() {
-  lastPct = 100;
-  if (loadingBar) loadingBar.style.width = '100%';
-  if (loadingPercent) loadingPercent.textContent = '100%';
+  booted = true;
+  loadingHint?.setAttribute('hidden', '');
 }
 
 async function bootstrap() {
@@ -69,9 +102,6 @@ async function bootstrap() {
   app.addEventListener('progress', (e) => {
     setProgress(e.detail.ratio);
   });
-
-  // Pre-tick a little so the bar shows life even before the first asset fires.
-  setProgress(0.05);
 
   let result;
   try {
