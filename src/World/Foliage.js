@@ -373,6 +373,18 @@ export class Foliage {
     this.uPlayerPos.value.set(pos.x, pos.y, pos.z);
   }
 
+  /**
+   * Show/hide the entire foliage layer. Visibility-only (no geometry/material
+   * churn, no pipeline recompile), so it's safe to toggle at runtime — used by
+   * the adaptive perf-shed ladder as a last resort on weak hardware.
+   */
+  setVisible(v) {
+    for (const c of this.clouds) {
+      if (c.core) c.core.visible = v;
+      if (c.mesh) c.mesh.visible = v; // shell may be gated off (medium/low)
+    }
+  }
+
   dispose() {
     for (const c of this.clouds) {
       if (c.mesh) this.scene.remove(c.mesh); // shell may be gated off (medium/low)

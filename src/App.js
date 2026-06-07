@@ -70,6 +70,11 @@ import { World } from "./World/World.js";
  * Core application: scene, renderer, camera, render loop, async asset boot.
  */
 export class App extends EventTarget {
+  // Per-tab counter of stalled WebGPU init attempts (sessionStorage). After two
+  // stalls the renderer is rebuilt on WebGL2 (#initRenderer); a clean init
+  // clears it so the next visit tries WebGPU again.
+  static GPU_RETRY_KEY = "karan-portfolio:gpu-init-retry";
+
   constructor() {
     super();
     this.canvas = document.getElementById("canvas");
@@ -277,6 +282,18 @@ export class App extends EventTarget {
     this._bgFrame = 0;
     this._fixedAccumulator = this.quality.physicsStep ?? 1 / 60;
     this._lastPlayerSample = null;
+    // Render interpolation between fixed physics substeps. The sim advances in
+    // fixed 1/60 increments but frames arrive at the display's cadence (often
+    // not a multiple of 60, e.g. 120Hz ProMotion, or an unstable 45fps), so
+    // some frames run 0 substeps and others run 1–2. Rendering the raw latest
+    // body position then judders against the smoothly-lerped camera. We snapshot
+    // the body's pre/post-step position each substep and, after the loop, render
+    // the character at lerp(prev, curr, accumulator/dt) — the standard "fix your
+    // timestep" remainder. Costs ~half a step of visual latency (~8ms @60Hz),
+    // imperceptible for walking, in exchange for a stutter-free character.
+    this._physPrevPos = new THREE.Vector3();
+    this._physCurrPos = new THREE.Vector3();
+    this._physInterpReady = false;
     // Adaptive DPR — base is the original cap set in Sizes (typically 1.0);
     // factor scales between 1.0 and quality.dprFloor under load. Reapplied
     // only when factor changes (setPixelRatio reallocates the framebuffer).
@@ -291,6 +308,19 @@ export class App extends EventTarget {
     // the player walks in/out of a heavy view. The cooldown + the stickier
     // recovery below keep adjustments rare instead of oscillating.
     this._dprCooldown = 0;
+    // Adaptive feature shedding — the rung BELOW the DPR floor. When a machine
+    // is still over budget at the lowest resolution we start turning expensive
+    // systems off (resolution is the cheapest-looking lever, so it goes first).
+    // 0 = full, 1 = grass field hidden, 2 = + foliage canopy hidden.
+    // Recovery is conservative + LIFO: features come back only with real
+    // headroom and only once DPR is already maxed, so we don't flap a feature
+    // on/off. `_perfManual` latches once the debug key (P) is used so the auto
+    // controller stops fighting a hand-set level during verification.
+    this._perfShedLevel = 0;
+    this._perfShedMax = 2;
+    this._perfBadWindows = 0;
+    this._perfGoodWindows = 0;
+    this._perfManual = false;
     document.addEventListener("visibilitychange", () => {
       this._backgroundMode = document.hidden;
       this._bgFrame = 0;
@@ -385,9 +415,29 @@ export class App extends EventTarget {
   /** Loads characters / models; resolves to a summary the loader UI can use. */
   async boot() {
     const bootStart = performance.now();
+    // Boot-phase timing — gated behind ?timing=1 (pairs with the finer-grained
+    // breakdown inside GlbV3World.load). Shows how much of total boot is the
+    // world parse vs renderer/physics init vs character vs portfolio wiring.
+    // Stashed INCREMENTALLY on window.__bootTiming (initialised here, before the
+    // first await) so it survives a partial/failed boot — the last entry shows
+    // exactly which phase was reached before it stopped. Read with `__bootTiming`
+    // in the console. `undefined` there means a stale bundle (this code never
+    // ran); `[]` means boot died before even renderer.init finished.
+    const timing = window.location?.search?.includes("timing");
+    let _tBoot = bootStart;
+    window.__bootTiming = [];
+    const bootMark = (label) => {
+      const now = performance.now();
+      const ms = now - _tBoot;
+      _tBoot = now;
+      window.__bootTiming.push(`${ms.toFixed(1)}ms  ${label}`);
+      if (timing) console.log(`[boot] ${ms.toFixed(1)}ms  ${label}`);
+    };
     // WebGPURenderer is constructed synchronously but must finish its async
-    // device/adapter handshake before any render/compute runs.
-    await this.renderer.init();
+    // device/adapter handshake before any render/compute runs. That handshake
+    // can stall for tens of seconds under GPU-process contention, so guard it
+    // with a timeout + auto-reload + WebGL2 fallback instead of hanging at 5%.
+    await this.#initRendererWithFallback();
     // Many laptops/browsers lack WebGPU — WebGPURenderer then silently falls
     // back to WebGL2. Log which backend we got so a frozen-on-load report can
     // be traced (the slow first-visit compile differs sharply between the two).
@@ -399,7 +449,9 @@ export class App extends EventTarget {
     // after init(). Detects which compressed formats this GPU supports so the
     // transcoder picks the right path for any KTX2 textures.
     this.loader.attachRenderer(this.renderer);
+    bootMark("renderer.init");
     await this.physics.init();
+    bootMark("physics.init");
 
     // Phase 1 of World v2: the heightfield is now baked from world.glb so
     // physics.addStaticGround MUST run after world.loadAssets — the terrain
@@ -415,19 +467,20 @@ export class App extends EventTarget {
     });
 
     const worldResult = await worldLoadPromise;
+    bootMark("world.loadAssets");
     this.physics.addStaticGround(this.world.terrain);
 
     // Grass — v3 runtime TSL blade field. Built now that the terrain
     // heightfield + Blender grass mask exist. Blade count scales with the
     // quality tier (√multiplier keeps the per-blade area roughly constant).
-    // The base below was lowered from the original 820 to cut grass blade
-    // count (N² over the ~76 m window) — the biggest steady-FPS lever on
-    // desktop GPUs, since the field was oversampled (~116 blades/m² at 820,
-    // far past Bruno's lush look). The 0.5 m arched blades still overlap into
-    // a full carpet well below 820; tune the base to taste.
+    // The base below was lowered 820 → 400 → 300 to cut grass blade count
+    // (N² over the ~76 m window) — the biggest steady-FPS lever on desktop GPUs
+    // and the WebGL2 fallback, since the field was oversampled (~116 blades/m²
+    // at 820). 300 high-tier = 90k blades, just above Bruno's ~78k (280²); the
+    // 0.5 m arched blades still overlap into a full carpet. Tune to taste.
     const grassSub = Math.max(
       64,
-      Math.round(400 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
+      Math.round(280 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
     );
     this.grass = new Grass(
       this.scene,
@@ -453,7 +506,9 @@ export class App extends EventTarget {
     );
     this.playerCamera.follow(this.player.position, true);
 
+    bootMark("grass + player");
     const characterResult = await this.player.loadCharacter();
+    bootMark("character load");
 
     // Intro cinematic — the first-arrival fall-from-sky sequence. GroundBreak
     // owns the procedural impact FX; both run as a pre-gameplay layer. main.js
@@ -811,6 +866,8 @@ export class App extends EventTarget {
     // a frozen loading bar. boot() now resolves as soon as the world is built.
     this._shaderReady = true;
 
+    bootMark("water + foliage + portfolio + map wiring");
+
     // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
     // longer re-schedules itself via requestAnimationFrame.
     this.renderer.setAnimationLoop(this.#tick);
@@ -849,6 +906,11 @@ export class App extends EventTarget {
         `[App] boot resolved in ${Math.round(performance.now() - bootStart)} ms`,
       );
     }
+    const _bootTotal = performance.now() - bootStart;
+    window.__bootTiming.push(
+      `=== total ${_bootTotal.toFixed(0)}ms (backend: ${this._isWebGPU ? "WebGPU" : "WebGL2 fallback"}) ===`,
+    );
+    if (timing) console.log(`[boot] DONE total ${_bootTotal.toFixed(0)}ms`);
     return { character: characterResult, world: worldResult };
   }
 
@@ -929,7 +991,9 @@ export class App extends EventTarget {
 
     // Leaves were held off the spawn frame — release them ~8s after launch.
     // From here the tick keeps them suppressed whenever it's snowing.
-    setTimeout(() => { this._leavesUnlocked = true; }, 8000);
+    setTimeout(() => {
+      this._leavesUnlocked = true;
+    }, 8000);
   }
 
   #scheduleDeferredAnimationWarmup() {
@@ -957,6 +1021,40 @@ export class App extends EventTarget {
     this._dprFrameAccum = 0;
     this._dprFrameCount = 0;
 
+    const floor = this.quality.dprFloor ?? 0.7;
+    const atFloor = this._dprFactor <= floor + 0.001;
+    const dprMaxed = this._dprFactor >= 1.0 - 0.001;
+    const struggling = avg > 0.022;
+    const comfortable = avg < 0.014;
+
+    // ── Stage 2: feature shedding (below the DPR floor) ─────────────────────
+    // Only shed once resolution is already pinned at the floor and we're STILL
+    // over budget. Restore is stricter: requires LOTS of headroom (so adding a
+    // feature back won't immediately re-overload) AND that DPR has already
+    // climbed back to max — i.e. undo shedding in reverse order. Skipped once
+    // the debug key has hand-set a level.
+    if (!this._perfManual) {
+      if (atFloor && struggling && this._perfShedLevel < this._perfShedMax) {
+        this._perfBadWindows++;
+        this._perfGoodWindows = 0;
+        if (this._perfBadWindows >= 3) {
+          this.#applyPerfShed(this._perfShedLevel + 1);
+          this._perfBadWindows = 0;
+        }
+      } else if (dprMaxed && avg < 0.011 && this._perfShedLevel > 0) {
+        this._perfGoodWindows++;
+        this._perfBadWindows = 0;
+        if (this._perfGoodWindows >= 8) {
+          this.#applyPerfShed(this._perfShedLevel - 1);
+          this._perfGoodWindows = 0;
+        }
+      } else {
+        this._perfBadWindows = 0;
+        this._perfGoodWindows = 0;
+      }
+    }
+
+    // ── Stage 1: adaptive DPR ───────────────────────────────────────────────
     // Hold steady while a recent change is still cooling down — never two
     // reallocs in quick succession.
     if (this._dprCooldown > 0) {
@@ -965,7 +1063,6 @@ export class App extends EventTarget {
       return;
     }
 
-    const floor = this.quality.dprFloor ?? 0.7;
     let next = this._dprFactor;
     if (avg > 0.022) {
       // Under load — drop a notch toward the tier floor.
@@ -996,6 +1093,27 @@ export class App extends EventTarget {
         `[DPR] avg ${(avg * 1000).toFixed(1)}ms → factor ${next.toFixed(2)} (effective ${eff.toFixed(2)})`,
       );
     }
+  }
+
+  /**
+   * Apply a feature-shed rung (see _perfShedLevel). Each rung is a pure
+   * scene-graph visibility toggle — NO pipeline/material recompile and NO
+   * render-path switch, so it's fully reversible and safe on WebGPU (toggling
+   * the post chain or renderer.toneMapping at runtime invalidates the bind
+   * groups the consolidated materials are bound to → black screen):
+   *   1 → grass field hidden (73k–160k animated blades skipped)
+   *   2 → + foliage canopy layer hidden
+   * Post-FX is intentionally NOT shed here for the reason above; user-toggleable
+   * ambient effects (rain/leaves/wind-lines) are left alone too — those persist
+   * a player preference we mustn't overwrite.
+   */
+  #applyPerfShed(level) {
+    level = Math.max(0, Math.min(this._perfShedMax, level));
+    if (level === this._perfShedLevel) return;
+    this._perfShedLevel = level;
+    if (this.grass?.mesh) this.grass.mesh.visible = level < 1;
+    this.foliage?.setVisible?.(level < 2);
+    if (this.debug?.enabled) console.log(`[perf] shed level → ${level}`);
   }
 
   #initMapSystems() {
@@ -1236,6 +1354,16 @@ export class App extends EventTarget {
         // look can be compared live, then locked in.
         const label = this.postfx?.cycleToneMapping?.();
         if (label) console.info(`[postfx] tone mapping → ${label}`);
+      } else if (e.code === "KeyP") {
+        // Debug: step the adaptive perf-shed ladder so each degraded rung can
+        // be eyeballed without throttling the GPU. Latches manual mode so the
+        // auto controller stops adjusting features (DPR still adapts).
+        this._perfManual = true;
+        const nextLevel = (this._perfShedLevel + 1) % (this._perfShedMax + 1);
+        this.#applyPerfShed(nextLevel);
+        console.info(
+          `[perf] shed level → ${this._perfShedLevel} (0=full, 1=grass hidden, 2=+foliage hidden)`,
+        );
       }
     });
     // Console helper: dump every Rapier collider (translation + half-extents),
@@ -1338,11 +1466,20 @@ export class App extends EventTarget {
   }
 
   #initRenderer() {
+    // Force the WebGL2 backend when either: (a) ?forceWebGL=1 is set (manual
+    // repro/measure), or (b) two prior WebGPU init attempts this tab session
+    // stalled (see #initRendererWithFallback) — WebGPU device acquisition was
+    // observed hanging up to ~60s in Chrome, so the third load drops to the
+    // mature WebGL2 path rather than gambling on another stall.
+    const forceWebGL =
+      window.location?.search?.includes("forceWebGL") ||
+      Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0) >= 2;
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
       antialias: true,
       powerPreference: "high-performance",
       alpha: false,
+      forceWebGL,
     });
     this.renderer.setPixelRatio(this.sizes.pixelRatio);
     this.renderer.setSize(this.sizes.width, this.sizes.height);
@@ -1369,6 +1506,49 @@ export class App extends EventTarget {
     // KTX2 format detection is deferred to boot() — on WebGPURenderer,
     // detectSupport() calls renderer.hasFeature(), which throws until the
     // backend finishes its async init(). See boot().
+  }
+
+  /**
+   * Await renderer.init() without ever hanging forever on it. WebGPU is much
+   * faster at runtime than the WebGL2 fallback (it runs the TSL shaders
+   * natively), so we want WebGPU whenever the machine can do it — a first-time
+   * visitor dropped onto laggy WebGL2 doesn't come back. A COLD GPU process
+   * (incognito, first launch) can take several seconds to hand over a WebGPU
+   * device, so we deliberately WAIT for it (behind the loading screen) rather
+   * than bail early to WebGL2. (An earlier 3s adapter probe was downgrading
+   * cold-but-capable machines — notably incognito — to WebGL2 unnecessarily.)
+   * Only a genuine stall (>12s — the wedged ~60s case) triggers a reload; the
+   * first two reloads retry WebGPU (the GPU process often warms between
+   * attempts), the third forces WebGL2 as a true last resort (#initRenderer
+   * reads the counter). A clean init clears the counter so the next visit tries
+   * WebGPU again — and __bootTiming stays [] only if it's still mid-stall.
+   */
+  async #initRendererWithFallback() {
+    const attempts = Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0);
+    try {
+      await Promise.race([
+        this.renderer.init(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("renderer.init timeout")), 12000),
+        ),
+      ]);
+      // Success — reset the counter so a future flaky session starts on WebGPU.
+      sessionStorage.removeItem(App.GPU_RETRY_KEY);
+    } catch (err) {
+      if (attempts < 2) {
+        sessionStorage.setItem(App.GPU_RETRY_KEY, String(attempts + 1));
+        console.warn(
+          `[App] ${err.message} (attempt ${attempts + 1}/2) — reloading ${
+            attempts + 1 >= 2 ? "on the WebGL2 fallback" : "to retry WebGPU"
+          }`,
+        );
+        location.reload();
+        await new Promise(() => {}); // halt boot; the reload re-enters cleanly
+      }
+      // Retries exhausted (even WebGL2 init failed) — re-throw so main.js shows
+      // its "Failed to load" message instead of a silent 5% hang.
+      throw err;
+    }
   }
 
   #initScene() {
@@ -1487,11 +1667,29 @@ export class App extends EventTarget {
       fixedDelta * maxSteps,
     );
 
+    // Seed the interpolation snapshots from the current body position on the
+    // first tick so the very first frame doesn't lerp from the origin.
+    if (!this._physInterpReady) {
+      this._physPrevPos.copy(this.player.group.position);
+      this._physCurrPos.copy(this.player.group.position);
+      this._physInterpReady = true;
+    }
+
     let sample = this._lastPlayerSample;
     let steps = 0;
     while (this._fixedAccumulator >= fixedDelta && steps < maxSteps) {
+      // Shift the previous snapshot, advance the sim, capture the new position.
+      this._physPrevPos.copy(this._physCurrPos);
       this.physics.step(fixedDelta);
-      sample = this.player.update(fixedDelta);
+      sample = this.player.stepPhysics(fixedDelta) ?? sample;
+      this._physCurrPos.copy(this.player.group.position);
+      // A single 1/60 step can't move the player more than a metre or so; a
+      // larger jump means a teleport/respawn (map travel, lava death, world
+      // bounds) snapped the body. Collapse prev→curr so the character doesn't
+      // streak across the world for one interpolated frame.
+      if (this._physPrevPos.distanceToSquared(this._physCurrPos) > 4) {
+        this._physPrevPos.copy(this._physCurrPos);
+      }
       this._fixedAccumulator -= fixedDelta;
       steps++;
     }
@@ -1502,6 +1700,30 @@ export class App extends EventTarget {
         speed: 0,
       };
     this._lastPlayerSample = sample;
+
+    // Render the character at the interpolated position between the last two
+    // simulated states. With 0 substeps this frame, prev/curr are unchanged and
+    // the growing accumulator slides the character smoothly toward curr; with
+    // 1+ substeps it renders the leftover fraction past the latest step. Skip
+    // while frozen — an external system (lava sink, intro) owns the transform.
+    if (!this.player._frozen) {
+      const alpha = Math.min(1, this._fixedAccumulator / fixedDelta);
+      this.player.group.position.lerpVectors(
+        this._physPrevPos,
+        this._physCurrPos,
+        alpha,
+      );
+      // Re-aim the follow cam at the interpolated position so it tracks the same
+      // smoothed point the character is drawn at (stepPhysics aimed nothing —
+      // facing/camera are visual-rate now).
+      this.playerCamera.follow(this.player.group.position);
+    }
+
+    // Visual-rate update: facing smoothing, slope lean, animation state, and
+    // the mixer — once per frame on the real delta, after group.position has
+    // been interpolated above. Decoupled from the physics substeps so the
+    // animation advances every rendered frame (even on 0-substep 120Hz frames).
+    this.player.updateVisual(frameDelta);
 
     // Drive the camera's dynamic movement-zoom before update() reads it.
     this.playerCamera.setMovementState({

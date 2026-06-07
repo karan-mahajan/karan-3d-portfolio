@@ -64,6 +64,9 @@ export class Player {
     this._jumpLatched = false;
     this._idleTimer = 0;
     this._state = 'spawn';
+    // Most recent physics sample; updateVisual() reads it for animation state
+    // since it runs decoupled from (and possibly without) a physics substep.
+    this._lastSample = null;
 
     // Build the kinematic capsule once physics is ready. The body's feet sit
     // at y=0 to match the visual group; gravity will be integrated by the
@@ -120,15 +123,21 @@ export class Player {
     return this.group.position;
   }
 
-  update(delta) {
-    // While frozen (e.g. the lava sink sequence) skip input + normal motion so
-    // an external system can drive the group transform; still advance the
-    // character animation and keep the camera following.
-    if (this._frozen) {
-      this.character?.update?.(delta);
-      this.playerCamera?.follow?.(this.group.position);
-      return;
-    }
+  /**
+   * Advance the player simulation by one FIXED physics substep. Called 0–N
+   * times per frame from the App tick's fixed-timestep loop. Handles ONLY
+   * state that must run at the physics rate: input sampling, wading slowdown,
+   * world-bound clamping, jump, and the kinematic capsule move. Visual-rate
+   * work (yaw smoothing, slope tilt, animation, the mixer) lives in
+   * updateVisual() so it runs exactly once per rendered frame — at 120Hz some
+   * frames run 0 substeps, and advancing the mixer here would freeze the
+   * animation on those frames; at 30fps it would advance it twice.
+   */
+  stepPhysics(delta) {
+    // While frozen (e.g. the lava sink sequence) an external system drives the
+    // group transform — skip input + motion entirely. updateVisual() still
+    // advances the character animation and keeps the camera following.
+    if (this._frozen) return;
 
     // Wading slowdown — must be set before sample() so the velocity it returns
     // is already scaled. Depth is the terrain dipping below the water surface
@@ -172,11 +181,40 @@ export class Player {
     if (sample.moving) {
       // Always rotate to face the movement direction — A/D/S all rotate the
       // character so the legs match the visible direction. Strafe / backwards
-      // animations remain loaded but aren't auto-triggered by WASD.
+      // animations remain loaded but aren't auto-triggered by WASD. Only the
+      // TARGET is set here; updateVisual() smooths toward it once per frame.
       this._targetYaw = sample.facing;
       this._idleTimer = 0;
     } else {
       this._idleTimer += delta;
+    }
+
+    if (this.body) {
+      this.#applyPhysicsMotion(sample, delta);
+    } else {
+      this.#applyKinematicMotion(sample, delta);
+    }
+
+    this.#enforceWorldBounds();
+
+    this._lastSample = sample;
+    return sample;
+  }
+
+  /**
+   * Visual-rate update — runs once per rendered frame on the real frame delta,
+   * AFTER the App tick has interpolated group.position between the last two
+   * physics states. Smooths facing, applies the slope lean, drives the
+   * animation state machine, and advances the mixer. Reads the most recent
+   * physics sample (this._lastSample) for animation decisions.
+   */
+  updateVisual(frameDelta) {
+    // While frozen, still advance the animation and keep the camera following
+    // the externally-driven transform (App skips its own follow when frozen).
+    if (this._frozen) {
+      this.character?.update?.(frameDelta);
+      this.playerCamera?.follow?.(this.group.position);
+      return;
     }
 
     // Smoothly rotate to face movement direction. Delta-time turn-rate
@@ -189,7 +227,7 @@ export class Player {
       return d;
     };
     const yawDiff = wrap(this._currentYaw, this._targetYaw);
-    const maxTurn = PlayerController.TURN_SPEED * delta;
+    const maxTurn = PlayerController.TURN_SPEED * frameDelta;
     this._currentYaw += Math.sign(yawDiff) * Math.min(Math.abs(yawDiff), maxTurn);
     // Use YXZ Euler order so the slope tilt below applies in the player's
     // post-yaw local frame (otherwise the lean direction would rotate with
@@ -197,22 +235,11 @@ export class Player {
     this.group.rotation.order = 'YXZ';
     this.group.rotation.y = this._currentYaw;
 
-    if (this.body) {
-      this.#applyPhysicsMotion(sample, delta);
-    } else {
-      this.#applyKinematicMotion(sample, delta);
-    }
-
-    this.#enforceWorldBounds();
-
     this.#applySlopeTilt();
 
-    this.#updateAnimationState(sample);
+    if (this._lastSample) this.#updateAnimationState(this._lastSample);
 
-    if (this.character) this.character.update(delta);
-    this.playerCamera.follow(this.group.position);
-
-    return sample;
+    if (this.character) this.character.update(frameDelta);
   }
 
   /**
