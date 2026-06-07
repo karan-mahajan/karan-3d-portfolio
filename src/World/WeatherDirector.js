@@ -14,7 +14,11 @@ import { snowCoverage, snowFall } from "./SnowState.js";
  * are picked up automatically and never fought over.
  */
 
-const FIRST_DELAY = 15; // s after load before the first storm (short for testing)
+// Default wait before the FIRST storm ≈ one full day→night→dawn revolution
+// (TimeOfDay's cycle is ~121s + a ~12s initial settle), so the first flakes land
+// as a cinematic beat AFTER the visitor has seen a whole day cycle — not 15s in.
+// App.setFirstDelay() shortens this for a returning visitor who never caught snow.
+const FIRST_DELAY = 130;
 const CLEAR_HOLD = 30; // s of clear weather between storms
 const ONSET = 30; // s for snow to creep in patch by patch
 const STORM_HOLD = 45; // s of heavy snow
@@ -40,6 +44,22 @@ export class WeatherDirector {
   /** True once snow is visibly falling or laying — for achievements / HUD. */
   get isSnowing() {
     return this._fall > 0.15 || this._cov > 0.15;
+  }
+
+  /** True during onset/storm/melt — any non-clear phase. App suppresses rain
+   *  (visuals + ambient + thunder) whenever this is true so snow and rain never
+   *  share the sky. Wider than isSnowing so the suppression covers the very
+   *  start of onset before flakes cross the visibility threshold. */
+  get isActive() {
+    return this._phase !== "clear";
+  }
+
+  /** Override the initial clear-weather wait before the first storm. App calls
+   *  this once on boot — only effective while still in the opening clear phase. */
+  setFirstDelay(seconds) {
+    if (this._phase === "clear" && this._cov < 0.02) {
+      this._wait = Math.max(0, seconds);
+    }
   }
 
   /** Current accumulation 0..1 — App reads it to swap footsteps to snow. */

@@ -156,6 +156,18 @@ export class App extends EventTarget {
       count: Math.round((this.quality.rainCount || 1200) * 3.84),
     });
     this.weather = new WeatherDirector({ fog: this.scene.fog });
+    // Snow pacing. First-timers (and anyone who already caught snow) wait a full
+    // day/night cycle so the first flakes read as a cinematic beat. But a visitor
+    // who came before and left BEFORE snow ever showed gets a short delay this
+    // time so they finally see it. snow-seen is stamped in the tick once snow is
+    // actually visible.
+    const visitedBefore = localStorage.getItem("karan-portfolio:visited") === "1";
+    const snowSeen = localStorage.getItem("karan-portfolio:snow-seen") === "1";
+    localStorage.setItem("karan-portfolio:visited", "1");
+    this._snowSeenPersisted = snowSeen;
+    // 12s (not 15) so snow is firmly active before the 15s rain timer fires —
+    // otherwise rain would blip on for a frame before snow suppresses it.
+    if (visitedBefore && !snowSeen) this.weather.setFirstDelay(12);
     this.windLines = new WindLines(this.scene, this.wind, {
       count: this.quality.windLineCount,
     });
@@ -989,7 +1001,7 @@ export class App extends EventTarget {
     // real local time and resume the automatic day/night cycle.
     setTimeout(() => this.timeOfDay?.easeToClock?.(), 12000);
 
-    // Rain was forced off so the spawn is clear — switch it on ~5s after launch
+    // Rain was forced off so the spawn is clear — switch it on ~15s after launch
     // (only if it was wanted; a visitor who'd disabled it stays dry). setEnabled
     // is the wrapped version, so the auto-storm + button sync in lockstep.
     if (this._rainWanted) {
@@ -998,7 +1010,7 @@ export class App extends EventTarget {
         // Warm the rain/splash pipelines off-thread once enabled, so the first
         // raindrop frame doesn't compile under the player.
         this.#warmShadersInBackground();
-      }, 5000);
+      }, 15000);
     }
 
     // Leaves were held off the spawn frame — release them ~8s after launch.
@@ -1837,18 +1849,35 @@ export class App extends EventTarget {
     if (this.fireflies) this.fireflies.update(elapsed);
     if (this.resumeBook) this.resumeBook.update(elapsed);
     if (this.groundBreak) this.groundBreak.update(frameDelta);
+    // Snow and rain never share the sky. While any snow phase is active
+    // (onset/storm/melt) the manual rain is fully suppressed — no drops, no
+    // splashes, no rain ambient, no auto-thunder — so snow falls in quiet. This
+    // never touches the user's rain toggle preference; rain resumes once it
+    // clears. (Uses last frame's snow phase — a 1-frame lag on a 30s ramp.)
+    const snowActive = !!this.weather?.isActive;
+    const rainActive = !!this.rain?.enabled && !snowActive;
     if (this.water) {
       // Rain wetness drives the water's rain-impact rings.
-      this.water.rainTarget = this.rain?.enabled ? 1 : 0;
+      this.water.rainTarget = rainActive ? 1 : 0;
       this.water.update(elapsed, frameDelta, this.player.position, sample);
     }
+    this.rain.setSuppressed(snowActive);
     this.rain.update(scaledDelta);
     // Weather director advances the snow cycle + writes the shared uniforms;
     // Snow reads them this same frame for its falling flakes. The director runs
     // on real time (don't slow the storm schedule); only the flake FALL slows.
     this.weather.update(frameDelta);
     this.snow.update(scaledDelta);
+    // Auto-thunder only fires while rain is genuinely active (and never during
+    // snow). The manual ⚡ button stays live regardless — it's user-initiated.
+    this.thunderstorm.setActive(rainActive);
     this.thunderstorm.update(frameDelta, this.player.position);
+    // Stamp snow-seen the first time flakes are actually visible, so a returning
+    // visitor who caught it keeps the full-cycle pacing (see boot).
+    if (!this._snowSeenPersisted && this.weather?.isSnowing) {
+      this._snowSeenPersisted = true;
+      localStorage.setItem("karan-portfolio:snow-seen", "1");
+    }
     this.windLines.update(scaledDelta, this.player.position);
     // Leaves only fall once released (~8s post-spawn) and never while it snows —
     // autumn drift and a snowstorm can't share the sky.
@@ -1875,7 +1904,7 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
       grounded: _grounded, // default to true so we don't false-trigger on first frame
       surface,
-      rainOn: !!this.rain?.enabled,
+      rainOn: rainActive, // false while it snows → no rain ambient over a snowfall
     });
     // Landing one-shot — pick the right surface sample.
     if (this.audio && this._wasGroundedApp === false && _grounded === true) {
@@ -1946,7 +1975,7 @@ export class App extends EventTarget {
         inWater,
         waterDepth,
         isNight: this.timeOfDay?.mode === "night",
-        isRaining: !!this.rain?.enabled,
+        isRaining: rainActive,
         isSnowing: !!this.weather?.isSnowing,
         mode: this.timeOfDay?.mode,
       });

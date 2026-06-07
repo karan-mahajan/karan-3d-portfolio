@@ -28,6 +28,9 @@ export class Rain {
     this.count = Math.max(80, Math.floor(count));
     this.splashBudget = Math.max(0, Math.floor(splashBudget));
     this.enabled = localStorage.getItem(STORAGE_KEY) !== '1';
+    // Transient hide (e.g. while it snows) that does NOT touch the user's
+    // on/off preference — driven each frame by App, never persisted.
+    this._suppressed = false;
     this.group = new THREE.Group();
     this.group.name = 'rain';
     scene.add(this.group);
@@ -220,9 +223,19 @@ export class Rain {
   // ── Toggle ───────────────────────────────────────────────────────────────
   setEnabled(value) {
     this.enabled = value;
-    this.group.visible = value;
+    this.group.visible = value && !this._suppressed;
     localStorage.setItem(STORAGE_KEY, value ? '0' : '1');
     this.#updateButton();
+  }
+
+  /** Transiently hide + freeze the rain without changing the user's toggle
+   *  preference. App drives this from the snow cycle so rain never overlaps a
+   *  snowfall. Idempotent. */
+  setSuppressed(value) {
+    value = !!value;
+    if (value === this._suppressed) return;
+    this._suppressed = value;
+    this.group.visible = this.enabled && !value;
   }
   toggle() {
     this.audio?.playToggle();
@@ -244,7 +257,7 @@ export class Rain {
 
   // ── Per-frame ────────────────────────────────────────────────────────────
   update(delta) {
-    if (!this.enabled) return;
+    if (!this.enabled || this._suppressed) return;
 
     // Center the rain volume on the camera so it always covers the player.
     const cx = this.camera.position.x;
