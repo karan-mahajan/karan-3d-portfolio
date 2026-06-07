@@ -622,6 +622,9 @@ export class ActionPrompts {
     const py = this.player.position.y;
     if (this.player.body) this.player.body.teleport(nx, py, nz);
     this.player.group.position.set(nx, py, nz);
+    // Sub-metre snap, but still bypasses the controller — clear interpolation so
+    // the character doesn't slide for a frame (the >2m App guard won't catch it).
+    this.player.markTeleported?.();
   }
 
   _pushReachAt(heldFor) {

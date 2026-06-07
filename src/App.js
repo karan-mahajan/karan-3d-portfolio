@@ -883,13 +883,25 @@ export class App extends EventTarget {
       new Promise((r) => setTimeout(r, 2500)),
     ]);
 
-    // Background warm: compileAsync is off-thread (KHR_parallel_shader_compile
-    // on WebGL2, async pipeline creation on WebGPU) so firing it un-awaited
-    // warms scene pipelines while the cinematic plays, shrinking the per-frame
-    // lazy-compile hitches — without ever blocking the reveal. Best-effort.
+    // Full-scene warm — now AWAITED (capped) BEHIND the loader. compileAsync is
+    // off-thread (KHR_parallel_shader_compile on WebGL2, async pipeline creation
+    // on WebGPU), so unlike the synchronous compile() that once froze the tab at
+    // 90% this can be awaited without blocking the main thread. It used to fire
+    // un-awaited AFTER the reveal, racing the intro cinematic — on a slow GPU
+    // props compiled mid-fall and the camera motion only half-masked the hitch.
+    // Awaiting it here guarantees the world's pipelines are warm when the curtain
+    // lifts, so the cinematic + first steps are hitch-free. The 4s cap protects a
+    // machine WITHOUT a parallel-compile path from holding the loader hostage —
+    // it reveals anyway and pays the remainder lazily (rare, and the trickle bar
+    // keeps moving so the loader never looks frozen). Deferred away-from-spawn
+    // systems re-warm themselves when added (see #scheduleDeferredWorldSystems).
     this.shaderPrewarmPromise = this.#warmShadersInBackground().catch((err) =>
       console.warn("[App] background shader warm failed:", err),
     );
+    await Promise.race([
+      this.shaderPrewarmPromise,
+      new Promise((r) => setTimeout(r, 4000)),
+    ]);
 
     this.#scheduleDeferredAnimationWarmup();
     // The one-time top-down map render compiles ~the whole scene synchronously,
@@ -1313,7 +1325,9 @@ export class App extends EventTarget {
         name: "Experience",
         color: "#e8b54a",
         position: [c.x, 0, c.z],
-        landing: { x: land.x, z: land.z, facing: land.facing },
+        // y is the deck-surface height — Teleport uses it so the bridge landing
+        // doesn't sample the riverbed and drop the player under the deck.
+        landing: { x: land.x, z: land.z, facing: land.facing, y: land.y },
       });
     }
 
@@ -1666,6 +1680,17 @@ export class App extends EventTarget {
       this._fixedAccumulator + scaledDelta,
       fixedDelta * maxSteps,
     );
+
+    // An external system snapped group.position directly this frame (map
+    // teleport, lava respawn, mini-game placement, push reposition). Invalidate
+    // the interpolation snapshots so the seed below re-reads the NEW position
+    // instead of lerping a smear/pull-back from the old one. The >2m substep
+    // guard below only catches large jumps on frames that run a substep; this
+    // also covers sub-metre snaps and 0-substep frames (common at 120Hz).
+    if (this.player._teleported) {
+      this._physInterpReady = false;
+      this.player._teleported = false;
+    }
 
     // Seed the interpolation snapshots from the current body position on the
     // first tick so the very first frame doesn't lerp from the origin.

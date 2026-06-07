@@ -44,10 +44,17 @@ export class Teleport {
     this.audio?.duckAmbient?.(0.3, 180);
 
     await this.transitionFx.play(center.x, center.y, async () => {
-      const { x, z, facing } = this.#safeLanding(section);
-      const y = (this.terrain?.heightAt?.(x, z) ?? 0) + 0.1;
+      const { x, z, facing, y: deckY } = this.#safeLanding(section);
+      // Most sections land on terrain (sample the heightfield). Deck landings
+      // (the Experience bridge) carry an explicit Y — using terrain there
+      // samples the riverbed and drops the player UNDER the arched deck.
+      const y =
+        deckY != null ? deckY : (this.terrain?.heightAt?.(x, z) ?? 0) + 0.1;
       if (this.player?.body) this.player.body.teleport(x, y, z);
       this.player?.group?.position?.set(x, y, z);
+      // Drop the App's interpolation snapshots so the character doesn't streak
+      // across the world for one frame from the pre-teleport position.
+      this.player?.markTeleported?.();
       if (this.player?.group?.rotation) this.player.group.rotation.y = facing;
       if (this.player) {
         this.player._targetYaw = facing;
@@ -103,9 +110,11 @@ export class Teleport {
     // feature). Use it verbatim when clear; otherwise fall through to the
     // ring search around the feature centre below.
     if (section.landing) {
-      const { x, z, facing } = section.landing;
+      const { x, z, facing, y } = section.landing;
       if (!this.navmask || this.#landingIsClear(x, z, facing)) {
-        return { x, z, facing };
+        // Carry y through ONLY for the explicit landing (deck height). Ring-search
+        // fallbacks below return no y, so those fall back to terrain sampling.
+        return { x, z, facing, y };
       }
     }
     const [ox, , oz] = section.landingOffset ?? [0, 0, 0];

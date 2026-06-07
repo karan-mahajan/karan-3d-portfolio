@@ -79,6 +79,36 @@ function setProgressComplete() {
   loadingHint?.setAttribute('hidden', '');
 }
 
+// ── Calm onboarding ─────────────────────────────────────────────────────────
+// A fresh (incognito) visit used to fire the WASD/Look/Zoom coachmark card AND
+// the "journey begins" achievement toast the instant the cinematic handed off —
+// several popups stacking over the world's very first impression. Instead, hold
+// them both back until the visitor ENGAGES (first move / look / scroll / tap) OR
+// a short grace window passes — whichever comes first. So an idle newcomer gets
+// a calm few seconds to take the world in before any gentle nudge appears, and
+// someone who immediately starts exploring triggers it on their own terms (the
+// tutorial then shows with the gestures they've already done pre-checked).
+const ONBOARDING_GRACE_MS = 7000;
+
+function startOnboardingWhenReady(app) {
+  let started = false;
+  const ENGAGE_EVENTS = ['keydown', 'pointerdown', 'wheel', 'touchstart'];
+
+  function begin() {
+    if (started) return;
+    started = true;
+    clearTimeout(graceTimer);
+    ENGAGE_EVENTS.forEach((t) => window.removeEventListener(t, begin));
+    app.achievements?.onJourneyBegin?.();
+    app.tutorial?.start();
+  }
+
+  const graceTimer = setTimeout(begin, ONBOARDING_GRACE_MS);
+  ENGAGE_EVENTS.forEach((t) =>
+    window.addEventListener(t, begin, { passive: true }),
+  );
+}
+
 async function bootstrap() {
   const app = new App();
   window.__app = app;
@@ -128,7 +158,9 @@ async function bootstrap() {
   // boot() is fully resolved here (assets + player + shader prewarm) — NOW the
   // world is genuinely ready, so the bar earns its 100%.
   setProgressComplete();
-  app.achievements?.onJourneyBegin?.();
+  // NOTE: onJourneyBegin() + the first-visit tutorial are deliberately NOT
+  // fired here — they're deferred to startOnboardingWhenReady() below so they
+  // don't pop the instant the world reveals (see that helper).
 
   // Keep input paused until the cinematic hands off (IntroCinematic.play also
   // freezes the player; pausing here covers the brief pre-fall beat too).
@@ -150,9 +182,11 @@ async function bootstrap() {
     if (app.player?.controller) app.player.controller.paused = false;
   }
 
-  // Reveal the HUD (compass + button stacks) and start first-visit coachmarks.
+  // Reveal the HUD (compass + button stacks). The first-visit coachmarks + the
+  // "journey begins" toast are held back (see startOnboardingWhenReady) so the
+  // reveal isn't buried under popups the moment control hands off.
   document.body.classList.remove('booting');
-  app.tutorial?.start();
+  startOnboardingWhenReady(app);
 }
 
 if (document.readyState === 'loading') {

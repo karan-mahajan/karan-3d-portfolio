@@ -136,6 +136,12 @@ export class Experience {
     const next = stations[1] ?? first;
     this.landing = {
       x: first.position.x,
+      // Deck-surface height at the oldest station (the anchor is authored ON the
+      // arched deck). The teleport uses this explicit Y instead of sampling the
+      // terrain — over the river that returns the RIVERBED, dropping the player
+      // under the deck. The arch means there's no flat deck Y; this is the
+      // surface right where they land, by the first company.
+      y: first.position.y,
       z: first.position.z,
       facing: Math.atan2(
         next.position.x - first.position.x,

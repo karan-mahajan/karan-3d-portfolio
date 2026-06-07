@@ -67,6 +67,11 @@ export class Player {
     // Most recent physics sample; updateVisual() reads it for animation state
     // since it runs decoupled from (and possibly without) a physics substep.
     this._lastSample = null;
+    // Set by markTeleported() whenever an external system snaps group.position
+    // directly (map travel, respawn, mini-game placement, push reposition). The
+    // App tick reads + clears it to drop the render-interpolation snapshots so
+    // the character doesn't smear/pull toward the pre-snap position for a frame.
+    this._teleported = false;
 
     // Build the kinematic capsule once physics is ready. The body's feet sit
     // at y=0 to match the visual group; gravity will be integrated by the
@@ -427,6 +432,16 @@ export class Player {
   }
 
   /**
+   * Flag a direct group.position snap so the App tick drops its render-
+   * interpolation snapshots next frame (no smear/pull-back from the old spot).
+   * Call after ANY external move that bypasses the kinematic controller —
+   * placeAt/respawn do it internally; map teleport + push reposition call it.
+   */
+  markTeleported() {
+    this._teleported = true;
+  }
+
+  /**
    * Snap the player (physics body + group + facing) to a fixed spot. Used when
    * a mini-game stations the player at a known throwing position.
    */
@@ -436,6 +451,7 @@ export class Player {
     this._currentYaw = yaw;
     this._targetYaw = yaw;
     this._verticalVelocity = 0;
+    this.markTeleported();
   }
 
   /** Aim the body toward a yaw without moving — update() smooths the turn. */
@@ -454,6 +470,7 @@ export class Player {
     this._tiltX = 0;
     this._tiltZ = 0;
     this._verticalVelocity = 0;
+    this.markTeleported();
   }
 
   /** Trigger context-specific gestures (called by Portfolio interactions). */

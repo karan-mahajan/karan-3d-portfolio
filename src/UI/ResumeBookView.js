@@ -1,5 +1,10 @@
-import { PageFlip } from 'page-flip/dist/js/page-flip.module.js';
 import { resume } from '../Portfolio/ResumeData.js';
+
+// page-flip (~tens of KB) is dynamically imported in #initFlip, NOT statically
+// here: ~99% of visitors never open the resume book, so keeping it out of the
+// initial bundle saves them the download + parse — the chunk is fetched the
+// first time the book is opened (and the browser caches it for re-opens).
+// Matters most on weak / no-GPU laptops where every KB of boot work counts.
 
 /**
  * The two-page open-book resume reading view (DOM overlay), powered by
@@ -78,11 +83,18 @@ export class ResumeBookView {
     this.root.classList.remove('hidden');
     requestAnimationFrame(() => {
       this.root.classList.add('rb-visible');
-      this.#initFlip();
+      this.#initFlip().catch((err) =>
+        console.warn('[ResumeBookView] page-flip failed to load:', err),
+      );
     });
   }
 
-  #initFlip() {
+  async #initFlip() {
+    // Fetch page-flip on first open (code-split chunk). The book DOM is already
+    // on screen behind the opening cinematic, so the brief one-time fetch is
+    // invisible; re-opens resolve instantly from the module cache.
+    const { PageFlip } = await import('page-flip/dist/js/page-flip.module.js');
+
     const h = Math.min(560, Math.round(window.innerHeight * 0.74));
     const w = Math.round(h * 0.7);
 
