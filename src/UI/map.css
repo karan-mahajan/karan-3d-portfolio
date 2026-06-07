@@ -6,7 +6,7 @@
   --map-gold: #d4a017;
   --map-player: #ff6b35;
   --map-font-display: 'Caveat', cursive;
-  --map-font-body: 'DM Sans', sans-serif;
+  --map-font-body: 'Nunito', sans-serif;
 }
 
 body.booting #minimap-root,

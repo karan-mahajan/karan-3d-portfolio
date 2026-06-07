@@ -456,16 +456,16 @@ export class SkillSphere {
     const ink = '#0c0f0a';
     this.#drawCategoryIcon(ctx, item.category, 54 + 24, 48 + chipH / 2, 11, ink);
     ctx.fillStyle = ink;
-    ctx.font = '900 20px Rajdhani, Inter, Arial, sans-serif';
+    ctx.font = '900 20px Nunito, Arial, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(this.#shortCategory(item.category), 54 + 46, 48 + chipH / 2 + 1);
 
     let fontSize = isLarge ? 78 : isMedium ? 66 : 56;
-    ctx.font = `900 ${fontSize}px Rajdhani, Inter, Arial, sans-serif`;
+    ctx.font = `900 ${fontSize}px Nunito, Arial, sans-serif`;
     while (ctx.measureText(item.label).width > w - 132 && fontSize > 34) {
       fontSize -= 4;
-      ctx.font = `900 ${fontSize}px Rajdhani, Inter, Arial, sans-serif`;
+      ctx.font = `900 ${fontSize}px Nunito, Arial, sans-serif`;
     }
     ctx.lineWidth = isLarge ? 8 : 6;
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
@@ -495,7 +495,7 @@ export class SkillSphere {
     ctx.shadowColor = '#7af0ae';
     ctx.shadowBlur = 22;
     ctx.fillStyle = '#f6f1df';
-    ctx.font = '900 72px Oswald, Rajdhani, Arial, sans-serif';
+    ctx.font = '700 72px Fredoka, Nunito, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('SKILLS', canvas.width / 2, canvas.height / 2 + 2);

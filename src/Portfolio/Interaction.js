@@ -139,7 +139,7 @@ export class Interaction {
             ? this.projectsHutNav(+1)
             : this.cycle(+1));
 
-    // ── Résumé book reading view ───────────────────────────────────────────
+    // ── Resume book reading view ───────────────────────────────────────────
     // The two-page open-book overlay (its own DOM + CSS). Its close button and
     // Esc route back through closeResume() so the camera dolly reverses too.
     this.resumeBookView = new ResumeBookView({
@@ -205,7 +205,7 @@ export class Interaction {
       nearBillboard = null;
     }
     const nearContact = this.contactBoard?.near?.(playerPosition);
-    // Résumé now lives on the floating book (NW quadrant), not the old lectern.
+    // Resume now lives on the floating book (NW quadrant), not the old lectern.
     const nearResume = this.resumeBook?.near?.(playerPosition, RESUME_PROXIMITY);
     const nearSkills = this.skillSphere?.near?.(playerPosition);
     const nearProjects = this.projectsHut?.near?.(playerPosition);
@@ -237,7 +237,7 @@ export class Interaction {
     }
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
-    else if (this.resumeCandidate) this.#showPrompt("Résumé", "Open");
+    else if (this.resumeCandidate) this.#showPrompt("Resume", "Open");
     else if (this.contactCandidate) this.#showPrompt("Contact", "Enter");
     else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
     else if (this.projectsCandidate) this.#showPrompt("Projects", "Enter");
@@ -453,7 +453,7 @@ export class Interaction {
   // ── Resume ────────────────────────────────────────────────────────────────
 
   /**
-   * Cinematic résumé open: lock controls, dolly the camera in front of the
+   * Cinematic resume open: lock controls, dolly the camera in front of the
    * floating book while the book turns to face the reader and its cover swings
    * open with a warm bloom, then reveal the panel once the camera settles.
    * Mirrors the billboard focus()/exit() dolly. (Phase 3 swaps the placeholder
@@ -538,7 +538,7 @@ export class Interaction {
   /**
    * Open the Career-Ascent detail panel for a station. No camera dolly — the
    * stations float over the water and the player stays on the deck, so this
-   * mirrors the Résumé overlay (pause + show the shared panel) rather than the
+   * mirrors the Resume overlay (pause + show the shared panel) rather than the
    * zoom-in focus used for billboards. The panel reuses `.project-panel`; the
    * prev/next/close buttons route here while `experienceOpen` is set.
    */

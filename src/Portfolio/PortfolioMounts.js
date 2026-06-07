@@ -57,8 +57,8 @@ export class PortfolioMounts {
     this.#buildExperienceCairns();
     this.#buildSkillsArtifacts();
     this.#buildContactPlinth();
-    // Résumé moved to the floating ResumeBook (NW quadrant) — the old lectern
-    // "Read résumé" decal is retired so it isn't a dead marker.
+    // Resume moved to the floating ResumeBook (NW quadrant) — the old lectern
+    // "Read resume" decal is retired so it isn't a dead marker.
     // this.#buildResumeLectern();
 
     if (this.missingMeshes.length) {
@@ -112,15 +112,15 @@ export class PortfolioMounts {
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#f5e6d3';
-    ctx.font = '700 96px "Oswald", sans-serif';
+    ctx.font = '700 96px "Fredoka", sans-serif';
     ctx.fillText(entry.company ?? '', 56, 60);
 
     ctx.fillStyle = accent;
-    ctx.font = '600 56px "Rajdhani", sans-serif';
+    ctx.font = '600 56px "Nunito", sans-serif';
     ctx.fillText(entry.role ?? '', 56, 180);
 
     ctx.fillStyle = '#cfc0a8';
-    ctx.font = '500 42px "Rajdhani", sans-serif';
+    ctx.font = '500 42px "Nunito", sans-serif';
     ctx.fillText(entry.dates ?? entry.period ?? '', 56, 260);
     if (entry.location) ctx.fillText(entry.location, 56, 320);
 
@@ -174,12 +174,12 @@ export class PortfolioMounts {
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffb074';
-    ctx.font = '700 84px "Oswald", sans-serif';
+    ctx.font = '700 84px "Fredoka", sans-serif';
     const title = category.title ?? category.name ?? category.category ?? '';
     ctx.fillText(title, 40, 40);
 
     ctx.fillStyle = '#f5e6d3';
-    ctx.font = '500 42px "Rajdhani", sans-serif';
+    ctx.font = '500 42px "Nunito", sans-serif';
     const items = category.items ?? category.list ?? [];
     items.slice(0, 6).forEach((s, i) => {
       ctx.fillText(`• ${s}`, 40, 160 + i * 56);
@@ -224,11 +224,11 @@ export class PortfolioMounts {
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffb074';
-    ctx.font = '700 96px "Oswald", sans-serif';
+    ctx.font = '700 96px "Fredoka", sans-serif';
     ctx.fillText('Contact', 40, 40);
 
     ctx.fillStyle = '#f5e6d3';
-    ctx.font = '500 44px "Rajdhani", sans-serif';
+    ctx.font = '500 44px "Nunito", sans-serif';
     // Real ContactData has `links: [{ label, value, href }]`. Tolerate older
     // shapes (`lines`, `entries`) too.
     const lines =
@@ -262,10 +262,10 @@ export class PortfolioMounts {
     ctx.fillStyle = '#2b1c12';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#ffb074';
-    ctx.font = '700 64px "Oswald", sans-serif';
+    ctx.font = '700 64px "Fredoka", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Read résumé', canvas.width / 2, canvas.height / 2);
+    ctx.fillText('Read resume', canvas.width / 2, canvas.height / 2);
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;

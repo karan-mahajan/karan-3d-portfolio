@@ -452,13 +452,13 @@ export class ProjectsHut {
     ctx.fillRect(40, imageH + 14, 64, 6);
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 44px Oswald, "Arial Black", sans-serif';
+    ctx.font = 'bold 44px Fredoka, "Arial Black", sans-serif';
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillText(project.name, 40, imageH + 28);
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.font = '24px Oswald, sans-serif';
+    ctx.font = '24px Fredoka, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(`${index + 1} / ${this.projects.length}`, w - 40, imageH + 40);
     ctx.textAlign = 'left';
@@ -467,12 +467,12 @@ export class ProjectsHut {
     const meta = [project.year, project.category].filter(Boolean).join('  ·  ');
     if (meta) {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-      ctx.font = '600 18px Rajdhani, sans-serif';
+      ctx.font = '600 18px Nunito, sans-serif';
       ctx.fillText(meta.toUpperCase(), 40, imageH + 78);
     }
 
     const tags = project.tech || [];
-    ctx.font = `600 22px Rajdhani, sans-serif`;
+    ctx.font = `600 22px Nunito, sans-serif`;
     let tagX = 40;
     const tagY = imageH + 104;
     const tagH = 38;

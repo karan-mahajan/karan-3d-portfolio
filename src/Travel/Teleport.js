@@ -80,7 +80,7 @@ export class Teleport {
       if (pos) {
         return {
           id: 'resume',
-          name: 'Résumé',
+          name: 'Resume',
           position: [pos.x, pos.y ?? 0, pos.z],
           landingOffset: [0, 0, 2.5],   // stand a couple metres south of the lectern
         };

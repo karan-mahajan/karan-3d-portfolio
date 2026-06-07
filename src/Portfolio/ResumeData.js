@@ -1,5 +1,5 @@
 /**
- * Structured résumé content for the floating-book reading view (ResumeBookView).
+ * Structured resume content for the floating-book reading view (ResumeBookView).
  *
  * Content is sourced from the existing data modules so there's one source of
  * truth: experience ← ExperienceData, skills ← SkillsData, projects ←
@@ -46,7 +46,7 @@ const contactRows = () => `
   </div>`;
 
 const overviewLeft = `
-  <p class="rb-eyebrow">Résumé</p>
+  <p class="rb-eyebrow">Resume</p>
   <h1 class="rb-name">${NAME}</h1>
   <p class="rb-title">${TITLE} · ${LOCATION}</p>
   <p class="rb-lead">${SUMMARY}</p>`;
@@ -54,7 +54,7 @@ const overviewLeft = `
 const overviewRight = `
   <h2 class="rb-h2">Get in touch</h2>
   ${contactRows()}
-  <a class="rb-download" href="${RESUME_URL}" target="_blank" rel="noopener">↗  View full résumé</a>`;
+  <a class="rb-download" href="${RESUME_URL}" target="_blank" rel="noopener">↗  View full resume</a>`;
 
 // Experience — EVERY bullet point per role.
 const expBlock = (e) => `

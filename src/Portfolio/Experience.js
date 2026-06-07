@@ -223,7 +223,7 @@ export class Experience {
     ctx.shadowColor = this.#rgba(st.accent, 0.9);
     ctx.shadowBlur = 22;
     ctx.fillStyle = '#fff4dc';
-    ctx.font = '700 52px "Inter", system-ui, sans-serif';
+    ctx.font = '700 52px "Nunito", system-ui, sans-serif';
     this.#fitText(ctx, st.company, W - 2 * (pad + 16), 52, 700);
     ctx.fillText(st.company, W / 2, 132);
 
@@ -240,12 +240,12 @@ export class Experience {
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = 6;
     ctx.fillStyle = '#f3dcaf';
-    ctx.font = '600 30px "Inter", system-ui, sans-serif';
+    ctx.font = '600 30px "Nunito", system-ui, sans-serif';
     ctx.fillText(st.role || '', W / 2, 232);
 
     // Dates · year.
     ctx.fillStyle = '#d9bd8a';
-    ctx.font = '500 25px "Inter", system-ui, sans-serif';
+    ctx.font = '500 25px "Nunito", system-ui, sans-serif';
     ctx.fillText(st.dates || '', W / 2, 286);
 
     const tex = new THREE.CanvasTexture(canvas);
@@ -261,7 +261,7 @@ export class Experience {
   #fitText(ctx, text, maxWidth, basePx, weight) {
     let px = basePx;
     while (px > 22) {
-      ctx.font = `${weight} ${px}px "Inter", system-ui, sans-serif`;
+      ctx.font = `${weight} ${px}px "Nunito", system-ui, sans-serif`;
       if (ctx.measureText(text).width <= maxWidth) break;
       px -= 2;
     }

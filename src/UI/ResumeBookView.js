@@ -2,7 +2,7 @@ import { PageFlip } from 'page-flip/dist/js/page-flip.module.js';
 import { resume } from '../Portfolio/ResumeData.js';
 
 /**
- * The two-page open-book résumé reading view (DOM overlay), powered by
+ * The two-page open-book resume reading view (DOM overlay), powered by
  * StPageFlip (`page-flip`) for a real turn.js-style page turn: corner
  * hover-peel, drag-to-fold that follows the pointer, fold shadows and
  * click/swipe — plus Prev/Next buttons and ArrowLeft/Right.
@@ -34,7 +34,7 @@ export class ResumeBookView {
     this.root = document.createElement('div');
     this.root.className = 'rb-overlay hidden';
     this.root.innerHTML = `
-      <div class="rb-book" role="dialog" aria-label="Résumé">
+      <div class="rb-book" role="dialog" aria-label="Resume">
         <button class="rb-close" aria-label="Close">×</button>
         <div class="rb-flip-wrap">
           <div class="rb-stack rb-stack-left"></div>

@@ -375,15 +375,15 @@ export class ContactBoard {
     if (!detail) {
       // Summary — readable from a distance.
       ctx.fillStyle = '#f6e9d6';
-      ctx.font = '800 96px Oswald, "Arial Black", sans-serif';
+      ctx.font = '700 96px Fredoka, "Arial Black", sans-serif';
       ctx.fillText(contact.name, 64, h * 0.34);
 
       ctx.fillStyle = '#ff9a4a';
-      ctx.font = '600 50px Rajdhani, sans-serif';
+      ctx.font = '600 50px Nunito, sans-serif';
       ctx.fillText((contact.title || '').toUpperCase(), 66, h * 0.46);
 
       ctx.fillStyle = '#cdbb9f';
-      ctx.font = '400 38px Rajdhani, sans-serif';
+      ctx.font = '400 38px Nunito, sans-serif';
       this.#wrap(ctx, contact.blurb || '', 66, h * 0.58, w - 130, 50);
 
       // Press-E pill, bottom-left.
@@ -393,11 +393,11 @@ export class ContactBoard {
       // #linkAt). No ESC pill here: it collided with the last link; the
       // bottom-right hint card carries the "ESC to step back" cue instead.
       ctx.fillStyle = '#cdbb9f';
-      ctx.font = '600 36px Rajdhani, sans-serif';
+      ctx.font = '600 36px Nunito, sans-serif';
       ctx.fillText(`${contact.name.toUpperCase()} · ${(contact.title || '').toUpperCase()}`, 64, h * 0.13);
 
       ctx.fillStyle = '#f6e9d6';
-      ctx.font = '800 72px Oswald, "Arial Black", sans-serif';
+      ctx.font = '700 72px Fredoka, "Arial Black", sans-serif';
       ctx.fillText('GET IN TOUCH', 62, h * 0.27);
 
       const links = contact.links || [];
@@ -408,10 +408,10 @@ export class ContactBoard {
       links.forEach((link, i) => {
         const y = top + i * rowGap;
         ctx.fillStyle = '#ff9a4a';
-        ctx.font = '700 32px Rajdhani, sans-serif';
+        ctx.font = '700 32px Nunito, sans-serif';
         ctx.fillText((link.label || '').toUpperCase(), 66, y);
         ctx.fillStyle = '#f6e9d6';
-        ctx.font = this.#fitFont(ctx, link.value || '', 44, '500', 'Rajdhani, sans-serif', maxW);
+        ctx.font = this.#fitFont(ctx, link.value || '', 44, '500', 'Nunito, sans-serif', maxW);
         ctx.fillText(link.value || '', 66, y + 50);
         // Clickable band spanning label + value, generous for easy targeting.
         this._hotspots.push({
@@ -443,12 +443,12 @@ export class ContactBoard {
     this.#roundRect(ctx, x, y, keyW, 56, 10);
     ctx.stroke();
     ctx.fillStyle = '#ffc89a';
-    ctx.font = '800 34px Oswald, sans-serif';
+    ctx.font = '700 34px Fredoka, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(key, x + keyW / 2, y + 40);
     ctx.textAlign = 'left';
     ctx.fillStyle = '#cdbb9f';
-    ctx.font = '700 30px Rajdhani, sans-serif';
+    ctx.font = '700 30px Nunito, sans-serif';
     ctx.fillText(label, x + keyW + 22, y + 38);
   }
 
