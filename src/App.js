@@ -277,6 +277,18 @@ export class App extends EventTarget {
     this._bgFrame = 0;
     this._fixedAccumulator = this.quality.physicsStep ?? 1 / 60;
     this._lastPlayerSample = null;
+    // Render interpolation between fixed physics substeps. The sim advances in
+    // fixed 1/60 increments but frames arrive at the display's cadence (often
+    // not a multiple of 60, e.g. 120Hz ProMotion, or an unstable 45fps), so
+    // some frames run 0 substeps and others run 1–2. Rendering the raw latest
+    // body position then judders against the smoothly-lerped camera. We snapshot
+    // the body's pre/post-step position each substep and, after the loop, render
+    // the character at lerp(prev, curr, accumulator/dt) — the standard "fix your
+    // timestep" remainder. Costs ~half a step of visual latency (~8ms @60Hz),
+    // imperceptible for walking, in exchange for a stutter-free character.
+    this._physPrevPos = new THREE.Vector3();
+    this._physCurrPos = new THREE.Vector3();
+    this._physInterpReady = false;
     // Adaptive DPR — base is the original cap set in Sizes (typically 1.0);
     // factor scales between 1.0 and quality.dprFloor under load. Reapplied
     // only when factor changes (setPixelRatio reallocates the framebuffer).
@@ -291,6 +303,19 @@ export class App extends EventTarget {
     // the player walks in/out of a heavy view. The cooldown + the stickier
     // recovery below keep adjustments rare instead of oscillating.
     this._dprCooldown = 0;
+    // Adaptive feature shedding — the rung BELOW the DPR floor. When a machine
+    // is still over budget at the lowest resolution we start turning expensive
+    // systems off (resolution is the cheapest-looking lever, so it goes first).
+    // 0 = full, 1 = grass field hidden, 2 = + foliage canopy hidden.
+    // Recovery is conservative + LIFO: features come back only with real
+    // headroom and only once DPR is already maxed, so we don't flap a feature
+    // on/off. `_perfManual` latches once the debug key (P) is used so the auto
+    // controller stops fighting a hand-set level during verification.
+    this._perfShedLevel = 0;
+    this._perfShedMax = 2;
+    this._perfBadWindows = 0;
+    this._perfGoodWindows = 0;
+    this._perfManual = false;
     document.addEventListener("visibilitychange", () => {
       this._backgroundMode = document.hidden;
       this._bgFrame = 0;
@@ -957,6 +982,40 @@ export class App extends EventTarget {
     this._dprFrameAccum = 0;
     this._dprFrameCount = 0;
 
+    const floor = this.quality.dprFloor ?? 0.7;
+    const atFloor = this._dprFactor <= floor + 0.001;
+    const dprMaxed = this._dprFactor >= 1.0 - 0.001;
+    const struggling = avg > 0.022;
+    const comfortable = avg < 0.014;
+
+    // ── Stage 2: feature shedding (below the DPR floor) ─────────────────────
+    // Only shed once resolution is already pinned at the floor and we're STILL
+    // over budget. Restore is stricter: requires LOTS of headroom (so adding a
+    // feature back won't immediately re-overload) AND that DPR has already
+    // climbed back to max — i.e. undo shedding in reverse order. Skipped once
+    // the debug key has hand-set a level.
+    if (!this._perfManual) {
+      if (atFloor && struggling && this._perfShedLevel < this._perfShedMax) {
+        this._perfBadWindows++;
+        this._perfGoodWindows = 0;
+        if (this._perfBadWindows >= 3) {
+          this.#applyPerfShed(this._perfShedLevel + 1);
+          this._perfBadWindows = 0;
+        }
+      } else if (dprMaxed && avg < 0.011 && this._perfShedLevel > 0) {
+        this._perfGoodWindows++;
+        this._perfBadWindows = 0;
+        if (this._perfGoodWindows >= 8) {
+          this.#applyPerfShed(this._perfShedLevel - 1);
+          this._perfGoodWindows = 0;
+        }
+      } else {
+        this._perfBadWindows = 0;
+        this._perfGoodWindows = 0;
+      }
+    }
+
+    // ── Stage 1: adaptive DPR ───────────────────────────────────────────────
     // Hold steady while a recent change is still cooling down — never two
     // reallocs in quick succession.
     if (this._dprCooldown > 0) {
@@ -965,7 +1024,6 @@ export class App extends EventTarget {
       return;
     }
 
-    const floor = this.quality.dprFloor ?? 0.7;
     let next = this._dprFactor;
     if (avg > 0.022) {
       // Under load — drop a notch toward the tier floor.
@@ -996,6 +1054,27 @@ export class App extends EventTarget {
         `[DPR] avg ${(avg * 1000).toFixed(1)}ms → factor ${next.toFixed(2)} (effective ${eff.toFixed(2)})`,
       );
     }
+  }
+
+  /**
+   * Apply a feature-shed rung (see _perfShedLevel). Each rung is a pure
+   * scene-graph visibility toggle — NO pipeline/material recompile and NO
+   * render-path switch, so it's fully reversible and safe on WebGPU (toggling
+   * the post chain or renderer.toneMapping at runtime invalidates the bind
+   * groups the consolidated materials are bound to → black screen):
+   *   1 → grass field hidden (73k–160k animated blades skipped)
+   *   2 → + foliage canopy layer hidden
+   * Post-FX is intentionally NOT shed here for the reason above; user-toggleable
+   * ambient effects (rain/leaves/wind-lines) are left alone too — those persist
+   * a player preference we mustn't overwrite.
+   */
+  #applyPerfShed(level) {
+    level = Math.max(0, Math.min(this._perfShedMax, level));
+    if (level === this._perfShedLevel) return;
+    this._perfShedLevel = level;
+    if (this.grass?.mesh) this.grass.mesh.visible = level < 1;
+    this.foliage?.setVisible?.(level < 2);
+    if (this.debug?.enabled) console.log(`[perf] shed level → ${level}`);
   }
 
   #initMapSystems() {
@@ -1236,6 +1315,16 @@ export class App extends EventTarget {
         // look can be compared live, then locked in.
         const label = this.postfx?.cycleToneMapping?.();
         if (label) console.info(`[postfx] tone mapping → ${label}`);
+      } else if (e.code === "KeyP") {
+        // Debug: step the adaptive perf-shed ladder so each degraded rung can
+        // be eyeballed without throttling the GPU. Latches manual mode so the
+        // auto controller stops adjusting features (DPR still adapts).
+        this._perfManual = true;
+        const nextLevel = (this._perfShedLevel + 1) % (this._perfShedMax + 1);
+        this.#applyPerfShed(nextLevel);
+        console.info(
+          `[perf] shed level → ${this._perfShedLevel} (0=full, 1=grass hidden, 2=+foliage hidden)`,
+        );
       }
     });
     // Console helper: dump every Rapier collider (translation + half-extents),
@@ -1487,11 +1576,29 @@ export class App extends EventTarget {
       fixedDelta * maxSteps,
     );
 
+    // Seed the interpolation snapshots from the current body position on the
+    // first tick so the very first frame doesn't lerp from the origin.
+    if (!this._physInterpReady) {
+      this._physPrevPos.copy(this.player.group.position);
+      this._physCurrPos.copy(this.player.group.position);
+      this._physInterpReady = true;
+    }
+
     let sample = this._lastPlayerSample;
     let steps = 0;
     while (this._fixedAccumulator >= fixedDelta && steps < maxSteps) {
+      // Shift the previous snapshot, advance the sim, capture the new position.
+      this._physPrevPos.copy(this._physCurrPos);
       this.physics.step(fixedDelta);
-      sample = this.player.update(fixedDelta);
+      sample = this.player.stepPhysics(fixedDelta) ?? sample;
+      this._physCurrPos.copy(this.player.group.position);
+      // A single 1/60 step can't move the player more than a metre or so; a
+      // larger jump means a teleport/respawn (map travel, lava death, world
+      // bounds) snapped the body. Collapse prev→curr so the character doesn't
+      // streak across the world for one interpolated frame.
+      if (this._physPrevPos.distanceToSquared(this._physCurrPos) > 4) {
+        this._physPrevPos.copy(this._physCurrPos);
+      }
       this._fixedAccumulator -= fixedDelta;
       steps++;
     }
@@ -1502,6 +1609,30 @@ export class App extends EventTarget {
         speed: 0,
       };
     this._lastPlayerSample = sample;
+
+    // Render the character at the interpolated position between the last two
+    // simulated states. With 0 substeps this frame, prev/curr are unchanged and
+    // the growing accumulator slides the character smoothly toward curr; with
+    // 1+ substeps it renders the leftover fraction past the latest step. Skip
+    // while frozen — an external system (lava sink, intro) owns the transform.
+    if (!this.player._frozen) {
+      const alpha = Math.min(1, this._fixedAccumulator / fixedDelta);
+      this.player.group.position.lerpVectors(
+        this._physPrevPos,
+        this._physCurrPos,
+        alpha,
+      );
+      // Re-aim the follow cam at the interpolated position so it tracks the same
+      // smoothed point the character is drawn at (stepPhysics aimed nothing —
+      // facing/camera are visual-rate now).
+      this.playerCamera.follow(this.player.group.position);
+    }
+
+    // Visual-rate update: facing smoothing, slope lean, animation state, and
+    // the mixer — once per frame on the real delta, after group.position has
+    // been interpolated above. Decoupled from the physics substeps so the
+    // animation advances every rendered frame (even on 0-substep 120Hz frames).
+    this.player.updateVisual(frameDelta);
 
     // Drive the camera's dynamic movement-zoom before update() reads it.
     this.playerCamera.setMovementState({
