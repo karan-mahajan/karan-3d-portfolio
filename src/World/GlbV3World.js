@@ -56,7 +56,16 @@ const TRUNK_RADIUS_MAX = 0.7;
 const TRUNK_RADIUS_SHRINK = 0.85; // visible bark sits a touch inside bbox
 const DYNAMIC_BRICK_SCALE = 0.5;
 const DYNAMIC_BRICK_TEMPLATES = new Set(["brickKerbMesh", "brickPileMesh"]);
-const MATERIAL_CONSOLIDATION_SKIP_SYSTEMS = new Set(["terrain", "bonfires"]);
+// `experience` (Career Ascent) keeps its own warm-magical emissive materials —
+// the glow rims, light-bridges and holo panels would go matte if flattened into
+// the shared vertex-baked world material. Excluded from consolidation (and never
+// in MERGE_SAFE_SYSTEMS) like skillSphere_/lava/miscFx, so the runtime can also
+// look the holo panels up by name (Experience.js).
+const MATERIAL_CONSOLIDATION_SKIP_SYSTEMS = new Set([
+  "terrain",
+  "bonfires",
+  "experience",
+]);
 const MATERIAL_CONSOLIDATION_SKIP_MATERIAL_RE = /^(bonfire_|skill_base_)/i;
 const MATERIAL_CONSOLIDATION_SKIP_OBJECT_RE = /^skillSphere_/i;
 const WORLD_EMISSIVE_ATTR = "worldEmissive";
@@ -429,6 +438,8 @@ export class GlbV3World {
       if (entry.system === "fences") this.#addFenceColliders(group, physics);
       if (entry.system === "lanterns")
         this.#addLanternColliders(group, physics);
+      if (entry.system === "experience")
+        this.#addExperienceColliders(group, physics);
       if (entry.system === "miscFx") {
         this.#extractDynamicTitleLetters(group, physics);
         this.#addDecorPropColliders(group, physics);
@@ -1472,6 +1483,49 @@ export class GlbV3World {
     }
     if (count)
       console.log(`[GlbV3World] lanterns: ${count} cylinder colliders`);
+  }
+
+  /**
+   * Experience (Career Ascent) ships no collider proxy — the stations were
+   * authored as visual-only over water, but the deck-side pillars + platforms
+   * are reachable, so the player walks/falls through them. Give each pillar an
+   * upright cylinder (lantern recipe — yaw-invariant for a vertical post, rising
+   * from the riverbed) and each slab a tight oriented box the player can stand
+   * ON. Rims, holo panels and the sloped light-bridges stay walk-through.
+   */
+  #addExperienceColliders(group, physics) {
+    if (!physics?.ready) return;
+    group.updateMatrixWorld(true);
+
+    let pillars = 0;
+    let slabs = 0;
+    group.traverse((node) => {
+      if (!node.isMesh) return;
+      const name = node.name || "";
+      if (/^experience_.*_pillar$/i.test(name)) {
+        const wbox = new THREE.Box3().setFromObject(node);
+        if (wbox.isEmpty()) return;
+        const size = wbox.getSize(new THREE.Vector3());
+        const center = wbox.getCenter(new THREE.Vector3());
+        const radius = Math.max(Math.max(size.x, size.z) / 2, 0.05);
+        const height = Math.max(size.y, 0.05);
+        // addStaticCylinder lifts by height/2 — pass the bbox bottom.
+        physics.addStaticCylinder(
+          center.x,
+          center.y - height / 2,
+          center.z,
+          radius,
+          height,
+        );
+        pillars++;
+      } else if (/^experience_.*_slab$/i.test(name)) {
+        if (this.#addMeshOrientedBoxCollider(node, physics)) slabs++;
+      }
+    });
+    if (pillars || slabs)
+      console.log(
+        `[GlbV3World] experience: ${pillars} pillar + ${slabs} slab colliders`,
+      );
   }
 
   /**

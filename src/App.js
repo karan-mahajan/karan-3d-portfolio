@@ -15,6 +15,7 @@ import { Player } from "./Player/Player.js";
 import { PlayerCamera } from "./Player/PlayerCamera.js";
 import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
 import { ContactBoard } from "./Portfolio/ContactBoard.js";
+import { Experience } from "./Portfolio/Experience.js";
 import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
@@ -679,6 +680,14 @@ export class App extends EventTarget {
     });
     await this.colourGarden.load();
 
+    // Career Ascent — runtime holo text + interaction for the 5 bridge stations
+    // (geometry ships in experience.glb; this adds the readable/interactive layer).
+    this.experience = new Experience({
+      scene: this.scene,
+      refs: this.world.glb.refs,
+      audio: this.audio,
+    });
+
     this.interaction = new Interaction({
       scene: this.scene,
       camera: this.camera,
@@ -690,6 +699,7 @@ export class App extends EventTarget {
       skillSphere: this.skillSphere,
       projectsHut: this.projectsHut,
       contactBoard: this.contactBoard,
+      experience: this.experience,
       audio: this.audio,
       timeOfDay: this.timeOfDay,
       achievements: this.achievements,
@@ -1161,6 +1171,21 @@ export class App extends EventTarget {
       add("contact", fc, stand);
     }
 
+    // Experience — resolved from the live Career-Ascent stations (NE bridge).
+    // Marker sits at the average deck anchor; the teleport lands on the deck.
+    const exp = this.experience;
+    if (exp?.center && exp.items?.length) {
+      const c = exp.center;
+      const land = exp.landing ?? { x: c.x, z: c.z, facing: 0 };
+      out.push({
+        id: "experience",
+        name: "Experience",
+        color: "#e8b54a",
+        position: [c.x, 0, c.z],
+        landing: { x: land.x, z: land.z, facing: land.facing },
+      });
+    }
+
     // Keep any section that failed to resolve so its marker still shows.
     for (const s of SECTIONS) {
       if (!out.some((o) => o.id === s.id)) out.push({ ...s });
@@ -1539,6 +1564,12 @@ export class App extends EventTarget {
     if (this.skillSphere) this.skillSphere.update(frameDelta);
     if (this.projectsHut) this.projectsHut.update(frameDelta);
     if (this.contactBoard) this.contactBoard.update(elapsed);
+    if (this.experience)
+      this.experience.update(
+        frameDelta,
+        this.player.position,
+        this.timeOfDay?.nightFactor ?? 0,
+      );
     if (this.interactables) this.interactables.update(frameDelta);
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.
@@ -1742,22 +1773,23 @@ export class App extends EventTarget {
       if (contact && Math.hypot(px - contact.x, pz - contact.z) < 10) {
         ach.onSectionVisited("contact");
       }
-      const expItems = this.world.signs.experienceItems;
-      if (expItems && expItems.length) {
-        // Visiting any experience sign also counts as visiting the section.
-        let nearAny = false;
-        for (let i = 0; i < expItems.length; i++) {
-          const p = expItems[i].position;
-          const dx = px - p.x;
-          const dz = pz - p.z;
-          if (dx * dx + dz * dz < 16) {
-            // within 4m
-            ach.onExperienceSignViewed(i);
-            nearAny = true;
-          }
+    }
+
+    // Experience — the Career Ascent stations along the NE bridge. Walking
+    // within ~4m of a station's deck anchor counts it viewed (due_diligence)
+    // and the section visited.
+    const expItems = this.experience?.items;
+    if (expItems && expItems.length) {
+      let nearAny = false;
+      for (const st of expItems) {
+        const dx = px - st.position.x;
+        const dz = pz - st.position.z;
+        if (dx * dx + dz * dz < 16) {
+          ach.onExperienceSignViewed(st.index);
+          nearAny = true;
         }
-        if (nearAny) ach.onSectionVisited("experience");
       }
+      if (nearAny) ach.onSectionVisited("experience");
     }
 
     // Off-path: 15m+ from every path tile, on land. Skip when wading so
