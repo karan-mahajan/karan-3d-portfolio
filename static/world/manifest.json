@@ -8,22 +8,10 @@
       "heightfield": true
     },
     {
-      "system": "structures",
-      "file": "structures/structures.glb",
-      "kind": "monolithic",
-      "objects": 81
-    },
-    {
       "system": "scenery",
       "file": "scenery/scenery.glb",
       "kind": "monolithic",
       "objects": 12
-    },
-    {
-      "system": "statue",
-      "file": "statue/statue.glb",
-      "kind": "monolithic",
-      "objects": 4
     },
     {
       "system": "lava",
@@ -89,7 +77,7 @@
       "system": "experience",
       "file": "experience/experience.glb",
       "kind": "monolithic",
-      "objects": 25
+      "objects": 26
     },
     {
       "system": "areas",
@@ -122,10 +110,9 @@
       "references": "bricks/bricksReferences.glb",
       "templates": [
         "brickKerbMesh",
-        "brickPaveMesh",
         "brickPileMesh"
       ],
-      "count": 80
+      "count": 40
     },
     {
       "system": "flowers",
@@ -142,7 +129,7 @@
         "projects",
         "skills"
       ],
-      "count": 36
+      "count": 37
     }
   ],
   "foliage": [
@@ -150,7 +137,7 @@
       "system": "bushes",
       "kind": "foliage",
       "references": "bushes/bushesReferences.glb",
-      "count": 45
+      "count": 46
     },
     {
       "system": "treeLeaves",
@@ -165,7 +152,7 @@
   ],
   "colliders": {
     "file": "colliders/colliders.glb",
-    "count": 83
+    "count": 79
   },
   "references": {
     "file": "references.glb",
