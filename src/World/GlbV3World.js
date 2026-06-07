@@ -95,7 +95,6 @@ const MERGE_SAFE_SYSTEMS = new Set([
   "benches",
   "lanterns",
   "poleLights",
-  "statue",
   "birchTrees",
   "cherryTrees",
   "oakTrees",
@@ -153,9 +152,12 @@ const FENCE_RIDGE_RISE = 0.22; // pitched-roof cap height; > ~1.2× halfThick so
 // /misc areas), NOT visible props — baking them as boxes walls off the statue,
 // sections, pool and small props so the player can't approach. They're skipped at
 // load; the real meshes inside carry their own tight `cuboid_`/`tube_` proxies.
-// The exception: solid BUILDINGS whose footprint IS the visible wall — kept (as a
-// tight oriented box) so the player can't walk through them.
-const SOLID_FOOTPRINT_RE = /Footprint_(cabin|outhouse)/i;
+// The exception WOULD be solid BUILDINGS whose footprint IS the visible wall —
+// kept as a tight oriented box. The cabin + outhouse (the only such buildings)
+// were removed 2026-06-07, so no building footprint is solid anymore: this
+// matches nothing and every `Footprint_` zone is freed below. Re-add a name
+// here (e.g. /Footprint_(cabin|outhouse)/i) if a solid building returns.
+const SOLID_FOOTPRINT_RE = /(?!)/; // empty — no solid-building footprints
 // Solid miscFx props with no collider proxy: the WASD controls board (panel +
 // frame + caps + posts) and the PlayStation console/crate. Floating keys,
 // labels and the controller pad are intentionally excluded (walk-through).
@@ -1947,15 +1949,16 @@ export class GlbV3World {
    * Load one `instanced` manifest entry into per-template InstancedMeshes.
    *
    * The split exporter writes a *visual* GLB (one mesh per template at identity,
-   * named e.g. `brickPaveMesh`) and a *references* GLB (one empty per placement,
+   * named e.g. `brickKerbMesh`) and a *references* GLB (one empty per placement,
    * carrying a world-space transform + `userData.template` naming its mesh). We
    * group the empties by template, then build one InstancedMesh per template
    * reusing the visual mesh's geometry + baked material (the WebGPURenderer
    * auto-converts it to a node material, exactly like the monolithic GLBs).
    *
    * Returns a packed Float32Array of `[x,z,x,z,…]` world centres for the
-   * path-forming bricks (pave + kerb) so the paths facade can flag stone
-   * footstep/footprint zones. Stacked brick piles are split into individual
+   * path-forming bricks (kerb edging; the big pave flagstones were removed
+   * 2026-06-07) so the paths facade can flag stone footstep/footprint zones.
+   * Stacked brick piles are split into individual
    * dynamic meshes + Rapier bodies, following Bruno's folio-2025 Bricks.js
    * pattern; flat paving stays instanced/static.
    */
@@ -1996,7 +1999,7 @@ export class GlbV3World {
       byTemplate.get(tmpl).push(obj);
     });
 
-    const PATH_TEMPLATES = new Set(["brickPaveMesh", "brickKerbMesh"]);
+    const PATH_TEMPLATES = new Set(["brickKerbMesh"]);
     const dynamicTemplates =
       entry.system === "bricks" ? DYNAMIC_BRICK_TEMPLATES : new Set();
     const pathXZ = [];
