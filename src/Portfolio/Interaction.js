@@ -2,6 +2,7 @@ import gsap from "gsap";
 import * as THREE from "three";
 import { resume } from "./ResumeData.js";
 import { getProjectField } from "./PortfolioData.js";
+import { PORTFOLIO_URL } from "./ExperienceData.js";
 
 const PROXIMITY = 4.5; // distance from billboard to show prompt
 const RESUME_PROXIMITY = 4;
@@ -29,6 +30,7 @@ export class Interaction {
     skillSphere = null,
     projectsHut = null,
     contactBoard = null,
+    experience = null,
     audio = null,
     actionPrompts = null,
     timeOfDay = null,
@@ -44,6 +46,7 @@ export class Interaction {
     this.skillSphere = skillSphere;
     this.projectsHut = projectsHut;
     this.contactBoard = contactBoard;
+    this.experience = experience;
     this.audio = audio;
     this.actionPrompts = actionPrompts;
     this.timeOfDay = timeOfDay;
@@ -56,6 +59,10 @@ export class Interaction {
     this.projectsCandidate = false;
     this.resumeCandidate = false;
     this.resumeOpen = false;
+    this.experienceCandidate = false;
+    this.experienceOpen = false;
+    this.experienceIndex = -1;
+    this._experienceItem = null;
     this.zooming = false;
 
     this.#installDom();
@@ -91,6 +98,7 @@ export class Interaction {
           <a class="panel-link" target="_blank" rel="noopener noreferrer">Open Site ↗</a>
           <a class="panel-github" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
         </div>
+        <div class="panel-portfolio-note hidden"></div>
       </div>
       <nav class="panel-nav">
         <button class="panel-prev" aria-label="Previous">← Prev</button>
@@ -107,15 +115,27 @@ export class Interaction {
     this.panelEl
       .querySelector(".panel-close")
       .addEventListener("click", () =>
-        this.projectsOpen ? this.closeProjects() : this.exit());
+        this.experienceOpen
+          ? this.closeExperience()
+          : this.projectsOpen
+            ? this.closeProjects()
+            : this.exit());
     this.panelEl
       .querySelector(".panel-prev")
       .addEventListener("click", () =>
-        this.projectsOpen ? this.projectsHutNav(-1) : this.cycle(-1));
+        this.experienceOpen
+          ? this.experienceNav(-1)
+          : this.projectsOpen
+            ? this.projectsHutNav(-1)
+            : this.cycle(-1));
     this.panelEl
       .querySelector(".panel-next")
       .addEventListener("click", () =>
-        this.projectsOpen ? this.projectsHutNav(+1) : this.cycle(+1));
+        this.experienceOpen
+          ? this.experienceNav(+1)
+          : this.projectsOpen
+            ? this.projectsHutNav(+1)
+            : this.cycle(+1));
 
     // ── Resume overlay ─────────────────────────────────────────────────────
     // Mirrors the contact-panel structure so existing .contact-panel CSS
@@ -144,7 +164,7 @@ export class Interaction {
     this._onKey = (e) => {
       if (this.zooming) return;
       if (e.code === "KeyE") {
-        if (this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen) return;
+        if (this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen || this.experienceOpen) return;
         if (this.activeIndex === -1) {
           // Resume is a smaller proximity than contact, so when both fire
           // (shouldn't happen — different anchors — but be defensive), the
@@ -153,14 +173,19 @@ export class Interaction {
           else if (this.contactCandidate) this.openContact();
           else if (this.skillCandidate) this.openSkills();
           else if (this.projectsCandidate) this.openProjects();
+          else if (this.experienceCandidate) this.openExperience(this._experienceItem?.index ?? 0);
           else if (this.candidate) this.focus(this.candidate.index);
         }
       } else if (e.code === "Escape") {
         if (this.skillOpen) this.closeSkills();
         else if (this.projectsOpen) this.closeProjects();
+        else if (this.experienceOpen) this.closeExperience();
         else if (this.resumeOpen) this.closeResume();
         else if (this.contactOpen) this.closeContact();
         else if (this.activeIndex !== -1) this.exit();
+      } else if (this.experienceOpen) {
+        if (e.code === "ArrowLeft" || e.code === "KeyA") this.experienceNav(-1);
+        else if (e.code === "ArrowRight" || e.code === "KeyD") this.experienceNav(+1);
       } else if (this.projectsOpen) {
         if (e.code === "ArrowLeft" || e.code === "KeyA") this.projectsHutNav(-1);
         else if (e.code === "ArrowRight" || e.code === "KeyD") this.projectsHutNav(+1);
@@ -175,7 +200,7 @@ export class Interaction {
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   tick(playerPosition) {
-    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen) {
+    if (this.activeIndex !== -1 || this.zooming || this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen || this.experienceOpen) {
       this.#hidePrompt();
       return;
     }
@@ -194,6 +219,7 @@ export class Interaction {
       this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
     const nearSkills = this.skillSphere?.near?.(playerPosition);
     const nearProjects = this.projectsHut?.near?.(playerPosition);
+    const nearExperience = this.experience?.near?.(playerPosition);
     this.candidate = nearBillboard;
     // Resume has the smallest proximity radius — when both fire, prefer it.
     this.resumeCandidate = !!nearResume && !nearBillboard;
@@ -201,6 +227,9 @@ export class Interaction {
     this.skillCandidate = !!nearSkills && !nearBillboard && !nearResume && !nearContact;
     this.projectsCandidate =
       !!nearProjects && !nearBillboard && !nearResume && !nearContact && !nearSkills;
+    this._experienceItem = nearExperience || null;
+    this.experienceCandidate =
+      !!nearExperience && !nearBillboard && !nearResume && !nearContact && !nearSkills && !nearProjects;
 
     // Defer to ActionPrompts — if it's about to show its own E prompt at the
     // same spot (e.g. Dance tile right next to the Contact mailbox), suppress
@@ -222,6 +251,8 @@ export class Interaction {
     else if (this.contactCandidate) this.#showPrompt("Contact", "Enter");
     else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
     else if (this.projectsCandidate) this.#showPrompt("Projects", "Enter");
+    else if (this.experienceCandidate)
+      this.#showPrompt(this._experienceItem?.company ?? "Experience");
     else this.#hidePrompt();
   }
 
@@ -449,6 +480,80 @@ export class Interaction {
     this.resumeEl.classList.add("hidden");
   }
 
+  // ── Experience (Career Ascent on the bridge) ──────────────────────────────
+
+  /**
+   * Open the Career-Ascent detail panel for a station. No camera dolly — the
+   * stations float over the water and the player stays on the deck, so this
+   * mirrors the Résumé overlay (pause + show the shared panel) rather than the
+   * zoom-in focus used for billboards. The panel reuses `.project-panel`; the
+   * prev/next/close buttons route here while `experienceOpen` is set.
+   */
+  openExperience(index) {
+    const items = this.experience?.items;
+    if (!items?.length || this.experienceOpen) return;
+    this.experienceIndex = ((index % items.length) + items.length) % items.length;
+    this.experienceOpen = true;
+    this.experience.cardSuppressed = true; // hide the ambient auto-card behind the panel
+    this.#hidePrompt();
+    this.audio?.playMenuOpen?.();
+    this.controller.paused = true;
+    this.panelEl.classList.remove("projects-mode");
+    this.#showExperiencePanel();
+    this.panelEl.classList.remove("hidden");
+    this.achievements?.onSectionVisited?.("experience");
+  }
+
+  closeExperience() {
+    if (!this.experienceOpen) return;
+    this.experienceOpen = false;
+    this.panelEl.classList.add("hidden");
+    this.audio?.playMenuClose?.();
+    this.controller.paused = false;
+    if (this.experience) this.experience.cardSuppressed = false;
+  }
+
+  /** Browse to the prev/next company while the panel is open. */
+  experienceNav(direction) {
+    const n = this.experience?.items?.length ?? 0;
+    if (n <= 1) return;
+    this.experienceIndex = (this.experienceIndex + direction + n) % n;
+    this.audio?.playInteract?.();
+    this.#showExperiencePanel();
+  }
+
+  /** Populate the shared detail panel from the current experience station. */
+  #showExperiencePanel() {
+    const st = this.experience?.items?.[this.experienceIndex];
+    if (!st) return;
+    // Shape an experience entry like a project so #populatePanel formats the
+    // meta row (year · role) + the full bullet-point details (as highlights),
+    // and hides the empty case-study/tech/link blocks.
+    this.#populatePanel(
+      {
+        name: st.company,
+        color: st.accent,
+        year: st.year ? String(st.year) : "",
+        category: "",
+        role: st.role,
+        description: "",
+        highlights: st.points,
+        tech: [],
+      },
+      this.experienceIndex,
+      this.experience.items.length,
+    );
+    // Footer CTA to the full portfolio (only on experience cards).
+    const note = this.panelEl.querySelector(".panel-portfolio-note");
+    if (note) {
+      note.innerHTML =
+        `Want the full story? See every role in detail at ` +
+        `<a href="${PORTFOLIO_URL}" target="_blank" rel="noopener noreferrer">karanmahajan.ca ↗</a>`;
+      note.classList.remove("hidden");
+    }
+    this.achievements?.onExperienceSignViewed?.(st.index);
+  }
+
   // ── Skills sphere ────────────────────────────────────────────────────────
 
   get skillOpen() {
@@ -567,6 +672,10 @@ export class Interaction {
 
     const counter = panel.querySelector(".panel-counter");
     counter.textContent = `${index + 1} / ${total}`;
+
+    // Portfolio note is experience-only — hidden unless #showExperiencePanel
+    // re-shows it for this same panel.
+    panel.querySelector(".panel-portfolio-note")?.classList.add("hidden");
 
     // Long descriptions scroll — reset to the top whenever content swaps.
     panel.querySelector(".panel-scroll").scrollTop = 0;

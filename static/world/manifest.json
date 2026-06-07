@@ -86,6 +86,12 @@
       "objects": 9
     },
     {
+      "system": "experience",
+      "file": "experience/experience.glb",
+      "kind": "monolithic",
+      "objects": 25
+    },
+    {
       "system": "areas",
       "file": "areas/areas.glb",
       "kind": "monolithic",
@@ -163,7 +169,7 @@
   },
   "references": {
     "file": "references.glb",
-    "count": 30
+    "count": 35
   },
   "interactive": {
     "system": "colourGarden",

@@ -3600,3 +3600,140 @@ body[data-tod="night"] .control-hint-key {
   .cg-help { bottom: 7.5rem; }
   .cg-swatch { width: 2.6rem; height: 2.6rem; }
 }
+
+/* ── Experience: Career Ascent auto-card ──────────────────────────────────
+ * Ambient info card that auto-slides in from the side a station sits on as the
+ * player walks the NE bridge (no key press). Press E still opens the deeper
+ * .project-panel; this card hides while that panel is up (cardSuppressed). */
+.experience-card {
+  position: fixed;
+  top: 50%;
+  width: 340px;
+  max-width: 78vw;
+  margin-top: -120px;
+  padding: 20px 22px 18px;
+  border-radius: 16px;
+  background: linear-gradient(150deg, rgba(34, 21, 9, 0.86), rgba(22, 13, 6, 0.9));
+  border: 1px solid rgba(255, 196, 120, 0.28);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+  backdrop-filter: blur(9px);
+  -webkit-backdrop-filter: blur(9px);
+  color: #f6e7c8;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 44;
+  will-change: transform, opacity;
+  transition: transform 0.46s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.4s ease;
+}
+.experience-card.is-left {
+  left: 30px;
+  transform: translateX(-130%);
+}
+.experience-card.is-right {
+  right: 30px;
+  transform: translateX(130%);
+}
+.experience-card.is-left.is-shown,
+.experience-card.is-right.is-shown {
+  transform: translateX(0);
+  opacity: 1;
+}
+.experience-card .exp-card-accent {
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--exp-accent, var(--warm-orange));
+  box-shadow: 0 0 14px var(--exp-accent, var(--warm-orange));
+}
+.experience-card .exp-card-company {
+  margin: 0 0 4px;
+  font-family: 'Oswald', 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 1.32rem;
+  letter-spacing: 0.01em;
+  color: #fff4dc;
+}
+.experience-card .exp-card-role {
+  margin: 0 0 2px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--exp-accent, #f3dcaf);
+}
+.experience-card .exp-card-dates {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: #cBae7e;
+  opacity: 0.85;
+}
+.experience-card .exp-card-summary {
+  margin: 0 0 12px;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: #ecdcc0;
+}
+.experience-card .exp-card-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #d9bd8a;
+  opacity: 0.8;
+}
+.experience-card .exp-card-hint .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 6px;
+  background: var(--exp-accent, var(--warm-orange));
+  color: var(--ink);
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  font-size: 0.82rem;
+  box-shadow: 0 0 10px rgba(255, 180, 110, 0.5);
+}
+@media (max-width: 640px) {
+  .experience-card {
+    top: auto;
+    bottom: 96px;
+    margin-top: 0;
+    width: auto;
+    left: 16px;
+    right: 16px;
+    max-width: none;
+  }
+  .experience-card.is-left { transform: translateY(140%); }
+  .experience-card.is-right { transform: translateY(140%); }
+  .experience-card.is-left.is-shown,
+  .experience-card.is-right.is-shown { transform: translateY(0); }
+}
+
+/* Experience E-panel footer CTA to the full portfolio site. */
+.panel-portfolio-note {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 196, 120, 0.18);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #d9bd8a;
+}
+.panel-portfolio-note.hidden {
+  display: none;
+}
+.panel-portfolio-note a {
+  color: var(--warm-amber, #f0c45c);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+.panel-portfolio-note a:hover {
+  color: #fff4dc;
+}
