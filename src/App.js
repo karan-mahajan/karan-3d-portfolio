@@ -19,6 +19,7 @@ import { Experience } from "./Portfolio/Experience.js";
 import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
+import { ResumeBook } from "./Portfolio/ResumeBook.js";
 import { SkillSphere } from "./Portfolio/SkillSphere.js";
 import {
   BLOCKERS,
@@ -688,6 +689,17 @@ export class App extends EventTarget {
       audio: this.audio,
     });
 
+    // Floating magical résumé book — the new home for the résumé (replaces the
+    // old E-lectern flat panel). Placed in the NW quadrant; hovers, glows and
+    // throws a light-shaft beacon so it reads as a "go here" attraction.
+    this.resumeBook = new ResumeBook({
+      scene: this.scene,
+      terrain: this.world.terrain,
+      physics: this.physics,
+      x: -22,
+      z: -20,
+    });
+
     this.interaction = new Interaction({
       scene: this.scene,
       camera: this.camera,
@@ -696,6 +708,7 @@ export class App extends EventTarget {
       controller: this.player.controller,
       billboards: this.world.billboards,
       signs: this.world.signs,
+      resumeBook: this.resumeBook,
       skillSphere: this.skillSphere,
       projectsHut: this.projectsHut,
       contactBoard: this.contactBoard,
@@ -1575,6 +1588,7 @@ export class App extends EventTarget {
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
     if (this.fireflies) this.fireflies.update(elapsed);
+    if (this.resumeBook) this.resumeBook.update(elapsed);
     if (this.groundBreak) this.groundBreak.update(frameDelta);
     if (this.water) {
       // Rain wetness drives the water's rain-impact rings.

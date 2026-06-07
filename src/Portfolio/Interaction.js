@@ -1,6 +1,6 @@
 import gsap from "gsap";
 import * as THREE from "three";
-import { resume } from "./ResumeData.js";
+import { ResumeBookView } from "../UI/ResumeBookView.js";
 import { getProjectField } from "./PortfolioData.js";
 import { PORTFOLIO_URL } from "./ExperienceData.js";
 
@@ -27,6 +27,7 @@ export class Interaction {
     controller,
     billboards,
     signs = null,
+    resumeBook = null,
     skillSphere = null,
     projectsHut = null,
     contactBoard = null,
@@ -43,6 +44,7 @@ export class Interaction {
     this.controller = controller;
     this.billboards = billboards;
     this.signs = signs;
+    this.resumeBook = resumeBook;
     this.skillSphere = skillSphere;
     this.projectsHut = projectsHut;
     this.contactBoard = contactBoard;
@@ -137,25 +139,13 @@ export class Interaction {
             ? this.projectsHutNav(+1)
             : this.cycle(+1));
 
-    // ── Resume overlay ─────────────────────────────────────────────────────
-    // Mirrors the contact-panel structure so existing .contact-panel CSS
-    // applies (avoids a CSS round-trip in Phase 2). Renders raw HTML from
-    // ResumeData.js — later sessions can swap in a real CV.
-    this.resumeEl = document.createElement("div");
-    this.resumeEl.className = "contact-panel resume-panel hidden";
-    this.resumeEl.innerHTML = `
-      <button class="panel-close" aria-label="Close">×</button>
-      <div class="contact-accent"></div>
-      <div class="resume-body">${resume.html}</div>
-      ${resume.downloadUrl
-        ? `<div class="panel-actions"><a class="panel-link" href="${resume.downloadUrl}" target="_blank" rel="noopener noreferrer">Download PDF ↗</a></div>`
-        : ''}
-      <div class="panel-hint">ESC to close</div>
-    `;
-    document.body.appendChild(this.resumeEl);
-    this.resumeEl
-      .querySelector(".panel-close")
-      .addEventListener("click", () => this.closeResume());
+    // ── Résumé book reading view ───────────────────────────────────────────
+    // The two-page open-book overlay (its own DOM + CSS). Its close button and
+    // Esc route back through closeResume() so the camera dolly reverses too.
+    this.resumeBookView = new ResumeBookView({
+      audio: this.audio,
+      onClose: () => this.closeResume(),
+    });
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -215,8 +205,8 @@ export class Interaction {
       nearBillboard = null;
     }
     const nearContact = this.contactBoard?.near?.(playerPosition);
-    const nearResume =
-      this.signs && this.signs.nearResume?.(playerPosition, RESUME_PROXIMITY);
+    // Résumé now lives on the floating book (NW quadrant), not the old lectern.
+    const nearResume = this.resumeBook?.near?.(playerPosition, RESUME_PROXIMITY);
     const nearSkills = this.skillSphere?.near?.(playerPosition);
     const nearProjects = this.projectsHut?.near?.(playerPosition);
     const nearExperience = this.experience?.near?.(playerPosition);
@@ -247,7 +237,7 @@ export class Interaction {
     }
 
     if (nearBillboard) this.#showPrompt(nearBillboard.project.name);
-    else if (this.resumeCandidate) this.#showPrompt("Résumé");
+    else if (this.resumeCandidate) this.#showPrompt("Résumé", "Open");
     else if (this.contactCandidate) this.#showPrompt("Contact", "Enter");
     else if (this.skillCandidate) this.#showPrompt("Skills", "Enter");
     else if (this.projectsCandidate) this.#showPrompt("Projects", "Enter");
@@ -462,22 +452,85 @@ export class Interaction {
 
   // ── Resume ────────────────────────────────────────────────────────────────
 
+  /**
+   * Cinematic résumé open: lock controls, dolly the camera in front of the
+   * floating book while the book turns to face the reader and its cover swings
+   * open with a warm bloom, then reveal the panel once the camera settles.
+   * Mirrors the billboard focus()/exit() dolly. (Phase 3 swaps the placeholder
+   * panel for the real two-page book view.)
+   */
   openResume() {
-    if (this.resumeOpen) return;
+    if (this.resumeOpen || this.zooming || !this.resumeBook) return;
     this.resumeOpen = true;
+    this.zooming = true;
     this.#hidePrompt();
     this.audio?.playMenuOpen();
     this.controller.paused = true;
-    this.resumeEl.classList.remove("hidden");
+    this.playerCamera.locked = true;
+    if (this.player?.character?.root) this.player.character.root.visible = false;
+
+    if (!this._returnPos) {
+      this._returnPos = new THREE.Vector3();
+      this._returnLook = new THREE.Vector3();
+      this._returnDir = new THREE.Vector3();
+    }
+    this._returnPos.copy(this.camera.position);
+    this.camera.getWorldDirection(this._returnDir);
+    this._returnLook.copy(this._returnPos).add(this._returnDir);
+
+    const playerPos = this.player?.group?.position ?? this.player?.position;
+    this.resumeBook.focusOn(playerPos);
+    this.resumeBook.playOpen();
+    const { position, lookAt } = this.resumeBook.getFocusPose(playerPos);
+
+    const tmpDir = new THREE.Vector3();
+    this.camera.getWorldDirection(tmpDir);
+    const lookProxy = this.camera.position.clone().add(tmpDir);
+    gsap.to(lookProxy, {
+      x: lookAt.x, y: lookAt.y, z: lookAt.z,
+      duration: ZOOM_DURATION, ease: "power2.inOut",
+    });
+    gsap.to(this.camera.position, {
+      x: position.x, y: position.y, z: position.z,
+      duration: ZOOM_DURATION, ease: "power2.inOut",
+      onUpdate: () => this.camera.lookAt(lookProxy),
+      onComplete: () => {
+        this.camera.lookAt(lookAt);
+        this.zooming = false;
+        this.resumeBookView.show();
+      },
+    });
     this.achievements?.onSectionVisited?.('resume');
   }
 
   closeResume() {
-    if (!this.resumeOpen) return;
+    if (!this.resumeOpen || this.zooming) return;
     this.resumeOpen = false;
+    this.zooming = true;
     this.audio?.playMenuClose();
-    this.controller.paused = false;
-    this.resumeEl.classList.add("hidden");
+    this.resumeBookView.hide();
+    this.resumeBook?.playClose();
+    this.resumeBook?.unfocus();
+
+    const tmp = new THREE.Vector3();
+    this.camera.getWorldDirection(tmp);
+    const lookProxy = this.camera.position.clone().add(tmp);
+    gsap.to(lookProxy, {
+      x: this._returnLook.x, y: this._returnLook.y, z: this._returnLook.z,
+      duration: ZOOM_DURATION, ease: "power2.inOut",
+    });
+    gsap.to(this.camera.position, {
+      x: this._returnPos.x, y: this._returnPos.y, z: this._returnPos.z,
+      duration: ZOOM_DURATION, ease: "power2.inOut",
+      onUpdate: () => this.camera.lookAt(lookProxy),
+      onComplete: () => {
+        this.zooming = false;
+        this.controller.paused = false;
+        this.playerCamera.locked = false;
+        this.playerCamera.resync();
+        if (this.player?.character?.root) this.player.character.root.visible = true;
+      },
+    });
   }
 
   // ── Experience (Career Ascent on the bridge) ──────────────────────────────

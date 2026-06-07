@@ -1,0 +1,240 @@
+/* ───────────────────────── Floating résumé book view ─────────────────────────
+   Two-page open-book reading overlay (ResumeBookView.js) powered by StPageFlip
+   for real turn.js-style page turns. The library draws the fold/gutter shadows;
+   this file styles the leather frame, parchment pages, covers, the flanking
+   page-stacks (thin/thicken with progress) and the typography.
+   Palette echoes the world's warm-amber / burgundy / gold family. */
+
+.rb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3vh 3vw;
+  box-sizing: border-box;
+  background: radial-gradient(ellipse at center, rgba(20, 12, 6, 0.35) 0%, rgba(8, 5, 3, 0.74) 100%);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+.rb-overlay.rb-visible { opacity: 1; }
+.rb-overlay.hidden { display: none; }
+
+/* ── Leather frame ── */
+.rb-book {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px 22px 14px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #5a2230 0%, #3c1620 45%, #2a0f16 100%);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 2px rgba(217, 164, 65, 0.55),
+    inset 0 0 0 5px rgba(58, 20, 26, 0.9);
+  transform: scale(0.96);
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+.rb-visible .rb-book { transform: scale(1); }
+
+/* ── Flip area + flanking page-stacks ── */
+.rb-flip-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.rb-flip { position: relative; }
+
+/* Stacked sheet edges beside the book — width tracks reading progress. */
+.rb-stack {
+  align-self: stretch;
+  width: 1px;
+  background: repeating-linear-gradient(0deg, #d2b87f 0 1px, #efdcae 1px 3px);
+  box-shadow: 0 6px 10px rgba(0, 0, 0, 0.35);
+  transition: width 0.5s ease;
+}
+.rb-stack-left  { border-radius: 4px 0 0 4px; }
+.rb-stack-right { border-radius: 0 4px 4px 0; }
+
+/* StPageFlip injects .stf__* wrappers; keep them transparent. */
+.rb-flip .stf__parent { margin: 0 auto; }
+
+/* ── Pages ── */
+.rb-pf-page {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: linear-gradient(115deg, #f6e8c8 0%, #f1e0ba 60%, #e8d3a3 100%);
+}
+.rb-page-inner {
+  position: absolute;
+  inset: 0;
+  padding: 26px 28px;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: #43301c;
+  font-family: 'Rajdhani', 'DM Sans', sans-serif;
+}
+
+/* ── Hard covers (leather) ── */
+.rb-cover {
+  background: linear-gradient(150deg, #5a2230 0%, #3c1620 55%, #2a0f16 100%);
+  box-shadow: inset 0 0 0 2px rgba(217, 164, 65, 0.5), inset 0 0 60px rgba(0, 0, 0, 0.5);
+}
+.rb-cover .rb-page-inner { display: flex; }
+.rb-cover-inner {
+  margin: auto;
+  text-align: center;
+  color: #e9d6ab;
+  padding: 0 1.5rem;
+}
+.rb-cover-rule {
+  display: block;
+  width: 46px;
+  height: 3px;
+  margin: 0 auto 1rem;
+  background: #d9a441;
+  border-radius: 2px;
+}
+.rb-cover-kicker {
+  font-family: 'Oswald', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.34em;
+  font-size: 0.72rem;
+  color: #d9a441;
+  margin: 0 0 0.8rem;
+}
+.rb-cover-name {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  font-size: 2rem;
+  line-height: 1.1;
+  margin: 0 0 0.4rem;
+  color: #f3e3c0;
+}
+.rb-cover-title {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 400;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  color: #c79a52;
+  margin: 0;
+}
+.rb-cover-emblem { display: block; font-size: 1.6rem; color: #d9a441; margin-top: 1.6rem; }
+.rb-cover-link { color: #d9a441; text-decoration: none; font-family: 'Rajdhani', sans-serif; font-weight: 600; }
+
+/* ── Page typography ── */
+.rb-eyebrow {
+  font-family: 'Oswald', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.7rem;
+  color: #b5791f;
+  margin: 0 0 0.5rem;
+}
+.rb-name {
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  font-size: 1.9rem;
+  line-height: 1.05;
+  color: #3a2614;
+  margin: 0 0 0.2rem;
+}
+.rb-title { font-family: 'Oswald', sans-serif; font-weight: 500; font-size: 0.98rem; color: #8a5a1f; margin: 0 0 1rem; }
+.rb-lead { font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.88rem; line-height: 1.6; color: #5b4631; margin: 0 0 0.9rem; }
+.rb-note { font-family: 'DM Sans', system-ui, sans-serif; font-style: italic; font-size: 0.82rem; color: #6f583f; margin: 0.9rem 0 0; }
+.rb-h2 {
+  font-family: 'Oswald', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 1.1rem;
+  color: #6a431a;
+  margin: 0 0 0.9rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid rgba(181, 121, 31, 0.4);
+}
+.rb-h2-cont { color: #9a7333; border-bottom-color: rgba(181, 121, 31, 0.25); }
+.rb-cont { font-size: 0.6rem; letter-spacing: 0.08em; opacity: 0.7; }
+
+.rb-points { margin: 0.3rem 0 0; padding-left: 1.05rem; }
+.rb-points li {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #5b4631;
+  margin-bottom: 0.32rem;
+}
+
+.rb-entry { margin-bottom: 0.9rem; }
+.rb-entry-top { font-family: 'Oswald', sans-serif; font-size: 1rem; font-weight: 600; color: #3a2614; margin: 0; }
+.rb-entry-meta { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #a06a22; margin: 0.1rem 0 0.28rem; }
+.rb-entry-sum { font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.8rem; line-height: 1.45; color: #5b4631; margin: 0; }
+
+.rb-proj { margin-bottom: 0.8rem; }
+.rb-proj-name { font-family: 'Oswald', sans-serif; font-size: 0.98rem; font-weight: 600; color: #3a2614; margin: 0; }
+.rb-proj-cat { font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: #a06a22; margin: 0.1rem 0 0.22rem; }
+.rb-proj-sum { font-family: 'DM Sans', system-ui, sans-serif; font-size: 0.78rem; line-height: 1.4; color: #5b4631; margin: 0; }
+
+.rb-skillcat { margin-bottom: 0.85rem; }
+.rb-skillcat-h { font-family: 'Oswald', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78rem; color: #8a5a1f; margin: 0 0 0.4rem; }
+.rb-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.rb-chip {
+  font-family: 'Rajdhani', sans-serif; font-size: 0.74rem; font-weight: 600;
+  padding: 0.16rem 0.55rem; border-radius: 999px; color: #5a3c14;
+  background: rgba(181, 121, 31, 0.14); border: 1px solid rgba(181, 121, 31, 0.35);
+}
+
+.rb-contact { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.4rem 0 0; }
+.rb-contact a {
+  font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 0.92rem;
+  color: #6a431a; text-decoration: none; border-bottom: 1px solid transparent;
+  width: fit-content; transition: color 0.2s, border-color 0.2s;
+}
+.rb-contact a:hover { color: #b5791f; border-bottom-color: #b5791f; }
+.rb-contact-loc { font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 0.92rem; color: #7a5a34; }
+
+.rb-download {
+  display: inline-block; margin: 1rem 0; padding: 0.5rem 1rem; border-radius: 8px;
+  font-family: 'Oswald', sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: 0.8rem; color: #3a2614; text-decoration: none;
+  background: linear-gradient(135deg, #e8b84e, #d9a441);
+  box-shadow: 0 4px 14px rgba(176, 120, 31, 0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.rb-download:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(176, 120, 31, 0.55); }
+
+/* ── Chrome ── */
+.rb-close {
+  position: absolute; top: 6px; right: 12px;
+  width: 2rem; height: 2rem; border: none; background: transparent;
+  color: rgba(245, 230, 211, 0.8); font-size: 1.7rem; line-height: 1; cursor: pointer;
+  z-index: 8; opacity: 0.8;
+}
+.rb-close:hover { opacity: 1; }
+
+.rb-nav { display: flex; align-items: center; justify-content: center; gap: 1.4rem; margin-top: 12px; }
+.rb-nav button {
+  width: 2.4rem; height: 2.4rem; border-radius: 50%;
+  border: 1px solid rgba(217, 164, 65, 0.5); background: rgba(58, 20, 26, 0.5);
+  color: #e8d2a6; font-size: 1.1rem; cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+.rb-nav button:hover { background: rgba(217, 164, 65, 0.25); transform: scale(1.08); }
+.rb-counter {
+  font-family: 'Oswald', sans-serif; letter-spacing: 0.12em; font-size: 0.8rem;
+  color: rgba(245, 230, 211, 0.7); min-width: 3.2rem; text-align: center;
+}
+.rb-hint {
+  text-align: center; margin: 0.5rem 0 0;
+  font-family: 'Oswald', sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+  font-size: 0.62rem; color: rgba(245, 230, 211, 0.45);
+}
+
+@media (max-width: 640px) {
+  .rb-page-inner { padding: 16px 16px; }
+  .rb-name { font-size: 1.6rem; }
+  .rb-cover-name { font-size: 1.6rem; }
+}

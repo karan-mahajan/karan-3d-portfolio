@@ -57,7 +57,9 @@ export class PortfolioMounts {
     this.#buildExperienceCairns();
     this.#buildSkillsArtifacts();
     this.#buildContactPlinth();
-    this.#buildResumeLectern();
+    // Résumé moved to the floating ResumeBook (NW quadrant) — the old lectern
+    // "Read résumé" decal is retired so it isn't a dead marker.
+    // this.#buildResumeLectern();
 
     if (this.missingMeshes.length) {
       console.warn(
