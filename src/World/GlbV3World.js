@@ -428,6 +428,13 @@ export class GlbV3World {
     );
     mark(`GLB load + parse (${loaded.filter(Boolean).length} files)`);
 
+    // Physics was kicked off concurrently in App.boot() (its ~3.7s WASM
+    // compile hides under the renderer handshake + this GLB parse). Block
+    // here — usually already resolved — so EVERY collider phase below (the
+    // per-system loop, bridge, instanced rocks, colliders.glb) sees a ready
+    // world instead of silently skipping via the `if (physics?.ready)` guards.
+    if (physics?.whenReady) await physics.whenReady();
+
     for (const item of loaded) {
       if (!item) continue;
       const { entry, gltf } = item;

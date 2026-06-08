@@ -28,6 +28,12 @@ export class Physics {
   constructor() {
     this.ready = false;
     this.RAPIER = null;
+    // Resolves once init() has fully booted Rapier. Lets boot() start physics
+    // concurrently and await readiness only at the point a collider is built.
+    this._readyResolve = null;
+    this._readyPromise = new Promise((resolve) => {
+      this._readyResolve = resolve;
+    });
     this.world = null;
     this.eventQueue = null;
     this.characterController = null;
@@ -58,7 +64,14 @@ export class Physics {
     this.fenceColliders = new Map();
 
     this.ready = true;
+    this._readyResolve();
     return true;
+  }
+
+  /** Resolves once init() has booted Rapier. Safe to await repeatedly; if
+   *  already ready it resolves immediately. */
+  whenReady() {
+    return this._readyPromise;
   }
 
   step(delta) {

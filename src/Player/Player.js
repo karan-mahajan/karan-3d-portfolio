@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
 import { PlayerController } from './PlayerController.js';
-import { Character } from './Character.js';
 
 /**
  * Player: capsule placeholder at first, swapped for the loaded
@@ -108,16 +107,19 @@ export class Player {
     return group;
   }
 
-  /** Async character load — returns metadata or null on failure. */
-  async loadCharacter() {
-    if (!this.loader) return null;
-    this.character = new Character(this.loader);
-    const result = await this.character.load();
-    if (!result.ok) {
+  /**
+   * Attach an already-loaded Character (its GLB is parsed off the critical
+   * path in App.boot, concurrently with the world parse). On a failed load the
+   * placeholder capsule stays visible. Returns the same load `result` the
+   * caller passed, for boot-summary symmetry.
+   */
+  attachCharacter(character, result) {
+    if (!result || !result.ok) {
       // Skin missing — keep the placeholder visible.
       this.character = null;
-      return result;
+      return result ?? null;
     }
+    this.character = character;
     this.group.remove(this.placeholder);
     this.placeholder = null;
     this.group.add(this.character.root);
