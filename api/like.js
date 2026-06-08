@@ -1,0 +1,48 @@
+// POST /api/like   body: { visitorId }
+// One like per visitor. The visitorId is added to a Redis set; the total only
+// increments when the set actually grew (sadd returns 1), so repeat taps from
+// the same visitor are idempotent and can't inflate the count.
+import {
+  getRedis,
+  KEYS,
+  sendJson,
+  readJsonBody,
+  cleanVisitorId,
+  getClientIp,
+  logAudit,
+} from "./_lib.js";
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return sendJson(res, 405, { error: "method_not_allowed" });
+  }
+  const redis = getRedis();
+  if (!redis) return sendJson(res, 200, { configured: false, likes: 0, liked: false });
+
+  const body = await readJsonBody(req);
+  const vid = cleanVisitorId(body.visitorId);
+  if (!vid) return sendJson(res, 400, { error: "bad_visitor_id" });
+
+  try {
+    const added = await redis.sadd(KEYS.likers, vid);
+    let likes;
+    if (added === 1) {
+      likes = await redis.incr(KEYS.likes);
+    } else {
+      likes = Number(await redis.get(KEYS.likes)) || 0;
+    }
+    // Private audit row (IP) for abuse review — only when a like was counted.
+    if (added === 1) {
+      await logAudit(redis, { t: "like", visitorId: vid, ip: getClientIp(req) });
+    }
+    return sendJson(res, 200, {
+      configured: true,
+      likes: Number(likes) || 0,
+      liked: true,
+      counted: added === 1,
+    });
+  } catch (err) {
+    console.error("[api/like]", err);
+    return sendJson(res, 500, { error: "write_failed" });
+  }
+}

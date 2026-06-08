@@ -2,6 +2,7 @@ import * as THREE from "three/webgpu";
 import { AudioManager } from "./Audio/AudioManager.js";
 import { Fireflies } from "./Effects/Fireflies.js";
 import { Footprints } from "./Effects/Footprints.js";
+import { LikeLights } from "./Effects/LikeLights.js";
 import { GroundBreak } from "./Effects/GroundBreak.js";
 import { Leaves } from "./Effects/Leaves.js";
 import { PostFX } from "./Effects/PostFX.js";
@@ -21,6 +22,7 @@ import { Interaction } from "./Portfolio/Interaction.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
 import { ResumeBook } from "./Portfolio/ResumeBook.js";
 import { SkillSphere } from "./Portfolio/SkillSphere.js";
+import { GuestbookTree } from "./Portfolio/GuestbookTree.js";
 import {
   BLOCKERS,
   LAMPS,
@@ -31,6 +33,7 @@ import { Achievements } from "./Systems/Achievements.js";
 import { ControlHints } from "./Systems/ControlHints.js";
 import { DistanceGame } from "./Systems/DistanceGame.js";
 import { LavaHazard } from "./Systems/LavaHazard.js";
+import { SocialBackend } from "./Systems/SocialBackend.js";
 import { ClickToMove } from "./Travel/ClickToMove.js";
 import { IntroCinematic } from "./Travel/IntroCinematic.js";
 import { Navmask } from "./Travel/Navmask.js";
@@ -44,6 +47,7 @@ import { Discovery } from "./UI/Discovery.js";
 import { MapOverlay } from "./UI/MapOverlay.js";
 import { MapSnapshot } from "./UI/MapSnapshot.js";
 import { MiniMap } from "./UI/MiniMap.js";
+import { SocialHud } from "./UI/SocialHud.js";
 import { Tutorial } from "./UI/Tutorial.js";
 import { UIController } from "./UI/UIController.js";
 import { Wasted } from "./UI/Wasted.js";
@@ -766,6 +770,47 @@ export class App extends EventTarget {
       x: -22,
       z: -20,
     });
+
+    // ── Social backend: persisted likes / whispers / visitor count ──────────
+    // Talks to the /api serverless functions (Upstash Redis); credentials live
+    // server-side, never in this bundle. loadState() fires un-awaited so a slow
+    // or unconfigured backend never delays the reveal — consumers react via
+    // onChange and stay hidden until real data arrives.
+    this.social = new SocialBackend();
+    this.likeLights = new LikeLights(this.scene);
+    this.social.onChange(() => this.likeLights.setCount(this.social.likes));
+    this.social.loadState();
+    this.socialHud = new SocialHud({
+      social: this.social,
+      likeLights: this.likeLights,
+      player: this.player,
+      audio: this.audio,
+      controller: this.player.controller,
+    });
+    this.socialHud.start();
+
+    // The Guestbook Tree — land-based note landmark (north of spawn). Its
+    // beacon/light are built now (light count final before first compile); the
+    // tree GLB loads un-awaited so it pops in just after spawn like the football.
+    this.guestbookTree = new GuestbookTree({
+      scene: this.scene,
+      camera: this.camera,
+      playerCamera: this.playerCamera,
+      player: this.player,
+      controller: this.player.controller,
+      terrain: this.world.terrain,
+      physics: this.physics,
+      audio: this.audio,
+      social: this.social,
+      loader: this.loader,
+      wind: this.wind,
+      timeOfDay: this.timeOfDay,
+      x: -2,
+      z: 18,
+    });
+    this.guestbookTree
+      .load()
+      .catch((err) => console.warn("[App] guestbook tree load failed:", err));
 
     this.interaction = new Interaction({
       scene: this.scene,
@@ -1848,6 +1893,12 @@ export class App extends EventTarget {
     if (this.ui) this.ui.tick();
     if (this.fireflies) this.fireflies.update(elapsed);
     if (this.resumeBook) this.resumeBook.update(elapsed);
+    if (this.likeLights) {
+      this.likeLights.update(elapsed);
+      this.likeLights.setNightFactor(this.timeOfDay?.nightFactor ?? 0);
+    }
+    if (this.guestbookTree)
+      this.guestbookTree.update(elapsed, frameDelta, this.player.position);
     if (this.groundBreak) this.groundBreak.update(frameDelta);
     // Snow and rain never share the sky. While any snow phase is active
     // (onset/storm/melt) the manual rain is fully suppressed — no drops, no

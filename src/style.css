@@ -3759,3 +3759,416 @@ body[data-tod="night"] .control-hint-key {
 .panel-portfolio-note a:hover {
   color: #fff4dc;
 }
+
+/* ============================================================================
+   Social features — like affordance (sky like-lights) + Guestbook overlay
+   Light & sea language: warm amber lights + parchment notes. The like pill shows
+   the LIVE count (social proof) and releases a spark on tap; the overlay is the
+   read/compose surface for the Guestbook. z-order: HUD pill at 150 (above
+   in-world HUD, below modals); overlay at 210 (above panels, below loading).
+   ============================================================================ */
+
+/* ── Like affordance (top-centre living number) ──────────────────────────── */
+.social-like {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Nunito', sans-serif;
+  pointer-events: none; /* only the button is interactive */
+  transition: opacity 0.3s ease;
+}
+.social-like.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.social-like-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid rgba(245, 230, 211, 0.22);
+  border-radius: 999px;
+  background: rgba(26, 20, 16, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--paper);
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  transition: transform 0.18s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+.social-like-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 26px rgba(255, 174, 90, 0.28);
+  background: rgba(40, 28, 20, 0.72);
+}
+.social-like-btn:disabled {
+  cursor: default;
+}
+.social-like-spark {
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--warm-amber);
+  text-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+  transition: transform 0.2s ease;
+}
+.social-like-count {
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  min-width: 1ch;
+}
+.social-like-sub {
+  font-size: 0.72rem;
+  color: rgba(245, 230, 211, 0.65);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  letter-spacing: 0.02em;
+}
+.social-like.liked .social-like-spark {
+  color: #ffd97a;
+  text-shadow: 0 0 12px rgba(255, 207, 122, 0.9);
+}
+.social-like.liked .social-like-btn {
+  border-color: rgba(255, 207, 122, 0.4);
+}
+/* Burst on a successful like — quick pop + glow ring on the spark. */
+.social-like-btn.burst {
+  animation: social-like-pop 0.5s ease;
+}
+.social-like-btn.burst .social-like-spark {
+  animation: social-spark-fly 0.6s ease;
+}
+@keyframes social-like-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.14); box-shadow: 0 0 24px rgba(255, 200, 110, 0.7); }
+  100% { transform: scale(1); }
+}
+@keyframes social-spark-fly {
+  0% { transform: translateY(0) scale(1); }
+  40% { transform: translateY(-6px) scale(1.5); }
+  100% { transform: translateY(0) scale(1); }
+}
+/* Gentle attention pulse used by the one-time nudge. */
+.social-like.pulse .social-like-btn {
+  animation: social-pulse 1.6s ease-in-out 2;
+}
+@keyframes social-pulse {
+  0%, 100% { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
+  50% { box-shadow: 0 0 22px rgba(255, 184, 92, 0.65); }
+}
+.social-like-nudge {
+  pointer-events: none;
+  font-family: 'Nunito', sans-serif;
+  font-size: 0.8rem;
+  color: var(--paper);
+  background: rgba(40, 28, 20, 0.82);
+  border: 1px solid rgba(255, 207, 122, 0.32);
+  border-radius: 8px;
+  padding: 0.3rem 0.6rem;
+  margin-top: 2px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.3s ease;
+}
+.social-like-nudge.hidden {
+  opacity: 0;
+}
+
+/* ── Guestbook read/compose overlay ──────────────────────────────────────── */
+.guestbook-view {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  pointer-events: none; /* reading mode: the 3D note stays visible behind it */
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  font-family: 'Nunito', sans-serif;
+}
+.guestbook-view.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Compose mode dims the world + centres the card. */
+.guestbook-view.composing {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: rgba(12, 9, 7, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.guestbook-card {
+  position: relative;
+  box-sizing: border-box;
+  width: min(480px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1.6rem 1.5rem 1.2rem;
+  background: rgba(26, 20, 16, 0.9);
+  border: 1px solid rgba(255, 207, 122, 0.2);
+  border-radius: 16px;
+  color: var(--paper);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+.guestbook-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.7rem;
+  background: none;
+  border: none;
+  color: rgba(245, 230, 211, 0.7);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.guestbook-close:hover { color: #fff4dc; }
+.guestbook-title {
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  font-size: 1.4rem;
+  margin: 0 0 0.15rem;
+  color: #ffe6b8;
+}
+.guestbook-sub {
+  margin: 0 0 0.9rem;
+  font-size: 0.85rem;
+  color: rgba(245, 230, 211, 0.7);
+}
+.guestbook-list {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding-right: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+.guestbook-list::-webkit-scrollbar { width: 6px; }
+.guestbook-list::-webkit-scrollbar-thumb {
+  background: rgba(245, 230, 211, 0.22);
+  border-radius: 3px;
+}
+.guestbook-empty {
+  color: rgba(245, 230, 211, 0.55);
+  font-size: 0.9rem;
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+.guestbook-item {
+  background: rgba(255, 227, 178, 0.07);
+  border: 1px solid rgba(255, 207, 122, 0.16);
+  border-left: 3px solid rgba(255, 184, 92, 0.55);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+}
+.guestbook-msg {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  color: var(--paper);
+  overflow-wrap: anywhere;
+}
+.guestbook-meta {
+  margin-top: 0.3rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.72rem;
+  color: rgba(245, 230, 211, 0.55);
+}
+.guestbook-by {
+  font-weight: 700;
+  color: #ffd97a;
+}
+.guestbook-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-top: 1px solid rgba(245, 230, 211, 0.14);
+  padding-top: 0.9rem;
+}
+.guestbook-name,
+.guestbook-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: 'Nunito', sans-serif;
+  color: var(--paper);
+  background: rgba(12, 9, 7, 0.55);
+  border: 1px solid rgba(245, 230, 211, 0.2);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  resize: none;
+}
+.guestbook-name::placeholder,
+.guestbook-text::placeholder { color: rgba(245, 230, 211, 0.4); }
+.guestbook-name:focus,
+.guestbook-text:focus {
+  outline: none;
+  border-color: rgba(255, 207, 122, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 184, 92, 0.18);
+}
+.guestbook-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.guestbook-count {
+  font-size: 0.72rem;
+  color: rgba(245, 230, 211, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+.guestbook-feedback {
+  flex: 1 1 auto;
+  font-size: 0.78rem;
+  min-height: 1em;
+}
+.guestbook-feedback[data-kind="ok"] { color: #9fe08a; }
+.guestbook-feedback[data-kind="warn"] { color: #ffb37a; }
+.guestbook-submit {
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  color: var(--ink);
+  background: linear-gradient(180deg, #ffd07a, #f6a945);
+  border: none;
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.2s ease;
+}
+.guestbook-submit:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.guestbook-submit:disabled { opacity: 0.6; cursor: default; transform: none; }
+.guestbook-hint {
+  margin-top: 0.7rem;
+  text-align: center;
+  font-size: 0.72rem;
+  color: rgba(245, 230, 211, 0.45);
+}
+
+/* ── Confetti / streamer celebration (fires on a like) ───────────────────── */
+.confetti-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 250; /* above the guestbook overlay (210), below loading (1000) */
+}
+.confetti-piece {
+  position: absolute;
+  top: -8vh;
+  width: 9px;
+  height: 14px;
+  border-radius: 1px;
+  opacity: 0.95;
+  will-change: transform, opacity;
+  animation-name: confetti-fall;
+  animation-timing-function: cubic-bezier(0.25, 0.6, 0.5, 1);
+  animation-fill-mode: forwards;
+}
+.confetti-piece.streamer {
+  width: 4px;
+  border-radius: 3px; /* thin curling ribbon */
+}
+@keyframes confetti-fall {
+  0%   { transform: translate3d(0, -8vh, 0) rotateZ(0deg); opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate3d(var(--dx), 112vh, 0) rotateZ(var(--spin)); opacity: 0; }
+}
+
+/* ── Guestbook section labels (separates "read" from "sign") ──────────────── */
+.guestbook-section {
+  margin: 0.2rem 0 0.5rem;
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 214, 122, 0.75);
+}
+
+/* ── Guestbook reading caption (camera parked at one note) ───────────────── */
+.guestbook-card { pointer-events: auto; }
+.guestbook-read {
+  position: absolute;
+  left: 50%;
+  bottom: 5vh;
+  transform: translateX(-50%);
+  width: min(440px, 92vw);
+  text-align: center;
+}
+.guestbook-note { margin: 0.2rem 0 0.8rem; }
+.guestbook-read .guestbook-msg {
+  margin: 0;
+  font-size: 1.12rem;
+  line-height: 1.45;
+  color: #fff4dc;
+  overflow-wrap: anywhere;
+}
+.guestbook-read .guestbook-meta {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  font-size: 0.78rem;
+  color: rgba(245, 230, 211, 0.6);
+}
+.guestbook-read .guestbook-by { color: #ffd97a; font-weight: 700; }
+.guestbook-readnav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 0.2rem 0 0.7rem;
+}
+.guestbook-prev,
+.guestbook-next {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 207, 122, 0.3);
+  background: rgba(40, 28, 20, 0.7);
+  color: var(--paper);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.2s ease;
+}
+.guestbook-prev:hover,
+.guestbook-next:hover { transform: translateY(-1px); background: rgba(60, 42, 28, 0.85); }
+.guestbook-counter {
+  font-size: 0.8rem;
+  color: rgba(245, 230, 211, 0.7);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5ch;
+}
+.guestbook-signbtn,
+.guestbook-back {
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  border: none;
+  border-radius: 999px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.2s ease;
+}
+.guestbook-signbtn {
+  color: var(--ink);
+  background: linear-gradient(180deg, #ffd07a, #f6a945);
+}
+.guestbook-signbtn:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.guestbook-back {
+  margin-top: 0.6rem;
+  align-self: flex-start;
+  background: rgba(255, 227, 178, 0.1);
+  color: var(--paper);
+  border: 1px solid rgba(255, 207, 122, 0.25);
+}
+.guestbook-back.hidden { display: none; }
