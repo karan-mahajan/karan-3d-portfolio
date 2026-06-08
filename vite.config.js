@@ -31,6 +31,9 @@ function apiDevServer() {
           // the file changes, so API edits hot-apply without a server restart.
           const handler = (await server.ssrLoadModule(`/api/${name}.js`)).default;
           req.query = Object.fromEntries(url.searchParams);
+          // Mark every dev-server request as local so the handlers no-op and
+          // never write localhost/incognito testing into the real counts.
+          req.headers["x-social-dev"] = "1";
           await handler(req, res);
         } catch (err) {
           console.error(`[api-dev] /api/${name} failed:`, err);

@@ -9,6 +9,7 @@ import {
   readJsonBody,
   cleanVisitorId,
   getClientIp,
+  isLocalRequest,
   logAudit,
   sanitizeText,
   containsProfanity,
@@ -21,6 +22,9 @@ import {
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return sendJson(res, 405, { error: "method_not_allowed" });
+  }
+  if (isLocalRequest(req)) {
+    return sendJson(res, 200, { configured: false, error: "local" });
   }
   const redis = getRedis();
   if (!redis) return sendJson(res, 503, { error: "not_configured" });
