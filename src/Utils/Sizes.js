@@ -12,10 +12,11 @@ export class Sizes extends EventTarget {
     this.width = window.innerWidth;
     this.height = window.innerHeight;
     this.aspect = this.width / this.height;
-    // Capped at 1.0 (was 1.5). On retina/high-DPI displays this is the
-    // single biggest perf win: 1.5× ratio means 2.25× the pixel work per
-    // frame vs 1.0×. The visual softening is barely noticeable on a
-    // stylized scene; lighting/post-FX cost drops proportionally.
-    this.pixelRatio = Math.min(window.devicePixelRatio, 1.0);
+    // Render-resolution ceiling. On retina/high-DPI this is the single biggest
+    // sharpness lever (Bruno renders at 2.0) AND the biggest pixel cost (2.0 =
+    // 4× the work of 1.0). App sets maxPixelRatio from the quality tier after
+    // detection (capable → 2.0 Retina, weak → 1.0); the adaptive DPR controller
+    // scales BELOW it under load. Defaults to 1.0 until the tier is applied.
+    this.pixelRatio = Math.min(window.devicePixelRatio, this.maxPixelRatio ?? 1.0);
   }
 }

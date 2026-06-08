@@ -22,6 +22,10 @@ const PROFILES = {
     // down to (base * dprFloor) to recover frametime. On a healthy GPU
     // this never engages; on a weak one it prevents stutter.
     dprFloor: 0.85,
+    // Render-resolution ceiling (Sizes caps devicePixelRatio to this). 2.0 =
+    // full Retina sharpness on capable machines, matching Bruno. The adaptive
+    // DPR controller scales BELOW this (down to dprFloor×) under load.
+    dprCap: 2.0,
     postfx: {
       enabled: true,
       bloomStrength: 0.30,
@@ -44,6 +48,7 @@ const PROFILES = {
     windLineCount: 210,
     fireflyCount: 96,
     dprFloor: 0.7,
+    dprCap: 1.5, // sharper than 1.0, lighter than full Retina (2.25× px vs 4×)
     postfx: {
       enabled: true,
       bloomStrength: 0.18,
@@ -66,6 +71,7 @@ const PROFILES = {
     windLineCount: 90,
     fireflyCount: 48,
     dprFloor: 0.55,
+    dprCap: 1.0, // weak machines stay at 1.0 — resolution is the cheapest lever
     postfx: {
       enabled: false,
       bloomStrength: 0,

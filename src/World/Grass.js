@@ -54,6 +54,12 @@ import { snowGrowAt, SNOW_ALBEDO } from "./SnowState.js";
 // dominant grass expense. Blender uses Z-up / +Y-forward; remapped to three's
 // Y-up: three(x, y, z) = blender(x_width, z_up, y_fwd). Stored [width, fwd, up].
 const BLADE_HEIGHT_MAX = 0.45;
+// Vertical scale on the authored blade — 0.6 = 40% shorter (bottom-to-top).
+// Scales the arch (up + forward) uniformly so the curve shape and base width
+// are unchanged; gives a shorter, calmer lawn and less per-blade fill-rate.
+// blade_height (the colour-ramp attribute) stays on the ORIGINAL profile so the
+// tip/base colours don't shift when the geometry is scaled.
+const BLADE_HEIGHT_SCALE = 0.6;
 const BLENDER_VERTS = [
   [-0.03, 0.0, 0.0],
   [0.03, 0.0, 0.0], // base
@@ -191,10 +197,10 @@ export class Grass {
     const bladeHeight = new Float32Array(BLENDER_VERTS.length);
     for (let i = 0; i < BLENDER_VERTS.length; i++) {
       const [bx, by, bz] = BLENDER_VERTS[i];
-      verts[i * 3] = bx; // width   → x
-      verts[i * 3 + 1] = bz; // up       → y
-      verts[i * 3 + 2] = by; // forward  → z
-      bladeHeight[i] = bz / BLADE_HEIGHT_MAX;
+      verts[i * 3] = bx; // width   → x  (unchanged thickness)
+      verts[i * 3 + 1] = bz * BLADE_HEIGHT_SCALE; // up      → y  (40% shorter)
+      verts[i * 3 + 2] = by * BLADE_HEIGHT_SCALE; // forward → z  (keep arch shape)
+      bladeHeight[i] = bz / BLADE_HEIGHT_MAX; // colour ramp uses original profile
     }
     base.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
     base.setAttribute(

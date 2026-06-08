@@ -2,9 +2,9 @@ import * as THREE from "three/webgpu";
 import { AudioManager } from "./Audio/AudioManager.js";
 import { Fireflies } from "./Effects/Fireflies.js";
 import { Footprints } from "./Effects/Footprints.js";
-import { LikeLights } from "./Effects/LikeLights.js";
 import { GroundBreak } from "./Effects/GroundBreak.js";
 import { Leaves } from "./Effects/Leaves.js";
+import { LikeLights } from "./Effects/LikeLights.js";
 import { PostFX } from "./Effects/PostFX.js";
 import { Rain } from "./Effects/Rain.js";
 import { Snow } from "./Effects/Snow.js";
@@ -17,12 +17,12 @@ import { PlayerCamera } from "./Player/PlayerCamera.js";
 import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
 import { ContactBoard } from "./Portfolio/ContactBoard.js";
 import { Experience } from "./Portfolio/Experience.js";
+import { GuestbookTree } from "./Portfolio/GuestbookTree.js";
 import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
 import { ResumeBook } from "./Portfolio/ResumeBook.js";
 import { SkillSphere } from "./Portfolio/SkillSphere.js";
-import { GuestbookTree } from "./Portfolio/GuestbookTree.js";
 import {
   BLOCKERS,
   LAMPS,
@@ -87,6 +87,13 @@ export class App extends EventTarget {
     this.clock = new THREE.Clock();
     this.loader = new Loader();
     this.quality = detectQuality();
+    // Render-resolution ceiling from the quality tier (capable → Retina/2.0,
+    // weak → 1.0). Set on Sizes BEFORE #initRenderer's first setPixelRatio; the
+    // adaptive DPR controller then scales below it under load. Backend (WebGPU
+    // vs WebGL2) is deliberately NOT a capability signal — a strong Mac with no
+    // WebGPU runs WebGL2 fine, so we don't downgrade it for the backend alone.
+    this.sizes.maxPixelRatio = this.quality.dprCap ?? 1.0;
+    this.sizes.update();
     window.__quality = this.quality;
 
     this.loader.addEventListener("progress", (e) => {
@@ -165,7 +172,8 @@ export class App extends EventTarget {
     // who came before and left BEFORE snow ever showed gets a short delay this
     // time so they finally see it. snow-seen is stamped in the tick once snow is
     // actually visible.
-    const visitedBefore = localStorage.getItem("karan-portfolio:visited") === "1";
+    const visitedBefore =
+      localStorage.getItem("karan-portfolio:visited") === "1";
     const snowSeen = localStorage.getItem("karan-portfolio:snow-seen") === "1";
     localStorage.setItem("karan-portfolio:visited", "1");
     this._snowSeenPersisted = snowSeen;
@@ -489,11 +497,11 @@ export class App extends EventTarget {
     // Grass — v3 runtime TSL blade field. Built now that the terrain
     // heightfield + Blender grass mask exist. Blade count scales with the
     // quality tier (√multiplier keeps the per-blade area roughly constant).
-    // The base below was lowered 820 → 400 → 300 to cut grass blade count
-    // (N² over the ~76 m window) — the biggest steady-FPS lever on desktop GPUs
-    // and the WebGL2 fallback, since the field was oversampled (~116 blades/m²
-    // at 820). 300 high-tier = 90k blades, just above Bruno's ~78k (280²); the
-    // 0.5 m arched blades still overlap into a full carpet. Tune to taste.
+    // Base 280 → 280² ≈ 78k blades at high tier (matched to Bruno's count).
+    // Density is TIER-only: backend (WebGPU vs WebGL2) is not a capability
+    // signal, so grass isn't thinned just for being on WebGL2. The real
+    // per-blade cost (our 3-triangle arch vs Bruno's 1-triangle billboard) is
+    // a separate lever to tackle if full density needs to run lighter.
     const grassSub = Math.max(
       64,
       Math.round(280 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
