@@ -13,6 +13,7 @@ import { Water } from "./Effects/Water.js";
 import { WindLines } from "./Effects/WindLines.js";
 import { Physics } from "./Physics/Physics.js";
 import { Player } from "./Player/Player.js";
+import { Character } from "./Player/Character.js";
 import { PlayerCamera } from "./Player/PlayerCamera.js";
 import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
 import { ContactBoard } from "./Portfolio/ContactBoard.js";
@@ -461,21 +462,30 @@ export class App extends EventTarget {
     // device/adapter handshake before any render/compute runs. That handshake
     // can stall for tens of seconds under GPU-process contention, so guard it
     // with a timeout + auto-reload + WebGL2 fallback instead of hanging at 5%.
+    // Kick Rapier's WASM boot off NOW so its ~3.7s compile hides under the
+    // renderer handshake below and the world parse further down. We only block
+    // on it at the world's collider seam (GlbV3World awaits physics.whenReady).
+    const physicsPromise = this.physics.init();
+    physicsPromise.catch(() => {}); // real error still surfaces at the await below
+
     await this.#initRendererWithFallback();
-    // Many laptops/browsers lack WebGPU — WebGPURenderer then silently falls
-    // back to WebGL2. Log which backend we got so a frozen-on-load report can
-    // be traced (the slow first-visit compile differs sharply between the two).
+    // WebGPURenderer silently falls back to WebGL2 where WebGPU is missing; log
+    // which backend we got (the slow first-visit compile differs between them).
     this._isWebGPU = this.renderer.backend?.isWebGPUBackend === true;
     console.log(
       `[App] render backend: ${this._isWebGPU ? "WebGPU" : "WebGL2 fallback"}`,
     );
     // KTX2 format detection needs the live backend (hasFeature) — safe only
-    // after init(). Detects which compressed formats this GPU supports so the
-    // transcoder picks the right path for any KTX2 textures.
+    // after init(), so the transcoder picks the right compressed-format path.
     this.loader.attachRenderer(this.renderer);
-    bootMark("renderer.init");
-    await this.physics.init();
-    bootMark("physics.init");
+    bootMark("renderer.init (physics booting underneath)");
+
+    // Character GLB parse (~5s) — independent of world + physics. Start it now
+    // so it runs UNDER the world parse. Needs only the loader (renderer already
+    // attached for KTX2). Attached to the Player after the world resolves.
+    const character = new Character(this.loader);
+    const characterPromise = character.load();
+    characterPromise.catch(() => {}); // real error still surfaces at the await below
 
     // Phase 1 of World v2: the heightfield is now baked from world.glb so
     // physics.addStaticGround MUST run after world.loadAssets — the terrain
@@ -491,7 +501,8 @@ export class App extends EventTarget {
     });
 
     const worldResult = await worldLoadPromise;
-    bootMark("world.loadAssets");
+    bootMark("world.loadAssets (physics + character overlapped)");
+    await physicsPromise; // ensure fully ready before addStaticGround (usually already resolved)
     this.physics.addStaticGround(this.world.terrain);
 
     // Grass — v3 runtime TSL blade field. Built now that the terrain
@@ -531,8 +542,11 @@ export class App extends EventTarget {
     this.playerCamera.follow(this.player.position, true);
 
     bootMark("grass + player");
-    const characterResult = await this.player.loadCharacter();
-    bootMark("character load");
+    // Character GLB was loading since just after renderer.init — by now it has
+    // almost always resolved, so this await is typically free.
+    const characterResult = await characterPromise;
+    this.player.attachCharacter(character, characterResult);
+    bootMark("character attach");
 
     // Intro cinematic — the first-arrival fall-from-sky sequence. GroundBreak
     // owns the procedural impact FX; both run as a pre-gameplay layer. main.js
@@ -937,35 +951,29 @@ export class App extends EventTarget {
     // longer re-schedules itself via requestAnimationFrame.
     this.renderer.setAnimationLoop(this.#tick);
 
-    // The loop is now live but the loading screen still covers the canvas. Hold
-    // boot here for a few REAL frames so the cold-cache pipeline compiles (scene
-    // pass + post-FX) burn off BEHIND the loader instead of as a visible 1–2s
-    // glitch the instant the world is revealed. #waitFrames advances on the live
-    // loop, so it naturally waits through the heavy first compile frame. Capped
-    // so a slow GPU still reveals promptly rather than hanging here.
-    await Promise.race([
-      this.#waitFrames(5),
-      new Promise((r) => setTimeout(r, 2500)),
-    ]);
-
-    // Full-scene warm — now AWAITED (capped) BEHIND the loader. compileAsync is
-    // off-thread (KHR_parallel_shader_compile on WebGL2, async pipeline creation
-    // on WebGPU), so unlike the synchronous compile() that once froze the tab at
-    // 90% this can be awaited without blocking the main thread. It used to fire
-    // un-awaited AFTER the reveal, racing the intro cinematic — on a slow GPU
-    // props compiled mid-fall and the camera motion only half-masked the hitch.
-    // Awaiting it here guarantees the world's pipelines are warm when the curtain
-    // lifts, so the cinematic + first steps are hitch-free. The 4s cap protects a
-    // machine WITHOUT a parallel-compile path from holding the loader hostage —
-    // it reveals anyway and pays the remainder lazily (rare, and the trickle bar
-    // keeps moving so the loader never looks frozen). Deferred away-from-spawn
-    // systems re-warm themselves when added (see #scheduleDeferredWorldSystems).
+    // The loop is now live but the loading screen still covers the canvas.
+    // Hold the loading screen while the cold-cache pipelines compile BEHIND it,
+    // so the reveal isn't a visible 1–2s glitch. Two things warm CONCURRENTLY:
+    //   (a) #waitFrames advances the live loop, compiling the scene/post-FX pass
+    //       as real frames render;
+    //   (b) #warmShadersInBackground() runs compileAsync off-thread.
+    // Both are kicked off together and awaited under ONE cap (was two sequential
+    // holds, up to 6.5s). The render loop is already live here, so (a) and (b)
+    // already coexisted — this only drops the sequential pre-wait. Budget is
+    // tier-gated: strong GPUs hold longer for a fully hitch-free reveal; weak
+    // GPUs (low tier, or the WebGL2 fallback which lacks a parallel-compile path)
+    // reveal sooner and pay any remainder lazily, the cinematic's motion masking
+    // the brief hitch. Deferred away-from-spawn systems re-warm themselves when
+    // added (see #scheduleDeferredWorldSystems).
+    const prewarm = this._isWebGPU
+      ? this.quality.prewarm
+      : { frames: 3, capMs: 2000 };
     this.shaderPrewarmPromise = this.#warmShadersInBackground().catch((err) =>
       console.warn("[App] background shader warm failed:", err),
     );
     await Promise.race([
-      this.shaderPrewarmPromise,
-      new Promise((r) => setTimeout(r, 4000)),
+      Promise.all([this.#waitFrames(prewarm.frames), this.shaderPrewarmPromise]),
+      new Promise((r) => setTimeout(r, prewarm.capMs)),
     ]);
 
     this.#scheduleDeferredAnimationWarmup();

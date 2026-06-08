@@ -26,6 +26,11 @@ const PROFILES = {
     // full Retina sharpness on capable machines, matching Bruno. The adaptive
     // DPR controller scales BELOW this (down to dprFloor×) under load.
     dprCap: 2.0,
+    // Boot-reveal shader-warm budget. `frames` = how many live frames to let
+    // render behind the loader (compiles the scene/post-FX pass); `capMs` =
+    // hard ceiling on the whole hold. Strong tier holds longest for a fully
+    // hitch-free reveal. See App.boot().
+    prewarm: { frames: 5, capMs: 4000 },
     postfx: {
       enabled: true,
       bloomStrength: 0.30,
@@ -49,6 +54,7 @@ const PROFILES = {
     fireflyCount: 96,
     dprFloor: 0.7,
     dprCap: 1.5, // sharper than 1.0, lighter than full Retina (2.25× px vs 4×)
+    prewarm: { frames: 5, capMs: 3000 },
     postfx: {
       enabled: true,
       bloomStrength: 0.18,
@@ -72,6 +78,7 @@ const PROFILES = {
     fireflyCount: 48,
     dprFloor: 0.55,
     dprCap: 1.0, // weak machines stay at 1.0 — resolution is the cheapest lever
+    prewarm: { frames: 3, capMs: 2000 },
     postfx: {
       enabled: false,
       bloomStrength: 0,

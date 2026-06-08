@@ -8,6 +8,7 @@ import {
   sendJson,
   cleanVisitorId,
   getClientIp,
+  isLocalRequest,
   logAudit,
   VISIT_DEDUP_S,
 } from "./_lib.js";
@@ -15,6 +16,17 @@ import {
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     return sendJson(res, 405, { error: "method_not_allowed" });
+  }
+  // Local dev / LAN preview never touches the real data — report "not configured"
+  // so the UI stays dormant and no visit/like/count is recorded.
+  if (isLocalRequest(req)) {
+    return sendJson(res, 200, {
+      configured: false,
+      likes: 0,
+      visitors: 0,
+      liked: false,
+      whispers: [],
+    });
   }
   const redis = getRedis();
   // No DB configured (e.g. local `vite` dev without keys) — degrade gracefully.

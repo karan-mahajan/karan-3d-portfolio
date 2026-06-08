@@ -59,6 +59,24 @@ export function getClientIp(req) {
   );
 }
 
+const PRIVATE_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?|0\.0\.0\.0|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+/**
+ * True when the request comes from local development (so we never pollute the
+ * real counts with localhost/incognito testing). Signals, any of:
+ *  - the dev Vite plugin tags requests with `x-social-dev: 1`
+ *  - the Host header is localhost / a private-LAN address (covers `vercel dev`
+ *    and previewing on a phone via the Network URL)
+ *  - the client IP is loopback / private
+ */
+export function isLocalRequest(req) {
+  if (req.headers?.["x-social-dev"] === "1") return true;
+  const host = String(req.headers?.host || "").toLowerCase();
+  if (PRIVATE_HOST.test(host)) return true;
+  const ip = getClientIp(req).replace(/^::ffff:/, "");
+  return ip === "" || ip === "::1" || PRIVATE_HOST.test(ip);
+}
+
 /**
  * Append a row to the PRIVATE audit log (likes + notes, with IP). This is never
  * returned by any read endpoint — inspect it via the Upstash console. Failures
