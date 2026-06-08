@@ -951,35 +951,29 @@ export class App extends EventTarget {
     // longer re-schedules itself via requestAnimationFrame.
     this.renderer.setAnimationLoop(this.#tick);
 
-    // The loop is now live but the loading screen still covers the canvas. Hold
-    // boot here for a few REAL frames so the cold-cache pipeline compiles (scene
-    // pass + post-FX) burn off BEHIND the loader instead of as a visible 1–2s
-    // glitch the instant the world is revealed. #waitFrames advances on the live
-    // loop, so it naturally waits through the heavy first compile frame. Capped
-    // so a slow GPU still reveals promptly rather than hanging here.
-    await Promise.race([
-      this.#waitFrames(5),
-      new Promise((r) => setTimeout(r, 2500)),
-    ]);
-
-    // Full-scene warm — now AWAITED (capped) BEHIND the loader. compileAsync is
-    // off-thread (KHR_parallel_shader_compile on WebGL2, async pipeline creation
-    // on WebGPU), so unlike the synchronous compile() that once froze the tab at
-    // 90% this can be awaited without blocking the main thread. It used to fire
-    // un-awaited AFTER the reveal, racing the intro cinematic — on a slow GPU
-    // props compiled mid-fall and the camera motion only half-masked the hitch.
-    // Awaiting it here guarantees the world's pipelines are warm when the curtain
-    // lifts, so the cinematic + first steps are hitch-free. The 4s cap protects a
-    // machine WITHOUT a parallel-compile path from holding the loader hostage —
-    // it reveals anyway and pays the remainder lazily (rare, and the trickle bar
-    // keeps moving so the loader never looks frozen). Deferred away-from-spawn
-    // systems re-warm themselves when added (see #scheduleDeferredWorldSystems).
+    // The loop is now live but the loading screen still covers the canvas.
+    // Hold the loading screen while the cold-cache pipelines compile BEHIND it,
+    // so the reveal isn't a visible 1–2s glitch. Two things warm CONCURRENTLY:
+    //   (a) #waitFrames advances the live loop, compiling the scene/post-FX pass
+    //       as real frames render;
+    //   (b) #warmShadersInBackground() runs compileAsync off-thread.
+    // Both are kicked off together and awaited under ONE cap (was two sequential
+    // holds, up to 6.5s). The render loop is already live here, so (a) and (b)
+    // already coexisted — this only drops the sequential pre-wait. Budget is
+    // tier-gated: strong GPUs hold longer for a fully hitch-free reveal; weak
+    // GPUs (low tier, or the WebGL2 fallback which lacks a parallel-compile path)
+    // reveal sooner and pay any remainder lazily, the cinematic's motion masking
+    // the brief hitch. Deferred away-from-spawn systems re-warm themselves when
+    // added (see #scheduleDeferredWorldSystems).
+    const prewarm = this._isWebGPU
+      ? this.quality.prewarm
+      : { frames: 3, capMs: 2000 };
     this.shaderPrewarmPromise = this.#warmShadersInBackground().catch((err) =>
       console.warn("[App] background shader warm failed:", err),
     );
     await Promise.race([
-      this.shaderPrewarmPromise,
-      new Promise((r) => setTimeout(r, 4000)),
+      Promise.all([this.#waitFrames(prewarm.frames), this.shaderPrewarmPromise]),
+      new Promise((r) => setTimeout(r, prewarm.capMs)),
     ]);
 
     this.#scheduleDeferredAnimationWarmup();
