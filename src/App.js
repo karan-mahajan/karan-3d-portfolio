@@ -60,12 +60,12 @@ import { AnimatedProps } from "./World/AnimatedProps.js";
 import { Bonfires } from "./World/Bonfires.js";
 import { Environment } from "./World/Environment.js";
 import { Flowers } from "./World/Flowers.js";
+import { buildSceneFogNode, initFog } from "./World/FogState.js";
 import { Foliage } from "./World/Foliage.js";
 import { Grass } from "./World/Grass.js";
 import { Lava } from "./World/Lava.js";
 import { Lights } from "./World/Lights.js";
 import { DUSK } from "./World/Palette.js";
-import { initFog, buildSceneFogNode } from "./World/FogState.js";
 import { Sun } from "./World/Sun.js";
 import { TimeOfDay } from "./World/TimeOfDay.js";
 import { WeatherDirector } from "./World/WeatherDirector.js";
@@ -528,7 +528,7 @@ export class App extends EventTarget {
     // a separate lever to tackle if full density needs to run lighter.
     const grassSub = Math.max(
       64,
-      Math.round(280 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
+      Math.round(340 * Math.sqrt(this.quality.grassMultiplier ?? 1)),
     );
     this.grass = new Grass(
       this.scene,
