@@ -471,6 +471,13 @@ export class App extends EventTarget {
       window.__bootTiming.push(`${ms.toFixed(1)}ms  ${label}`);
       if (timing) console.log(`[boot] ${ms.toFixed(1)}ms  ${label}`);
     };
+    // User-facing phase labels (distinct from the dev-only bootMark timings) so
+    // the loading screen shows TRUTHFUL progress instead of a random rotation —
+    // the long opaque shader-compile phase in particular has to read as
+    // "working", not "stuck at 90%". main.js listens for 'phase' events.
+    const phase = (label) =>
+      this.dispatchEvent(new CustomEvent("phase", { detail: { label } }));
+    phase("Starting the 3D engine…");
     // WebGPURenderer is constructed synchronously but must finish its async
     // device/adapter handshake before any render/compute runs. That handshake
     // can stall for tens of seconds under GPU-process contention, so guard it
@@ -492,6 +499,14 @@ export class App extends EventTarget {
     // after init(), so the transcoder picks the right compressed-format path.
     this.loader.attachRenderer(this.renderer);
     bootMark("renderer.init (physics booting underneath)");
+    // WebGPU runs the TSL shaders natively; the WebGL2 fallback (no dedicated
+    // GPU) must compile hundreds of variants and is the slow first-visit path —
+    // tell the visitor we're adapting rather than leaving them guessing.
+    phase(
+      this._isWebGPU
+        ? "Loading the world…"
+        : "Optimizing graphics for your device…",
+    );
 
     // Character GLB parse (~5s) — independent of world + physics. Start it now
     // so it runs UNDER the world parse. Needs only the loader (renderer already
@@ -515,6 +530,7 @@ export class App extends EventTarget {
 
     const worldResult = await worldLoadPromise;
     bootMark("world.loadAssets (physics + character overlapped)");
+    phase("Shaping the island…");
     await physicsPromise; // ensure fully ready before addStaticGround (usually already resolved)
     this.physics.addStaticGround(this.world.terrain);
 
@@ -555,11 +571,13 @@ export class App extends EventTarget {
     this.playerCamera.follow(this.player.position, true);
 
     bootMark("grass + player");
+    phase("Planting the world…");
     // Character GLB was loading since just after renderer.init — by now it has
     // almost always resolved, so this await is typically free.
     const characterResult = await characterPromise;
     this.player.attachCharacter(character, characterResult);
     bootMark("character attach");
+    phase("Waking the character…");
 
     // Intro cinematic — the first-arrival fall-from-sky sequence. GroundBreak
     // owns the procedural impact FX; both run as a pre-gameplay layer. main.js
@@ -961,6 +979,7 @@ export class App extends EventTarget {
     this._shaderReady = true;
 
     bootMark("water + foliage + portfolio + map wiring");
+    phase("Warming up the lights…");
 
     // setAnimationLoop self-repeats and drives the WebGPU frame; #tick no
     // longer re-schedules itself via requestAnimationFrame.
@@ -980,6 +999,7 @@ export class App extends EventTarget {
     // reveal sooner and pay any remainder lazily, the cinematic's motion masking
     // the brief hitch. Deferred away-from-spawn systems re-warm themselves when
     // added (see #scheduleDeferredWorldSystems).
+    phase("Preparing graphics — almost ready…");
     const prewarm = this._isWebGPU
       ? this.quality.prewarm
       : { frames: 3, capMs: 2000 };
@@ -1126,7 +1146,6 @@ export class App extends EventTarget {
 
     const floor = this.quality.dprFloor ?? 0.7;
     const atFloor = this._dprFactor <= floor + 0.001;
-    const dprMaxed = this._dprFactor >= 1.0 - 0.001;
     const struggling = avg > 0.022;
     const comfortable = avg < 0.014;
 
@@ -1144,7 +1163,13 @@ export class App extends EventTarget {
           this.#applyPerfShed(this._perfShedLevel + 1);
           this._perfBadWindows = 0;
         }
-      } else if (dprMaxed && avg < 0.011 && this._perfShedLevel > 0) {
+      } else if (comfortable && this._perfShedLevel > 0) {
+        // Recover a rung after a long, stable run of headroom. Now that the
+        // rungs only THIN (not hide), re-adding a step of density back is low
+        // risk, so recovery no longer waits for DPR to climb all the way back to
+        // max first — a weak machine that found a calm patch can re-thicken the
+        // world without first clawing resolution back (which it may never do).
+        // The 8-window gate + cooldown still guard against ping-pong.
         this._perfGoodWindows++;
         this._perfBadWindows = 0;
         if (this._perfGoodWindows >= 8) {
@@ -1199,23 +1224,33 @@ export class App extends EventTarget {
   }
 
   /**
-   * Apply a feature-shed rung (see _perfShedLevel). Each rung is a pure
-   * scene-graph visibility toggle — NO pipeline/material recompile and NO
-   * render-path switch, so it's fully reversible and safe on WebGPU (toggling
-   * the post chain or renderer.toneMapping at runtime invalidates the bind
-   * groups the consolidated materials are bound to → black screen):
-   *   1 → grass field hidden (73k–160k animated blades skipped)
-   *   2 → + foliage canopy layer hidden
-   * Post-FX is intentionally NOT shed here for the reason above; user-toggleable
-   * ambient effects (rain/leaves/wind-lines) are left alone too — those persist
-   * a player preference we mustn't overwrite.
+   * Apply a feature-shed rung (see _perfShedLevel). Each rung is a draw-count /
+   * visibility-only change — NO pipeline/material recompile and NO render-path
+   * switch, so it's fully reversible and safe on WebGPU (toggling the post chain
+   * or renderer.toneMapping at runtime invalidates the bind groups the
+   * consolidated materials are bound to → black screen).
+   *
+   * The ladder THINS instead of hiding — the old rungs hid the whole grass
+   * field then every tree, which read as a broken bare-terrain desert on weak
+   * hardware. Now grass drops to a sparse floor and foliage sheds its leaf-card
+   * shell then thins, but cores + a sparse grass field ALWAYS remain, so the
+   * world still looks populated at the worst rung:
+   *   0 → full grass, full foliage (+ shell on tiers that built one)
+   *   1 → grass ~60%, foliage shell dropped (priciest overdraw), cores full
+   *   2 → grass ~35% (floor), foliage cores ~65%
+   * Post-FX is intentionally NOT shed here for the bind-group reason above;
+   * user-toggleable ambient effects (rain/leaves/wind-lines) are left alone too
+   * — those persist a player preference we mustn't overwrite.
    */
   #applyPerfShed(level) {
     level = Math.max(0, Math.min(this._perfShedMax, level));
     if (level === this._perfShedLevel) return;
     this._perfShedLevel = level;
-    if (this.grass?.mesh) this.grass.mesh.visible = level < 1;
-    this.foliage?.setVisible?.(level < 2);
+    const grassFactor = [1.0, 0.6, 0.35][level];
+    const foliageFactor = [1.0, 1.0, 0.65][level];
+    this.grass?.setDensityFactor?.(grassFactor);
+    this.foliage?.setDensityFactor?.(foliageFactor);
+    this.foliage?.setShellVisible?.(level < 1);
     if (this.debug?.enabled) console.log(`[perf] shed level → ${level}`);
   }
 
@@ -1467,7 +1502,7 @@ export class App extends EventTarget {
         const nextLevel = (this._perfShedLevel + 1) % (this._perfShedMax + 1);
         this.#applyPerfShed(nextLevel);
         console.info(
-          `[perf] shed level → ${this._perfShedLevel} (0=full, 1=grass hidden, 2=+foliage hidden)`,
+          `[perf] shed level → ${this._perfShedLevel} (0=full, 1=thinned + shell off, 2=min density)`,
         );
       }
     });

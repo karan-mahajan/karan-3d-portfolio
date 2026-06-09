@@ -12,19 +12,15 @@ const loadingRefresh = document.getElementById('loading-refresh');
 
 loadingRefresh?.addEventListener('click', () => window.location.reload());
 
-const statuses = [
-  'Growing the forest…',
-  'Placing the billboards…',
-  'Warming up the lights…',
-  'Waking the character…',
-  'Almost there…',
-];
-
-let statusIndex = 0;
-const statusInterval = setInterval(() => {
-  statusIndex = (statusIndex + 1) % statuses.length;
-  if (loadingStatus) loadingStatus.textContent = statuses[statusIndex];
-}, 900);
+// Loading status is driven by REAL boot phases (App dispatches 'phase' events;
+// wired up in bootstrap). The old random rotation lied — it advanced on a timer
+// regardless of what boot was actually doing, so on a slow first visit it
+// looped cheerfully while the engine was stuck compiling shaders. Truthful text
+// ("Optimizing graphics for your device…" on the WebGL2 fallback) reassures a
+// visitor on a weak laptop that work is happening, not that the site is broken.
+function setStatus(text) {
+  if (loadingStatus && text) loadingStatus.textContent = text;
+}
 
 // ── Smooth "trickle" loading bar ───────────────────────────────────────────
 // The honest problem: the dominant boot cost is opaque GPU shader/pipeline
@@ -39,7 +35,10 @@ let assetFloor = 0; // 0..70, from real asset byte-progress
 let displayed = 0; // % currently shown
 let booted = false;
 let hintShown = false;
-const HINT_AFTER_MS = 9000;
+// Pushed out from 9s: the loading status now names the real phase, so a slow
+// first-visit compile no longer needs an early "taking longer" alarm — give it
+// ~18s before the reassurance/refresh affordance appears.
+const HINT_AFTER_MS = 18000;
 
 function tickBar() {
   const elapsedMs = performance.now() - loadStart;
@@ -47,9 +46,11 @@ function tickBar() {
   if (booted) {
     target = 100;
   } else {
-    // Asymptotic creep toward (but never past) 93%: ~37% @2s, ~63% @5s,
-    // ~86% @10s. Real asset progress can push the floor higher than the creep.
-    const creep = 93 * (1 - Math.exp(-elapsedMs / 4000));
+    // Asymptotic creep toward (but never past) 93%, with a gentle time
+    // constant so it keeps visibly inching during a long WebGL2 shader compile
+    // (the tail where byte-progress is already done) instead of pinning at ~93%
+    // for 30s. Real asset progress can still push the floor higher than the creep.
+    const creep = 93 * (1 - Math.exp(-elapsedMs / 6500));
     target = Math.max(creep, assetFloor);
   }
   displayed += (target - displayed) * (booted ? 0.3 : 0.08);
@@ -132,6 +133,11 @@ async function bootstrap() {
   app.addEventListener('progress', (e) => {
     setProgress(e.detail.ratio);
   });
+  // Truthful phase text from the actual boot milestones (renderer → world →
+  // character → shader warm). Replaces the old timer-driven rotation.
+  app.addEventListener('phase', (e) => {
+    setStatus(e.detail?.label);
+  });
 
   let result;
   try {
@@ -141,8 +147,6 @@ async function bootstrap() {
     if (loadingStatus) loadingStatus.textContent = 'Failed to load — check console';
     return;
   }
-
-  clearInterval(statusInterval);
 
   if (result?.character && !result.character.ok) {
     if (loadingStatus) {
