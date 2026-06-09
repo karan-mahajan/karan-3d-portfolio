@@ -4951,6 +4951,13 @@ body[data-tod="night"] .control-hint-key {
   pointer-events: auto;
 }
 
+/* While the whole view is faded out it must not shield clicks — the card's
+ * unconditional pointer-events:auto otherwise overrides the root's none and
+ * the invisible card sits exactly over the top-left HUD buttons. */
+.guestbook-view.hidden .guestbook-card {
+  pointer-events: none;
+}
+
 .guestbook-read {
   position: absolute;
   left: 50%;
