@@ -185,7 +185,9 @@ export class GuestbookTree {
 
   #loadFoliageSDF() {
     return this.loader
-      .loadTexture("/textures/foliage/foliageSDF.png")
+      .loadTexture("/textures/foliage/foliageSDF.png", {
+        ktx2Url: "/textures/foliage/foliageSDF.ktx2",
+      })
       .then((tex) => {
         tex.minFilter = THREE.NearestFilter;
         tex.magFilter = THREE.NearestFilter;

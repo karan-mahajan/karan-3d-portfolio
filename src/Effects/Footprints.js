@@ -50,9 +50,10 @@ export class Footprints {
    * @param {THREE.Scene} scene
    * @param {import('../World/Terrain.js').Terrain} terrain
    */
-  constructor(scene, terrain) {
+  constructor(scene, terrain, { loader = null } = {}) {
     this.scene = scene;
     this.terrain = terrain;
+    this.loader = loader;
     this.pathPositions = new Float32Array(0);
     this.pathCount = 0;
     this.pathRadius = 1.4;
@@ -89,13 +90,6 @@ export class Footprints {
     this._mirrorAttr = mirrorAttr;
     this._snowAttr = snowAttr;
 
-    const tex = new THREE.TextureLoader().load(FOOTPRINT_MAP_URL);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.anisotropy = 8;
-    this._texture = tex;
-
     // TSL node material — the WebGPU backend ignores GLSL onBeforeCompile, so
     // all per-instance logic (fade / mirror / snow recolour) lives in nodes.
     const material = new THREE.MeshBasicNodeMaterial({
@@ -113,35 +107,38 @@ export class Footprints {
     });
     material.alphaTest = 0.04;
 
-    const aAge = attribute('aAge', 'float');
-    const aMirror = attribute('aMirror', 'float');
-    const aSnow = attribute('aSnow', 'float');
+    const applyTexture = (map) => {
+      const aAge = attribute('aAge', 'float');
+      const aMirror = attribute('aMirror', 'float');
+      const aSnow = attribute('aSnow', 'float');
 
-    // Mirror the right foot horizontally so one asymmetric sole serves L and R.
-    const baseUv = uv();
-    const mirroredU = mix(baseUv.x, baseUv.x.oneMinus(), step(0.5, aMirror));
-    const texel = texture(tex, vec2(mirroredU, baseUv.y));
+      // Mirror the right foot horizontally so one asymmetric sole serves L and R.
+      const baseUv = uv();
+      const mirroredU = mix(baseUv.x, baseUv.x.oneMinus(), step(0.5, aMirror));
+      const texel = texture(map, vec2(mirroredU, baseUv.y));
 
-    // Age fade: full until 70% of life, ramp to 0 by the end (dead slots have
-    // age ≥ LIFETIME → fade 0 → discarded by alphaTest).
-    const t = clamp(aAge.div(LIFETIME), 0.0, 1.0);
-    const fade = smoothstep(0.7, 1.0, t).oneMinus();
+      // Age fade: full until 70% of life, ramp to 0 by the end (dead slots have
+      // age ≥ LIFETIME → fade 0 → discarded by alphaTest).
+      const t = clamp(aAge.div(LIFETIME), 0.0, 1.0);
+      const fade = smoothstep(0.7, 1.0, t).oneMinus();
 
-    // Snow recolour: the brown mud tread becomes a pale, COLD pressed-in dent
-    // so it reads as packed snow (white family), not a brown/black sticker.
-    // aSnow > 0 means "on snow"; its magnitude (~0.6–1.4) is a per-print depth
-    // so some prints are stronger/darker than others, like a real trail.
-    const isSnow = step(0.01, aSnow);
-    const depth = clamp(aSnow, 0.0, 1.4);
-    const snowTint = vec3(0.66, 0.74, 0.86); // cold light blue-grey snow shadow
-    const snowRgb = mix(texel.rgb, snowTint, clamp(depth.mul(0.88), 0.0, 0.96));
-    material.colorNode = mix(texel.rgb, snowRgb, isSnow);
+      // Snow recolour: the brown mud tread becomes a pale, COLD pressed-in dent
+      // so it reads as packed snow (white family), not a brown/black sticker.
+      // aSnow > 0 means "on snow"; its magnitude (~0.6–1.4) is a per-print depth
+      // so some prints are stronger/darker than others, like a real trail.
+      const isSnow = step(0.01, aSnow);
+      const depth = clamp(aSnow, 0.0, 1.4);
+      const snowTint = vec3(0.66, 0.74, 0.86); // cold light blue-grey snow shadow
+      const snowRgb = mix(texel.rgb, snowTint, clamp(depth.mul(0.88), 0.0, 0.96));
+      material.colorNode = mix(texel.rgb, snowRgb, isSnow);
 
-    // Alpha: texture cutout × age fade, with snow prints depth-scaled so the
-    // shallow ones stay faint.
-    const snowAlpha = clamp(float(0.5).add(depth.mul(0.35)), 0.0, 1.0);
-    const alphaMul = mix(float(1.0), snowAlpha, isSnow);
-    material.opacityNode = texel.a.mul(fade).mul(alphaMul);
+      // Alpha: texture cutout × age fade, with snow prints depth-scaled so the
+      // shallow ones stay faint.
+      const snowAlpha = clamp(float(0.5).add(depth.mul(0.35)), 0.0, 1.0);
+      const alphaMul = mix(float(1.0), snowAlpha, isSnow);
+      material.opacityNode = texel.a.mul(fade).mul(alphaMul);
+      material.needsUpdate = true;
+    };
 
     this._material = material;
 
@@ -152,6 +149,31 @@ export class Footprints {
     this._mesh.name = 'footprints';
     this._mesh.renderOrder = 4;
     this.scene.add(this._mesh);
+
+    // Tread texture: prefer the block-compressed KTX2 (47KB on disk, stays
+    // compressed in VRAM); fetch the 331KB PNG ONLY if KTX2 is unavailable or
+    // fails — never both. No print is on screen at boot (pool starts dead), so
+    // the async swap-in is invisible.
+    const configure = (map) => {
+      map.colorSpace = THREE.SRGBColorSpace;
+      map.minFilter = THREE.LinearMipmapLinearFilter;
+      map.magFilter = THREE.LinearFilter;
+      map.anisotropy = 8;
+      this._texture = map;
+      applyTexture(map);
+    };
+    const loadPng = () => {
+      const tex = new THREE.TextureLoader().load(FOOTPRINT_MAP_URL);
+      configure(tex);
+    };
+    if (this.loader?.loadKTX2) {
+      this.loader
+        .loadKTX2('/textures/foliage/footprint-tread.ktx2')
+        .then(configure)
+        .catch(loadPng);
+    } else {
+      loadPng();
+    }
   }
 
   /**

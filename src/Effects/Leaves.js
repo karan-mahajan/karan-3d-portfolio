@@ -80,10 +80,15 @@ export class Leaves {
    * @param {import('../World/Wind.js').Wind} wind        Read-only; supplies direction + strength.
    * @param {import('../World/Terrain.js').Terrain} [terrain]  Heightfield sampler — leaves land on this.
    */
-  constructor(scene, wind, terrain = null, { count = DEFAULT_COUNT, maxSettled = DEFAULT_MAX_SETTLED } = {}) {
+  constructor(scene, wind, terrain = null, {
+    count = DEFAULT_COUNT,
+    maxSettled = DEFAULT_MAX_SETTLED,
+    loader = null,
+  } = {}) {
     this.scene = scene;
     this.wind = wind;
     this.terrain = terrain;
+    this.loader = loader;
     this.count = Math.max(8, Math.floor(count));
     this.maxSettled = Math.max(0, Math.floor(maxSettled));
     this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
@@ -179,14 +184,6 @@ export class Leaves {
     instGeom.setAttribute('aTintSettled', this.tintSettledAttr);
     instGeom.setAttribute('aSettledYaw',  this.settledYawAttr);
 
-    // Texture: single-channel mask, linear-sampled, no color-space conversion
-    // (we sample .r as a raw alpha value, gamma would skew the threshold).
-    const tex = new THREE.TextureLoader().load(LEAF_MASK_URL);
-    tex.colorSpace = THREE.NoColorSpace;
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.anisotropy = 4;
-
     const uSize = uniform(LEAF_SIZE);
 
     this.material = new MeshLambertNodeMaterial({
@@ -194,9 +191,11 @@ export class Leaves {
       transparent: false,
     });
     // Hard cutout from the leaf mask's red channel (alphaTest, not blending,
-    // so leaves sort cleanly against trees / each other).
+    // so leaves sort cleanly against trees / each other). The mask itself
+    // (single-channel, linear-sampled, no color-space conversion) is attached
+    // below once it loads — leaves are held off the spawn frame (~8s), so the
+    // async swap-in lands well before any leaf is on screen.
     this.material.alphaTest = 0.1;
-    this.material.opacityNode = texture(tex, uv()).r;
     this.material.colorNode = attribute('aTintSettled').xyz;
     // Flat top-facing normal — gives a gentle, consistent sun/ambient response
     // across all leaves regardless of their tumble (matches Bruno's RainLines
@@ -243,6 +242,27 @@ export class Leaves {
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     this.scene.add(this.mesh);
+
+    // Mask texture: prefer the block-compressed KTX2; fetch the PNG ONLY if
+    // KTX2 is unavailable or fails — never both.
+    const applyMask = (map) => {
+      map.colorSpace = THREE.NoColorSpace;
+      map.minFilter = THREE.LinearFilter;
+      map.magFilter = THREE.LinearFilter;
+      map.anisotropy = 4;
+      this.material.opacityNode = texture(map, uv()).r;
+      this.material.needsUpdate = true;
+      this._maskTexture = map;
+    };
+    const loadPngMask = () => applyMask(new THREE.TextureLoader().load(LEAF_MASK_URL));
+    if (this.loader?.loadKTX2) {
+      this.loader
+        .loadKTX2('/textures/foliage/leaf-mask.ktx2')
+        .then(applyMask)
+        .catch(loadPngMask);
+    } else {
+      loadPngMask();
+    }
 
     // Seed the packed GPU buffers so the first rendered frame is correct even
     // before update() runs (e.g. leaves disabled on boot).

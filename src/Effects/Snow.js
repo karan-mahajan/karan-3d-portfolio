@@ -1,8 +1,9 @@
 import * as THREE from "three/webgpu";
 import { MeshBasicNodeMaterial } from "three/webgpu";
 import {
-  Fn, attribute, varying, float, vec4,
+  Fn, attribute, varying, float, vec3, vec4,
   positionLocal, uv, modelViewMatrix, cameraProjectionMatrix, smoothstep,
+  sin, cos, uniform,
 } from "three/tsl";
 import { snowFall } from "../World/SnowState.js";
 
@@ -67,11 +68,32 @@ export class Snow {
     }
     geom.setAttribute("aOffset", new THREE.InstancedBufferAttribute(this.offsets, 3));
     geom.setAttribute("aSize", new THREE.InstancedBufferAttribute(this.sizes, 1));
+    geom.setAttribute("aSpeed", new THREE.InstancedBufferAttribute(this.speeds, 1));
+    geom.setAttribute("aPhase", new THREE.InstancedBufferAttribute(this.phases, 1));
 
     const mat = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
     const vFade = varying(float(0), "vSnowFade");
+    // Time-driven on the GPU: the old CPU per-flake fall+sway loop + full
+    // aOffset re-upload (2000 instances every frame) is gone. The vertex node
+    // derives each flake's live position analytically from its seed
+    // (aOffset = spawn x/y/z), aSpeed, aPhase and a single uTime uniform —
+    // matching Fireflies' pattern. `aOffset` is now an immutable seed buffer.
+    this.uTime = uniform(0);
+    const H = float(SPAWN_HEIGHT);
     mat.vertexNode = Fn(() => {
-      const center = modelViewMatrix.mul(vec4(attribute("aOffset"), 1.0)).toVar();
+      const seed = attribute("aOffset"); // spawn x/y/z
+      const speed = attribute("aSpeed");
+      const phase = attribute("aPhase");
+      // Fall wraps in [0, H]: y0 sets the start so flakes desync; the modulo
+      // recycles to the top exactly as the old `y < 0 → y = SPAWN_HEIGHT` did.
+      const fallPhase = H.sub(seed.y);
+      const progressed = fallPhase.add(this.uTime.mul(speed).mul(BASE_FALL)).mod(H);
+      const y = H.sub(progressed);
+      // Gentle bounded lateral wander (no wind) — direct sinusoid replaces the
+      // CPU-integrated drift; same look, fully analytic.
+      const x = seed.x.add(sin(this.uTime.mul(0.8).add(phase)).mul(0.44));
+      const z = seed.z.add(cos(this.uTime.mul(0.6).add(phase)).mul(0.5));
+      const center = modelViewMatrix.mul(vec4(vec3(x, y, z), 1.0)).toVar();
       // Billboard: expand the quad in view space so it always faces the camera.
       center.xy.addAssign(positionLocal.xy.mul(attribute("aSize")));
       // Fade distant flakes so the far volume doesn't read as static fog.
@@ -97,6 +119,7 @@ export class Snow {
     }
     this.mesh.visible = true;
     this._time += delta;
+    this.uTime.value = this._time;
 
     // Show fewer flakes when snowfall is light (cheaper), all of them in a storm.
     this.mesh.geometry.instanceCount = Math.max(
@@ -104,26 +127,8 @@ export class Snow {
       Math.floor(this.count * Math.min(1, intensity)),
     );
 
-    const cx = this.camera.position.x;
-    const cz = this.camera.position.z;
-    this.mesh.position.set(cx, 0, cz);
-
-    const t = this._time;
-    const active = this.mesh.geometry.instanceCount;
-    for (let i = 0; i < active; i++) {
-      const i3 = i * 3;
-      this.offsets[i3 + 1] -= this.speeds[i] * BASE_FALL * delta;
-      // Lateral sway so flakes wander rather than fall in straight lines.
-      const ph = this.phases[i];
-      this.offsets[i3] += Math.sin(t * 0.8 + ph) * 0.35 * delta;
-      this.offsets[i3 + 2] += Math.cos(t * 0.6 + ph) * 0.3 * delta;
-      if (this.offsets[i3 + 1] < 0) {
-        this.offsets[i3] = (Math.random() - 0.5) * AREA * 2;
-        this.offsets[i3 + 1] = SPAWN_HEIGHT;
-        this.offsets[i3 + 2] = (Math.random() - 0.5) * AREA * 2;
-      }
-    }
-    this.mesh.geometry.attributes.aOffset.needsUpdate = true;
+    // Keep the flake volume centred on the camera so it always covers the player.
+    this.mesh.position.set(this.camera.position.x, 0, this.camera.position.z);
   }
 
   dispose() {
