@@ -1,84 +1,10 @@
 import { injectSpeedInsights } from '@vercel/speed-insights';
 import { App } from './App.js';
+import { LoadingScreen } from './UI/LoadingScreen.js';
 
 injectSpeedInsights();
 
-const loadingScreen = document.getElementById('loading-screen');
-const loadingBar = document.getElementById('loading-bar-fill');
-const loadingPercent = document.getElementById('loading-percent');
-const loadingStatus = document.getElementById('loading-status');
-const loadingHint = document.getElementById('loading-hint');
-const loadingRefresh = document.getElementById('loading-refresh');
-
-loadingRefresh?.addEventListener('click', () => window.location.reload());
-
-// Loading status is driven by REAL boot phases (App dispatches 'phase' events;
-// wired up in bootstrap). The old random rotation lied — it advanced on a timer
-// regardless of what boot was actually doing, so on a slow first visit it
-// looped cheerfully while the engine was stuck compiling shaders. Truthful text
-// ("Optimizing graphics for your device…" on the WebGL2 fallback) reassures a
-// visitor on a weak laptop that work is happening, not that the site is broken.
-function setStatus(text) {
-  if (loadingStatus && text) loadingStatus.textContent = text;
-}
-
-// ── Smooth "trickle" loading bar ───────────────────────────────────────────
-// The honest problem: the dominant boot cost is opaque GPU shader/pipeline
-// compilation, which emits NO progress signal — so a byte-accurate bar sits
-// frozen (the old "stuck at 5%"). Instead the bar always eases toward an
-// asymptotic ceiling over time (it never looks frozen), while real asset
-// byte-progress raises a floor underneath it; it only snaps to a true 100% once
-// boot() actually resolves. If a single attempt runs long, a "taking longer
-// than usual / refresh" hint fades in (the renderer also auto-reloads at 12s).
-const loadStart = performance.now();
-let assetFloor = 0; // 0..70, from real asset byte-progress
-let displayed = 0; // % currently shown
-let booted = false;
-let hintShown = false;
-// Pushed out from 9s: the loading status now names the real phase, so a slow
-// first-visit compile no longer needs an early "taking longer" alarm — give it
-// ~18s before the reassurance/refresh affordance appears.
-const HINT_AFTER_MS = 18000;
-
-function tickBar() {
-  const elapsedMs = performance.now() - loadStart;
-  let target;
-  if (booted) {
-    target = 100;
-  } else {
-    // Asymptotic creep toward (but never past) 93%, with a gentle time
-    // constant so it keeps visibly inching during a long WebGL2 shader compile
-    // (the tail where byte-progress is already done) instead of pinning at ~93%
-    // for 30s. Real asset progress can still push the floor higher than the creep.
-    const creep = 93 * (1 - Math.exp(-elapsedMs / 6500));
-    target = Math.max(creep, assetFloor);
-  }
-  displayed += (target - displayed) * (booted ? 0.3 : 0.08);
-  if (booted && displayed > 99.5) displayed = 100;
-  const pct = Math.min(100, Math.floor(displayed));
-  if (loadingBar) loadingBar.style.width = `${pct}%`;
-  if (loadingPercent) loadingPercent.textContent = `${pct}%`;
-
-  if (!booted && !hintShown && elapsedMs > HINT_AFTER_MS) {
-    hintShown = true;
-    loadingHint?.removeAttribute('hidden');
-  }
-
-  if (pct >= 100 && booted) return; // finished — stop the rAF loop
-  requestAnimationFrame(tickBar);
-}
-requestAnimationFrame(tickBar);
-
-/** Feed real asset byte-progress (0..1) — raises the bar's floor only. */
-function setProgress(ratio) {
-  assetFloor = Math.max(assetFloor, Math.min(70, Math.max(0, ratio * 70)));
-}
-
-/** Mark boot fully resolved — the trickle then eases to a true 100%. */
-function setProgressComplete() {
-  booted = true;
-  loadingHint?.setAttribute('hidden', '');
-}
+const loadingScreen = new LoadingScreen();
 
 // ── Calm onboarding ─────────────────────────────────────────────────────────
 // A fresh (incognito) visit used to fire the WASD/Look/Zoom coachmark card AND
@@ -131,12 +57,10 @@ async function bootstrap() {
   window.addEventListener('touchstart', startAudioOnce, { once: true });
 
   app.addEventListener('progress', (e) => {
-    setProgress(e.detail.ratio);
+    loadingScreen.setProgress(e.detail.ratio);
   });
-  // Truthful phase text from the actual boot milestones (renderer → world →
-  // character → shader warm). Replaces the old timer-driven rotation.
   app.addEventListener('phase', (e) => {
-    setStatus(e.detail?.label);
+    loadingScreen.setPhase(e.detail.label);
   });
 
   let result;
@@ -144,47 +68,37 @@ async function bootstrap() {
     result = await app.boot();
   } catch (err) {
     console.error('Boot failed', err);
-    if (loadingStatus) loadingStatus.textContent = 'Failed to load — check console';
     return;
   }
 
   if (result?.character && !result.character.ok) {
-    if (loadingStatus) {
-      loadingStatus.innerHTML =
-        'Character mesh missing. Showing placeholder.<br>' +
-        '<span style="opacity:0.7;font-size:0.7rem;">' +
-        'Re-download any Mixamo FBX with "Skin" enabled.</span>';
-    }
-  } else if (loadingStatus) {
-    loadingStatus.textContent = 'Ready';
+    console.warn('Character mesh missing — showing placeholder.');
   }
 
-  // boot() is fully resolved here (assets + player + shader prewarm) — NOW the
-  // world is genuinely ready, so the bar earns its 100%.
-  setProgressComplete();
-  // NOTE: onJourneyBegin() + the first-visit tutorial are deliberately NOT
-  // fired here — they're deferred to startOnboardingWhenReady() below so they
-  // don't pop the instant the world reveals (see that helper).
+  // boot() fully resolved — bar earns its true 100% and chips all complete.
+  loadingScreen.complete();
 
   // Keep input paused until the cinematic hands off (IntroCinematic.play also
   // freezes the player; pausing here covers the brief pre-fall beat too).
   if (app.player?.controller) app.player.controller.paused = true;
 
-  // (Audio unlock was armed at the very top of bootstrap so a click during
-  // loading enables the landing-impact sound.)
-
-  // Let the true 100% register for a beat, then drop the loader and fall.
+  // Let the true 100% register for a beat first.
   await new Promise((r) => setTimeout(r, 420));
-  loadingScreen?.classList.add('hidden');
 
-  // The cinematic always plays through to the landing — clicks during the fall
-  // only unlock audio (armed at the top), they do NOT skip it.
+  // Settle the camera to its resting angle BEHIND the still-opaque loader, THEN
+  // fade. intro.play() is an instant land (no descent) that re-seeds the orbit
+  // camera (REST distance/azimuth/polar); running it before the fade means the
+  // reveal shows the final angle instead of the boot-default orbit snapping into
+  // place mid-fade (the visible camera jump).
   try {
     await (app.intro?.play?.() ?? Promise.resolve());
   } catch (err) {
     console.warn('Intro cinematic failed; handing off directly.', err);
     if (app.player?.controller) app.player.controller.paused = false;
   }
+
+  // Now reveal the already-correct world with the GSAP zoom-and-fade.
+  await loadingScreen.fadeOut();
 
   // Reveal the HUD (compass + button stacks). The first-visit coachmarks + the
   // "journey begins" toast are held back (see startOnboardingWhenReady) so the

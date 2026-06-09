@@ -243,11 +243,15 @@
     <div id="loading-screen" class="overlay">
       <div class="loading-sky" aria-hidden="true"></div>
       <div class="loading-inner">
-        <div class="loading-title">KARAN'S WORLD</div>
-        <div class="loading-sub">Building the world…</div>
+        <div class="loading-title">KARAN’S WORLD</div>
+        <div class="loading-map" id="loading-map" aria-hidden="true">
+          <img class="loading-map-img" src="/textures/ui/loading-map.webp" alt="" aria-hidden="true" />
+          <div class="loading-markers" id="loading-markers"></div>
+        </div>
+        <div class="loading-milestones" id="loading-milestones"></div>
         <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
         <div class="loading-percent" id="loading-percent">0%</div>
-        <div class="loading-status" id="loading-status">Starting up…</div>
+        <div class="loading-trivia" id="loading-trivia"></div>
         <div class="loading-hint" id="loading-hint" hidden>
           Still working — the first visit on this device compiles the 3D
           graphics, which can take a moment on laptops without a dedicated
