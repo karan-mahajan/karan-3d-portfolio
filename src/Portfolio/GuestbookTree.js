@@ -169,7 +169,7 @@ export class GuestbookTree {
         this.wind,
         sdf,
         [{ key: "guestbookTree", refs: anchors, colorA: GOLD_SHADE, colorB: GOLD_LIT }],
-        { shell: true },
+        { shellCards: 150 },
       );
       this.foliage.setSunDirection(this.timeOfDay?.sunOffset);
     }

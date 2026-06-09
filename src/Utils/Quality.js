@@ -7,10 +7,10 @@ const PROFILES = {
     // Full water shader: refraction, caustics, whitecaps, shoreline foam,
     // noise-broken normal. Dropped to false on medium/low (see Water.js).
     waterHighDetail: true,
-    // Foliage leaf-card "shell" — a double-sided, alpha-tested SDF overdraw
-    // pass on top of every canopy/bush core. Pure fill-rate; dropped on
-    // medium/low so weaker GPUs render foliage as just the solid core blob.
-    foliageShell: true,
+    // Leaf cards per canopy/bush blob (the double-sided alpha-tested SDF
+    // shell). Pure fill-rate, so weaker tiers get FEWER cards — never zero:
+    // a bald core blob reads as a broken tree on every machine.
+    foliageShellCards: 150,
     // Two-bone foot IK that plants the feet on the terrain. Cheap (one solve
     // per leg) but skipped on the low tier to spare weak CPUs the per-frame
     // matrix refreshes.
@@ -47,9 +47,9 @@ const PROFILES = {
     name: 'medium',
     physicsStep: 1 / 60,
     maxPhysicsSteps: 4,
-    grassMultiplier: 0.62,
+    grassMultiplier: 0.7,
     waterHighDetail: false,
-    foliageShell: false,
+    foliageShellCards: 90,
     footIK: true,
     rainCount: 700,
     rainSplashBudget: 5,
@@ -72,9 +72,9 @@ const PROFILES = {
     name: 'low',
     physicsStep: 1 / 60,
     maxPhysicsSteps: 3,
-    grassMultiplier: 0.35,
+    grassMultiplier: 0.5,
     waterHighDetail: false,
-    foliageShell: false,
+    foliageShellCards: 54,
     footIK: false,
     rainCount: 360,
     rainSplashBudget: 2,
@@ -121,19 +121,11 @@ function lowerOf(a, b) {
 }
 
 /**
- * Demote-only GPU heuristic. Returns the HIGHEST tier this GPU should be
- * trusted with ('low' | 'medium'), or null when the GPU is unknown or discrete
- * (no cap — defer to the spec tier). We never UPGRADE off this: a capable-spec
- * machine (8+ cores, 8+ GB) sitting on a weak integrated GPU is the exact
- * mis-tier this guards against — the reported Windows-laptop-on-`high` lag was
- * a strong CPU/RAM box with a fill-bound integrated GPU. Detection is kept
- * conservative because a false "integrated" match only costs a slightly
- * lighter scene, never a black screen, so erring toward demotion is safe.
- * (Bruno rejected GPU scoring for *picking* a tier; using it only to *cap* one
- * sidesteps his accuracy concern — the failure mode is benign in this
- * direction.)
+ * One-shot WebGL probe: creates a throwaway context, reads the unmasked
+ * renderer string, releases the context. Shared by the demote-side cap and
+ * the promote-side hint below so only one probe context is ever created.
  */
-function gpuTierCap() {
+function probeGpu() {
   let gl = null;
   try {
     const canvas = document.createElement('canvas');
@@ -141,7 +133,7 @@ function gpuTierCap() {
   } catch {
     gl = null;
   }
-  if (!gl) return 'low'; // no WebGL at all → weakest hardware/software path
+  if (!gl) return { hasWebgl: false, renderer: '' };
 
   let renderer = '';
   try {
@@ -161,7 +153,25 @@ function gpuTierCap() {
   } catch {
     /* no-op */
   }
+  return { hasWebgl: true, renderer };
+}
 
+/**
+ * Demote-only GPU heuristic. Returns the HIGHEST tier this GPU should be
+ * trusted with ('low' | 'medium'), or null when the GPU is unknown or discrete
+ * (no cap — defer to the spec tier). We never UPGRADE off this: a capable-spec
+ * machine (8+ cores, 8+ GB) sitting on a weak integrated GPU is the exact
+ * mis-tier this guards against — the reported Windows-laptop-on-`high` lag was
+ * a strong CPU/RAM box with a fill-bound integrated GPU. Detection is kept
+ * conservative because a false "integrated" match only costs a slightly
+ * lighter scene, never a black screen, so erring toward demotion is safe.
+ * (Bruno rejected GPU scoring for *picking* a tier; using it only to *cap* one
+ * sidesteps his accuracy concern — the failure mode is benign in this
+ * direction.)
+ */
+function gpuTierCap(probe) {
+  if (!probe.hasWebgl) return 'low'; // no WebGL at all → weakest hardware/software path
+  const renderer = probe.renderer;
   if (!renderer) return null; // info withheld (Firefox/privacy) → defer to spec
 
   // Pure-software rasterizers — always the floor.
@@ -183,11 +193,44 @@ function gpuTierCap() {
   return null; // discrete NVIDIA/AMD, Apple M-series, anything else → no cap
 }
 
-/** Tier the heuristics (spec ∩ GPU cap) would pick, ignoring any saved override. */
+/**
+ * Promote-side GPU hint, used ONLY when navigator.deviceMemory is unavailable
+ * (Safari, Firefox) — those browsers can otherwise never spec into 'high'.
+ * Deliberately narrow: desktop Apple Silicon (Chrome/Edge ANGLE says
+ * "apple m1/m2/…", Safari masks to "apple gpu") and unmistakable discrete
+ * parts. The no-touch gate excludes iPads, which also report "Apple GPU".
+ */
+function gpuTierHint(probe) {
+  const r = probe.renderer;
+  if (!r) return null;
+  const touch = (navigator.maxTouchPoints ?? 0) > 0 || 'ontouchstart' in window;
+  if (!touch && /apple (m\d|gpu)/.test(r)) return 'high';
+  if (/geforce rtx|radeon rx [4-9]\d{2}0/.test(r)) return 'high';
+  return null;
+}
+
+/** Tier the heuristics (spec ∩ GPU cap, + promote hint when memory is unknown)
+ *  would pick, ignoring any saved override. */
 export function autoQualityTier() {
-  const cap = gpuTierCap();
+  const probe = probeGpu();
+  const cap = gpuTierCap(probe);
   const spec = autoTier();
-  return cap ? lowerOf(spec, cap) : spec;
+  let tier = cap ? lowerOf(spec, cap) : spec;
+  // deviceMemory is Chrome/Edge-only — Safari/Firefox on an M-series Mac (or a
+  // discrete-GPU desktop) land on 'medium' forever because the 'high' spec
+  // branch requires a memory reading. Uplift exactly that case: memory
+  // unknown, strong core count, an uncapped GPU we positively recognise.
+  if (
+    tier === 'medium' &&
+    !cap &&
+    navigator.deviceMemory == null &&
+    (navigator.hardwareConcurrency ?? 0) >= 8 &&
+    gpuTierHint(probe) === 'high' &&
+    !isMobileLike()
+  ) {
+    tier = 'high';
+  }
+  return tier;
 }
 
 function readSavedTier() {

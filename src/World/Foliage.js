@@ -61,7 +61,7 @@ function mulberry32(seed) {
 // fan of thin vertical lines (the bug). Random full-3D orientation means a good
 // fraction of cards face the camera from ANY angle; the rest are short fuzz
 // backed by the opaque core. Smaller cards keep edge-on slivers short.
-const SHELL_PLANES = 150;        // leaf cards per blob (dense → continuous fuzz)
+const SHELL_PLANES = 150;        // default leaf cards per blob (high tier — dense, continuous fuzz)
 const PLANE_SIZE = 0.55;         // smaller → edge-on cards read as fuzz, not streaks
 const NORMAL_SPHERE_MIX = 0.85;  // how far each card's normals bend to the blob normal
 // SDF alpha cutout. foliageSDF.png R: mean 0.25; ~45 % of texels > 0.3, ~60 %
@@ -103,14 +103,16 @@ export class Foliage {
    * @param {Array<{key:string, refs:Array<{position:THREE.Vector3, scale:number}>,
    *                colorA:string, colorB:string}>} clouds
    */
-  constructor(scene, wind, sdfTexture, clouds = [], { shell = true } = {}) {
+  constructor(scene, wind, sdfTexture, clouds = [], { shellCards = SHELL_PLANES } = {}) {
     this.scene = scene;
     this.wind = wind;
     this.sdf = sdfTexture;
     this.clouds = [];
-    // When false (medium/low tiers) the leaf-card shell overdraw pass is
-    // skipped — foliage renders as just the opaque core blob to save fill-rate.
-    this.shellEnabled = shell;
+    // Leaf cards per blob — the fill-rate dial. High tier gets the full 150;
+    // medium/low get fewer cards instead of NO shell (a bald core blob reads
+    // as a broken tree, which is worse than a thinner one). 0 disables.
+    this.shellCardCount = Math.max(0, Math.round(shellCards));
+    this.shellEnabled = this.shellCardCount > 0;
 
     // Two-tone lighting direction (lit vs shaded side of the blob), pushed each
     // frame from TimeOfDay.sunOffset via setSunDirection(). Seeded to a daytime
@@ -121,7 +123,7 @@ export class Foliage {
     // nothing reacts until the first real update.
     this.uPlayerPos = uniform(vec3(0, -9999, 0));
 
-    this.#buildShellGeometry();
+    if (this.shellEnabled) this.#buildShellGeometry();
     this.#buildCoreGeometry();
     for (const cloud of clouds) this.#buildCloud(cloud);
   }
@@ -134,7 +136,7 @@ export class Foliage {
     const sphereNormal = new THREE.Vector3();
     const spherical = new THREE.Spherical();
 
-    for (let i = 0; i < SHELL_PLANES; i++) {
+    for (let i = 0; i < this.shellCardCount; i++) {
       const plane = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
 
       // Scatter on a sphere, clumped toward the surface but never inside the
@@ -394,7 +396,7 @@ export class Foliage {
    * Show/hide the entire foliage layer. Visibility-only (no geometry/material
    * churn, no pipeline recompile), so it's safe to toggle at runtime. NOTE: the
    * adaptive perf-shed no longer calls this — hiding ALL trees read as a broken
-   * "bare terrain". It now thins via setDensityFactor + drops the shell only.
+   * "bare terrain". It now thins the leaf shell via setShellCardFraction only.
    */
   setVisible(v) {
     for (const c of this.clouds) {
@@ -427,6 +429,21 @@ export class Foliage {
       if (c.coreGeom) c.coreGeom.instanceCount = k;
       if (c.shellGeom) c.shellGeom.instanceCount = k;
     }
+  }
+
+  /**
+   * Render only a fraction of each blob's leaf cards via drawRange — the
+   * adaptive shed's fill-rate lever. The cards were generated in random
+   * sphere positions, so any index-buffer prefix is a uniform thinning, not
+   * a bald patch. drawRange is a draw-parameter (6 indices per 2-tri card):
+   * no rebuild, no recompile, instantly reversible. Never goes below 8 cards
+   * so a "thinned" tree still reads leafy. No-op when no shell was built.
+   */
+  setShellCardFraction(f) {
+    if (!this.shellEnabled) return;
+    const frac = Math.max(0, Math.min(1, f));
+    const cards = Math.max(8, Math.round(this.shellCardCount * frac));
+    for (const c of this.clouds) c.shellGeom?.setDrawRange(0, cards * 6);
   }
 
   dispose() {

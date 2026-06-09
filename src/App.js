@@ -345,6 +345,10 @@ export class App extends EventTarget {
     this._dprBase = this.sizes.pixelRatio;
     this._dprFactor = 1.0;
     this._dprFrameAccum = 0;
+    // Smallest delta seen this window ≈ the display's vsync period — used to
+    // make the "comfortable" recovery threshold reachable on 60Hz panels
+    // (clock.getDelta() can never average below the refresh interval).
+    this._dprFrameMin = Infinity;
     this._dprFrameCount = 0;
     this._dprFastWindows = 0;
     // Windows to wait after any pixelRatio change before the next one may
@@ -661,7 +665,7 @@ export class App extends EventTarget {
         this.wind,
         foliageSDF,
         foliageClouds,
-        { shell: this.quality.foliageShell !== false },
+        { shellCards: this.quality.foliageShellCards ?? 150 },
       );
       this.foliage.setSunDirection(this.timeOfDay.sunOffset);
       this.world.foliage = this.foliage;
@@ -1145,16 +1149,23 @@ export class App extends EventTarget {
   // post-change cooldown further spaces adjustments out.
   #updateAdaptiveDpr(frameDelta) {
     this._dprFrameAccum += frameDelta;
+    this._dprFrameMin = Math.min(this._dprFrameMin, frameDelta);
     this._dprFrameCount++;
     if (this._dprFrameCount < 60) return;
     const avg = this._dprFrameAccum / this._dprFrameCount;
+    // Vsync floor estimate: the window's fastest frame, clamped to plausible
+    // refresh periods (240Hz…57Hz) so a machine grinding at 30fps can't fake
+    // a high floor. avg can never beat this floor on a vsync-locked display,
+    // so "comfortable" must sit ABOVE it — 1.12× ≈ "almost no dropped frames".
+    const vsyncFloor = Math.min(Math.max(this._dprFrameMin, 1 / 250), 1 / 57);
     this._dprFrameAccum = 0;
     this._dprFrameCount = 0;
+    this._dprFrameMin = Infinity;
 
     const floor = this.quality.dprFloor ?? 0.7;
     const atFloor = this._dprFactor <= floor + 0.001;
     const struggling = avg > 0.022;
-    const comfortable = avg < 0.014;
+    const comfortable = avg < Math.max(0.0145, vsyncFloor * 1.12);
 
     // ── Stage 2: feature shedding (below the DPR floor) ─────────────────────
     // Only shed once resolution is already pinned at the floor and we're STILL
@@ -1203,7 +1214,7 @@ export class App extends EventTarget {
       // Under load — drop a notch toward the tier floor.
       next = Math.max(floor, this._dprFactor - 0.15);
       this._dprFastWindows = 0;
-    } else if (avg < 0.014) {
+    } else if (comfortable) {
       // Comfortable — bank a fast window. Recover only after a long, stable
       // run of headroom so a brief lull doesn't bounce us back up.
       this._dprFastWindows++;
@@ -1232,19 +1243,19 @@ export class App extends EventTarget {
 
   /**
    * Apply a feature-shed rung (see _perfShedLevel). Each rung is a draw-count /
-   * visibility-only change — NO pipeline/material recompile and NO render-path
+   * drawRange-only change — NO pipeline/material recompile and NO render-path
    * switch, so it's fully reversible and safe on WebGPU (toggling the post chain
    * or renderer.toneMapping at runtime invalidates the bind groups the
    * consolidated materials are bound to → black screen).
    *
-   * The ladder THINS instead of hiding — the old rungs hid the whole grass
-   * field then every tree, which read as a broken bare-terrain desert on weak
-   * hardware. Now grass drops to a sparse floor and foliage sheds its leaf-card
-   * shell then thins, but cores + a sparse grass field ALWAYS remain, so the
-   * world still looks populated at the worst rung:
-   *   0 → full grass, full foliage (+ shell on tiers that built one)
-   *   1 → grass ~60%, foliage shell dropped (priciest overdraw), cores full
-   *   2 → grass ~35% (floor), foliage cores ~65%
+   * The ladder THINS, never hides, and NEVER touches what defines the world:
+   * canopy count stays 100% at every rung (a missing tree reads as a bug) and
+   * the leaf-card shell is thinned via drawRange, never dropped (a bald core
+   * blob reads as a broken tree). Only grass density and leaf-card density
+   * give ground:
+   *   0 → full grass, full leaf cards
+   *   1 → grass ~65%, leaf cards ~60%
+   *   2 → grass ~40% (floor), leaf cards ~40% (floor)
    * Post-FX is intentionally NOT shed here for the bind-group reason above;
    * user-toggleable ambient effects (rain/leaves/wind-lines) are left alone too
    * — those persist a player preference we mustn't overwrite.
@@ -1253,11 +1264,10 @@ export class App extends EventTarget {
     level = Math.max(0, Math.min(this._perfShedMax, level));
     if (level === this._perfShedLevel) return;
     this._perfShedLevel = level;
-    const grassFactor = [1.0, 0.6, 0.35][level];
-    const foliageFactor = [1.0, 1.0, 0.65][level];
+    const grassFactor = [1.0, 0.65, 0.4][level];
+    const shellFraction = [1.0, 0.6, 0.4][level];
     this.grass?.setDensityFactor?.(grassFactor);
-    this.foliage?.setDensityFactor?.(foliageFactor);
-    this.foliage?.setShellVisible?.(level < 1);
+    this.foliage?.setShellCardFraction?.(shellFraction);
     if (this.debug?.enabled) console.log(`[perf] shed level → ${level}`);
   }
 
@@ -1509,7 +1519,7 @@ export class App extends EventTarget {
         const nextLevel = (this._perfShedLevel + 1) % (this._perfShedMax + 1);
         this.#applyPerfShed(nextLevel);
         console.info(
-          `[perf] shed level → ${this._perfShedLevel} (0=full, 1=thinned + shell off, 2=min density)`,
+          `[perf] shed level → ${this._perfShedLevel} (0=full, 1=thinned, 2=floor density)`,
         );
       }
     });
