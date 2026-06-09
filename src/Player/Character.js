@@ -1,7 +1,18 @@
 import * as THREE from 'three/webgpu';
+import { FootIK } from './FootIK.js';
 
 const TARGET_HEIGHT = 1.7;
 const AVATAR_GLB = '/models/character/avatar.glb';
+
+// Clips for which foot IK runs — grounded idle/locomotion only. One-shots and
+// aerial/special clips (jump, backflip, cartwheel, dance, sit, lava death…)
+// play untouched so IK never yanks an airborne foot down to the ground.
+const IK_GROUNDED_POSES = new Set([
+  'idle', 'walking', 'walkingBackwards', 'running', 'crouchWalk', 'startWalking',
+]);
+// Foot-above-ground distance (m) over which IK fades to 0, so walking off a
+// ledge (still in the 'walking' clip) releases the planting smoothly.
+const IK_AIR_FADE = 0.35;
 
 // Each entry: a GLB whose first animation clip is extracted and renamed to
 // `action`. The mesh inside is discarded — only the AnimationClip is kept.
@@ -90,8 +101,12 @@ function retargetMixamoToAvaturn(clip) {
  * serves as the idle.
  */
 export class Character {
-  constructor(loader) {
+  constructor(loader, quality = {}) {
     this.loader = loader;
+    // Foot IK is one cheap per-leg solve; gated off on the low tier (and any
+    // profile that sets footIK:false) via this flag.
+    this._footIKEnabled = quality.footIK !== false;
+    this.footIK = null;
     this.root = new THREE.Group();
     this.root.name = 'character-root';
 
@@ -178,6 +193,10 @@ export class Character {
       // bone's world position so it reads as held + thrown from the hand.
       if (!this.rightHand && /righthand$/i.test(child.name)) this.rightHand = child;
     });
+
+    // Two-bone foot IK over the same skeleton (no-op if its leg chain or the
+    // quality flag is missing). Built here so it shares the loaded bones.
+    if (this._footIKEnabled) this.footIK = new FootIK(this.mesh);
 
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.mixer.addEventListener('finished', this.#onActionFinished);
@@ -400,6 +419,33 @@ export class Character {
       if (y < lowest) lowest = y;
     }
     return lowest === Infinity ? 0 : lowest - groupY;
+  }
+
+  /**
+   * Plant the feet on the terrain for the current frame's pose. Call AFTER
+   * update() (so the mixer + root pin have set the animated pose) and BEFORE
+   * anything reads the solved feet (the contact shadow, the renderer). No-op
+   * unless IK is enabled, the leg chain resolved, and the current clip is a
+   * grounded idle/locomotion pose.
+   * @param {{ heightAt:(x:number,z:number)=>number }} terrain
+   * @param {number} [snowCoverage] 0..1
+   */
+  solveFootIK(terrain, snowCoverage = 0) {
+    if (!this.footIK?.valid || !terrain) return;
+    if (this._oneShot || !IK_GROUNDED_POSES.has(this.currentName)) return;
+
+    const parent = this.root.parent;
+    if (!parent) return;
+    // Fade IK out as the body lifts off the ground (e.g. stepping off a ledge
+    // mid-walk) so the planting releases instead of stretching the legs down.
+    const groundY = terrain.heightAt(parent.position.x, parent.position.z);
+    const footY = parent.position.y + this.lowestContactLocalY();
+    const airGap = Math.max(0, footY - groundY);
+    const t = Math.min(1, airGap / IK_AIR_FADE);
+    const weight = 1 - t * t * (3 - 2 * t); // smoothstep, inverted
+    if (weight <= 0.001) return;
+
+    this.footIK.solve(terrain, snowCoverage, weight);
   }
 
   update(delta) {

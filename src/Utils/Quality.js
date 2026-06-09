@@ -11,6 +11,10 @@ const PROFILES = {
     // pass on top of every canopy/bush core. Pure fill-rate; dropped on
     // medium/low so weaker GPUs render foliage as just the solid core blob.
     foliageShell: true,
+    // Two-bone foot IK that plants the feet on the terrain. Cheap (one solve
+    // per leg) but skipped on the low tier to spare weak CPUs the per-frame
+    // matrix refreshes.
+    footIK: true,
     rainCount: 1200,
     rainSplashBudget: 8,
     leafCount: 120,
@@ -46,6 +50,7 @@ const PROFILES = {
     grassMultiplier: 0.62,
     waterHighDetail: false,
     foliageShell: false,
+    footIK: true,
     rainCount: 700,
     rainSplashBudget: 5,
     leafCount: 75,
@@ -70,6 +75,7 @@ const PROFILES = {
     grassMultiplier: 0.35,
     waterHighDetail: false,
     foliageShell: false,
+    footIK: false,
     rainCount: 360,
     rainSplashBudget: 2,
     leafCount: 36,

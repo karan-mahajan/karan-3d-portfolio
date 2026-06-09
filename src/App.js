@@ -2,6 +2,7 @@ import * as THREE from "three/webgpu";
 import { AudioManager } from "./Audio/AudioManager.js";
 import { Fireflies } from "./Effects/Fireflies.js";
 import { Footprints } from "./Effects/Footprints.js";
+import { ContactShadow } from "./Effects/ContactShadow.js";
 import { GroundBreak } from "./Effects/GroundBreak.js";
 import { Leaves } from "./Effects/Leaves.js";
 import { LikeLights } from "./Effects/LikeLights.js";
@@ -201,6 +202,12 @@ export class App extends EventTarget {
     // post-boot once World.paths exists.
     this.footprints = new Footprints(this.scene, this.world.terrain, {
       loader: this.loader,
+    });
+
+    // Soft contact pool under the player — the primary "feet on the ground"
+    // cue (the sun shadow alone reads too weak). Procedural, one draw call.
+    this.contactShadow = new ContactShadow(this.scene, {
+      quality: this.quality,
     });
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
@@ -511,7 +518,7 @@ export class App extends EventTarget {
     // Character GLB parse (~5s) — independent of world + physics. Start it now
     // so it runs UNDER the world parse. Needs only the loader (renderer already
     // attached for KTX2). Attached to the Player after the world resolves.
-    const character = new Character(this.loader);
+    const character = new Character(this.loader, this.quality);
     const characterPromise = character.load();
     characterPromise.catch(() => {}); // real error still surfaces at the await below
 
@@ -1896,6 +1903,19 @@ export class App extends EventTarget {
     // been interpolated above. Decoupled from the physics substeps so the
     // animation advances every rendered frame (even on 0-substep 120Hz frames).
     this.player.updateVisual(frameDelta);
+
+    // Plant the feet on the terrain BEFORE anything reads the pose — so both
+    // the contact shadow and the renderer see the solved (grounded) feet.
+    this.player.character?.solveFootIK(
+      this.world.terrain,
+      this.weather?.coverage ?? 0,
+    );
+
+    // Ground the character: place the contact pool under the (now interpolated)
+    // player with mixer-synced bones, so the lowest-foot read is valid.
+    if (this.contactShadow) {
+      this.contactShadow.update(this.player, this.world.terrain, this.weather);
+    }
 
     // Drive the camera's dynamic movement-zoom before update() reads it.
     this.playerCamera.setMovementState({
