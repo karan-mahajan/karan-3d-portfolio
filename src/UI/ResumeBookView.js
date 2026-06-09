@@ -101,15 +101,23 @@ export class ResumeBookView {
     // Build the page list by measuring content against the real page size.
     this.pages = this.#buildPages(w, h);
 
+    // StPageFlip's destroy() calls `block.remove()` on the element it's handed,
+    // ripping it out of the DOM — so we never hand it `this.flipEl` directly
+    // (that would orphan our stable container and break every re-open). Instead
+    // mount a throwaway child each open; destroy() removes the child, flipEl lives.
+    this.flipEl.innerHTML = '';
+    const mount = document.createElement('div');
+    this.flipEl.appendChild(mount);
+
     // Build page elements fresh each open (StPageFlip consumes them).
-    this.flipEl.innerHTML = this.pages
+    mount.innerHTML = this.pages
       .map((html) =>
         `<div class="rb-pf-page" data-density="soft">
            <div class="rb-page-inner">${html}</div>
          </div>`)
       .join('');
 
-    this.pageFlip = new PageFlip(this.flipEl, {
+    this.pageFlip = new PageFlip(mount, {
       width: w,
       height: h,
       size: 'fixed',
@@ -122,7 +130,7 @@ export class ResumeBookView {
       showPageCorners: true,
       useMouseEvents: true,
     });
-    this.pageFlip.loadFromHTML(this.flipEl.querySelectorAll('.rb-pf-page'));
+    this.pageFlip.loadFromHTML(mount.querySelectorAll('.rb-pf-page'));
     this.pageFlip.on('flip', () => { this.audio?.playInteract?.(); this.#syncChrome(); });
     this.#syncChrome();
   }
