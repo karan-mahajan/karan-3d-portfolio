@@ -23,7 +23,6 @@
 export const portfolio = {
   name: "Karan Mahajan",
   title: "Full Stack Developer",
-  photo: "/textures/screenshots/karan.webp",
   projects: [
     {
       name: "findabl",
