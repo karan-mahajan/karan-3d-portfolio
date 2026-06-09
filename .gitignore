@@ -50,6 +50,7 @@ thumbs.db
 # NOTE: docs/day.webp + docs/night.webp ARE committed (README banner).
 docs/superpowers/
 docs/v3-runtime/
+docs/bruno-devlogs/
 
 # World-design decision logs + bulk Bruno extraction artifacts.
 /reports/

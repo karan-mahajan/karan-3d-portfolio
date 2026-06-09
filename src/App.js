@@ -1586,6 +1586,19 @@ export class App extends EventTarget {
     // warm sun. (ACES@1.3 was washing out the authored palette.)
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Perf: skip Three's per-frame painter sort. The default distance sort
+    // projects every renderable's bounding-sphere centre through the proj
+    // matrix AND Array.sorts the whole render list every frame — pure CPU on
+    // the (submission-bound) bottleneck axis with our large object count.
+    // NOTE (three r184 / WebGPU): sortObjects=false skips the sort AND the
+    // per-object z projection entirely (Renderer.js gates both on
+    // sortObjects===true), so renderOrder is NOT honoured and any
+    // setOpaqueSort/setTransparentSort comparators never run. Opaque order is
+    // depth-tested (visually unaffected); opaque-before-transparent is still
+    // enforced by separate render lists. Only ordering WITHIN the transparent
+    // list changes — it now follows scene-graph traversal order. Verify
+    // water-edge/particle blending after this change.
+    this.renderer.sortObjects = false;
     // Disable per-render auto-reset so renderer.info accumulates across the
     // frame's water pre-render + every composer pass. #tick resets once at
     // frame start; the debug HUD reads the full per-frame totals.
@@ -1640,6 +1653,9 @@ export class App extends EventTarget {
 
   #initScene() {
     this.scene = new THREE.Scene();
+    // Give the debug overlay the scene so `?debug=calls` can attribute draw
+    // calls per system (Phase-0 instrumentation).
+    this.debug?.setScene(this.scene);
     // Background = null because the Sky sphere paints the gradient itself.
     this.scene.background = null;
     // Fog tinted to the warm horizon, pushed farther so it doesn't smother
@@ -1745,6 +1761,10 @@ export class App extends EventTarget {
     const scaledDelta = frameDelta * this.timeScale;
 
     this.renderer.info.reset();
+    // CPU-cost instrumentation (?debug): time the JS update work per frame,
+    // split sim vs world/effects, excluding the GPU render submit. Decides
+    // GPU-bound vs CPU-bound — see Debug HUD `cpu` line.
+    const _cpuStart = performance.now();
     this.#updateAdaptiveDpr(frameDelta);
 
     const fixedDelta = this.quality.physicsStep ?? 1 / 60;
@@ -1798,6 +1818,7 @@ export class App extends EventTarget {
         speed: 0,
       };
     this._lastPlayerSample = sample;
+    const _cpuAfterSim = performance.now();
 
     // Render the character at the interpolated position between the last two
     // simulated states. With 0 substeps this frame, prev/curr are unchanged and
@@ -2089,6 +2110,13 @@ export class App extends EventTarget {
     // on-screen frame back to the default framebuffer so it never lands in the
     // map's texture.
     this.renderer.setRenderTarget(null);
+    // Mark the end of CPU update work (everything above) before the GPU submit.
+    const _cpuEnd = performance.now();
+    this.debug.setCpuTiming(
+      _cpuEnd - _cpuStart,
+      _cpuAfterSim - _cpuStart,
+      _cpuEnd - _cpuAfterSim,
+    );
     this.postfx.render(frameDelta);
     this.debug.tick();
   };
