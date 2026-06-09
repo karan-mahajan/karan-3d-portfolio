@@ -17,7 +17,7 @@ it or load a path that may not exist. Applies especially to Mixamo FBX clips.
 Procedural placeholders are OK **only** as an explicit `try/catch` fallback
 after a real load attempt, with user buy-in.
 
-### 2. Keep this file < 200 lines
+### 2. Keep this file < 250 lines
 
 When updating CLAUDE.md, prune before adding. Index-level facts only — no
 tutorials, no code blocks longer than ~10 lines, no per-file walkthroughs.
@@ -43,17 +43,11 @@ in [Physics.js](src/Physics/Physics.js): `addStaticCylinder` /
 `addStaticCuboid` for static, `addDynamicBall` for pushable. Walk-through
 accents (grass, flowers, ferns, pebbles…) get **no** collider.
 
-**Collider must match the visible mesh.** Use `new THREE.Box3().setFromObject(node)`
-on the scaled mesh; pass `(box.min.y + box.max.y) / 2` as `y` and
-`size.{x,y,z}/2` as half-extents. Reference:
-[Nature.#placeInstances](src/World/Nature.js),
-[Paths.#buildTile](src/World/Paths.js),
-[Interactables.#buildStuckCrate](src/Portfolio/Interactables.js). Wrong sizing
-= feet sink in or float inside.
-
-**Note:** `addStaticCuboid(x, y, z, hx, hy, hz)` — `y` is the cuboid's
-**centre**, no internal lift. Mesh origin at bbox bottom → `bottom + hy`;
-measured bbox → `(box.min.y + box.max.y) / 2`.
+**Collider must match the visible mesh.** Measure `new THREE.Box3().setFromObject(node)`
+on the scaled mesh; pass `(box.min.y + box.max.y)/2` as `y` (cuboid `y` is the
+**centre**, no internal lift) and `size.{x,y,z}/2` as half-extents — else feet
+sink or float. Refs: [Nature.#placeInstances](src/World/Nature.js),
+[Paths.#buildTile](src/World/Paths.js), [Interactables](src/Portfolio/Interactables.js).
 
 ### 6. Don't search `node_modules/` for user-referenced files
 
@@ -64,7 +58,8 @@ fair game **only** when debugging a dependency.
 
 ## Stack
 
-- **three@0.184** — renderer, scene, lights, materials
+- **three@0.184** — **WebGPURenderer** (WebGL2 auto-fallback); all custom
+  shading is **TSL** node materials (GLSL `onBeforeCompile` silently no-ops)
 - **@dimforge/rapier3d-compat@0.12** — physics (async WASM init; see [Physics.js](src/Physics/Physics.js))
 - **camera-controls@3** — third-person follow cam
 - **gsap@3** — UI fades + interaction transitions
@@ -133,6 +128,27 @@ physics.step → player.update → playerCamera.update → discovery.update
 → water.preRender → postfx.render
 ```
 
+## Rendering & perf (verified 2026-06-09)
+
+- **Bottleneck is GPU fill, NOT draw calls.** Per frame on a capable laptop:
+  ~414 draws, ~15 passes (`info.render.frameCalls`), ~1.18M tris, CPU ~0.7ms.
+  The old "75k draw calls" was a misread of the *lifetime* `info.render.calls`
+  counter — per-frame truth is `info.render.drawCalls`. Merge/instancing
+  already work (~607 drawables).
+- **Passes (~15 frameCalls):** 1 sun shadow map (DirectionalLight, 512²,
+  PCFSoft, ±18 frustum, follows player each frame) + main scene + one fused
+  PostFX node graph (edge tilt-shift → bloom mip chain → tone-map/AgX +
+  palette grade). PostFX is skipped entirely when the quality tier disables it.
+- **Water = pure-TSL surface, NO render targets.** `Water.preRender()` is a
+  no-op; refraction reads the live frame via `viewportSharedTexture`. Don't
+  re-add a Reflector/Refractor. IBL PMREM (128³) regen is throttled (sky-move
+  + ≥12 frames), not per-frame ([Environment.js](src/World/Environment.js)).
+- **Particles are GPU-TSL** (time-driven uniforms, no per-frame buffer upload):
+  Snow/Rain/WindLines/Fireflies. Leaves stays CPU (stateful settle-on-terrain).
+- **Debug HUD** ([Debug.js](src/Utils/Debug.js)): `?debug` = fps/tris/draws/
+  passes/cpu/mem; `?debug=calls` adds per-system draw attribution + shadow
+  re-submit count. No GPU-time readout — WebGPU r184 exposes no timestamps.
+
 ## Conventions
 
 - Boot is async; `App.boot()` returns `{ character, world }`. Loader emits
@@ -144,9 +160,11 @@ physics.step → player.update → playerCamera.update → discovery.update
 - Controller is **paused** while overlays (loading, welcome, interaction
   modal, action one-shots) are up, then unpaused.
 - Audio must start on a user gesture (browser policy) — handled in main.js.
-- Physics: heightfield ground sampled from `terrain.heightAt`. Player uses
-  Rapier's kinematic-position character controller; football is the only
-  dynamic body. Variable timestep — known wart, not yet fixed.
+- Physics: heightfield ground from `terrain.heightAt`. Player = Rapier
+  kinematic-position char controller; football is the only dynamic body.
+  **Fixed timestep 1/60 + accumulator** (≤5 steps/frame, frameDelta clamped to
+  0.1s); render interpolates char pos between substeps (App.js ~1775–1839). The
+  old "variable timestep wart" note was WRONG — motion is already smooth.
 - Fog tinted `#ffb084`, range 65→165, so distant trees fade into sunset.
 - **Achievements** (`Systems/Achievements.js`): 42 unlocks w/ rarity tiers
   (common→legendary), time tracker, rarity-themed toast on unlock, full panel
@@ -167,21 +185,14 @@ physics.step → player.update → playerCamera.update → discovery.update
   [WorldMap.js](src/Portfolio/WorldMap.js); sessionStorage key
   `karan-world-discovered-v1`. Backtick = navmask debug overlay.
 
-## Verification sandbox — MUST use `.verify/scripts/` + `.verify/shots/<date>/`
+## Verification
 
-No exceptions, no `/tmp/`, no flat `.verify/*.png`. Layout:
-`.verify/scripts/verify-<feature>.mjs` + `.verify/shots/YYYY-MM-DD/<name>.png`.
-
-Rules: (1) compute shots dir at runtime via `new Date().toISOString().slice(0, 10)`
-+ `fs.mkdirSync(..., { recursive: true })` — never hardcode a date;
-(2) run from project root with `URL=http://localhost:5173/ node .verify/scripts/<file>.mjs`;
-(3) `ls .verify/scripts/` first — copy an existing driver, don't duplicate;
-(4) always boot via `bootAndDismiss(page)` from [\_boot.mjs](.verify/scripts/_boot.mjs)
-— never inline your own dismissal loop.
-
-`.verify/` is gitignored. Playwright is not a project dep — install once globally
-(`cd /tmp && npm install --no-save playwright`), reuse via `NODE_PATH`. Canonical
-driver: [verify-walk.mjs](.verify/scripts/verify-walk.mjs).
+The user usually verifies manually — **ask before running headless probe
+loops or screenshot runs**. If you do probe: scripts live in `.verify/scripts/`
+(`verify-<feature>.mjs`), shots in `.verify/shots/YYYY-MM-DD/` (compute the date
+at runtime, never hardcode); boot via `bootAndDismiss(page)` from
+[\_boot.mjs](.verify/scripts/_boot.mjs). `.verify/` is gitignored; Playwright is
+NOT a project dep (install globally, reuse via `NODE_PATH`).
 
 ## Known parked work (don't surprise the user with rewrites)
 
