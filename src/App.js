@@ -222,13 +222,20 @@ export class App extends EventTarget {
     // Sky-derived image-based lighting. Generates a PMREM from the gradient
     // Sky so props get soft indirect light keyed to the world's own sky colours
     // (fixes the flat, "pasted-on" look). update() is called each tick and
-    // rebuilds only when the sky colours actually move.
-    this.environment = new Environment(
-      this.renderer,
-      this.scene,
-      this.world.sky.material,
-      { intensity: 0.35 },
-    );
+    // rebuilds only when the sky colours actually move. LOW tier skips the
+    // PMREM entirely (per-fragment env sampling + regen are real cost on the
+    // iGPUs that land there) and fakes the fill with one hemisphere light.
+    if (this.quality.name !== "low") {
+      this.environment = new Environment(
+        this.renderer,
+        this.scene,
+        this.world.sky.material,
+        { intensity: 0.35 },
+      );
+    } else {
+      const hemi = new THREE.HemisphereLight(0xbfd4e8, 0x8a6f55, 0.45);
+      this.scene.add(hemi);
+    }
 
     this.audio = new AudioManager();
     // Rain's toggle button (built in its own constructor) plays a toggle
