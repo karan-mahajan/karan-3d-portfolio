@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "compress:world": "node tools/compress-world-glb.mjs",
+    "compress:textures": "node tools/compress-textures-ktx2.mjs",
     "social:reset": "node tools/reset-social.mjs"
   },
   "keywords": [

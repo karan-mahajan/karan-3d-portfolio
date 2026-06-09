@@ -45,11 +45,15 @@ thumbs.db
 # Blender world-build pipeline: Python scripts, .blend files, compression
 # utilities, extraction scripts, approval mockups. (~46 MB)
 /tools/
+!/tools/
+/tools/*
+!/tools/compress-textures-ktx2.mjs
 
 # Research, specs, plans, handoffs and runtime-phase planning docs.
 # NOTE: docs/day.webp + docs/night.webp ARE committed (README banner).
 docs/superpowers/
 docs/v3-runtime/
+docs/bruno-devlogs/
 
 # World-design decision logs + bulk Bruno extraction artifacts.
 /reports/

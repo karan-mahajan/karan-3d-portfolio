@@ -35,13 +35,30 @@ export const KEYS = {
   visitors: "social:visitors:hll", // HyperLogLog — unique explorers
   whispers: "social:whispers", // list of JSON strings, newest first
   rate: (vid) => `social:rate:${vid}`, // per-visitor whisper cooldown
+  ipRate: (scope, ip) => `social:rate:ip:${scope}:${keyPart(ip)}`,
+  strikeIp: (ip) => `social:strike:ip:${keyPart(ip)}`,
+  strikeVisitor: (vid) => `social:strike:visitor:${keyPart(vid)}`,
+  banIp: (ip) => `social:ban:ip:${keyPart(ip)}`,
+  banVisitor: (vid) => `social:ban:visitor:${keyPart(vid)}`,
   seen: (vid) => `social:seen:${vid}`, // per-visitor visit-audit dedup window
   audit: "social:audit", // PRIVATE log: {t,ip,visitorId,...} — never sent to clients
 };
 
 export const VISIT_DEDUP_S = 21600; // 6h — at most one visit-audit row per window
+export const RATE_LIMITS = {
+  stateIp: { scope: "state", limit: 120, windowS: 60 },
+  likeIp: { scope: "like", limit: 30, windowS: 60 },
+  whisperIp: { scope: "whisper", limit: 8, windowS: 300 },
+};
+export const ABUSE_STRIKE_WINDOW_S = 600; // 10m rolling strike bucket
+export const ABUSE_STRIKE_LIMIT = 3;
+export const SOFT_BAN_S = 3600; // 1h auto-ban after repeated blocked attempts
 
 const AUDIT_MAX = 5000; // most-recent audit rows kept
+
+function keyPart(raw) {
+  return Buffer.from(String(raw || "unknown")).toString("base64url").slice(0, 128);
+}
 
 /**
  * Best-effort client IP from the proxy headers Vercel sets. The browser can't
@@ -57,6 +74,86 @@ export function getClientIp(req) {
     req.connection?.remoteAddress ||
     ""
   );
+}
+
+function normalizeIp(ip) {
+  return String(ip || "").replace(/^::ffff:/, "").trim();
+}
+
+export function isHardBanned(req) {
+  const ip = normalizeIp(getClientIp(req));
+  const raw = process.env.SOCIAL_HARD_BANNED_IPS || "";
+  if (!ip || !raw) return false;
+  return raw
+    .split(",")
+    .map((v) => normalizeIp(v))
+    .filter(Boolean)
+    .includes(ip);
+}
+
+export async function isSoftBanned(redis, req, visitorId = null) {
+  const ip = normalizeIp(getClientIp(req));
+  const checks = [];
+  if (ip) checks.push(redis.get(KEYS.banIp(ip)));
+  if (visitorId) checks.push(redis.get(KEYS.banVisitor(visitorId)));
+  if (!checks.length) return false;
+  const values = await Promise.all(checks);
+  return values.some(Boolean);
+}
+
+export async function enforceIpRateLimit(redis, req, limitSpec) {
+  const ip = normalizeIp(getClientIp(req));
+  if (!ip || !limitSpec) return { limited: false };
+  const key = KEYS.ipRate(limitSpec.scope, ip);
+  const count = Number(await redis.incr(key)) || 0;
+  if (count === 1) await redis.expire(key, limitSpec.windowS);
+  return {
+    limited: count > limitSpec.limit,
+    count,
+    retryAfter: limitSpec.windowS,
+  };
+}
+
+export async function registerAbuseStrike(redis, req, visitorId, reason) {
+  const ip = normalizeIp(getClientIp(req));
+  const writes = [];
+  if (ip) writes.push(incrWithExpiry(redis, KEYS.strikeIp(ip), ABUSE_STRIKE_WINDOW_S));
+  if (visitorId) {
+    writes.push(
+      incrWithExpiry(redis, KEYS.strikeVisitor(visitorId), ABUSE_STRIKE_WINDOW_S),
+    );
+  }
+  const counts = await Promise.all(writes);
+  const strikeCount = Math.max(0, ...counts);
+  await logAudit(redis, {
+    t: "abuse_strike",
+    visitorId,
+    ip,
+    reason,
+    strikeCount,
+  });
+  if (strikeCount >= ABUSE_STRIKE_LIMIT) {
+    const bans = [];
+    if (ip) bans.push(redis.set(KEYS.banIp(ip), reason, { ex: SOFT_BAN_S }));
+    if (visitorId) {
+      bans.push(redis.set(KEYS.banVisitor(visitorId), reason, { ex: SOFT_BAN_S }));
+    }
+    await Promise.all(bans);
+    await logAudit(redis, {
+      t: "soft_ban",
+      visitorId,
+      ip,
+      reason,
+      seconds: SOFT_BAN_S,
+    });
+  }
+  return strikeCount;
+}
+
+async function incrWithExpiry(redis, key, seconds) {
+  const count = Number(await redis.incr(key)) || 0;
+  if (count === 1) await redis.expire(key, seconds);
+  return count;
 }
 
 const PRIVATE_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?|0\.0\.0\.0|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;

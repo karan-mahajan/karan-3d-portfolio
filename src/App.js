@@ -187,6 +187,7 @@ export class App extends EventTarget {
     this.leaves = new Leaves(this.scene, this.wind, this.world.terrain, {
       count: this.quality.leafCount,
       maxSettled: this.quality.maxSettledLeaves,
+      loader: this.loader,
     });
     // Leaves used to rain down the instant the world appeared. Hold them off the
     // spawn frame; the boot tail releases them ~8s in, after which the tick
@@ -197,7 +198,9 @@ export class App extends EventTarget {
     // is driven by AudioManager.onStep (set up after boot) so visual prints
     // and audio steps stay aligned. Path tile positions are plumbed in
     // post-boot once World.paths exists.
-    this.footprints = new Footprints(this.scene, this.world.terrain);
+    this.footprints = new Footprints(this.scene, this.world.terrain, {
+      loader: this.loader,
+    });
 
     // PostFX wraps the renderer. Created here so resize() can wire to it.
     this.postfx = new PostFX(
@@ -592,7 +595,9 @@ export class App extends EventTarget {
     const [foliageGroups, foliageSDF] = await Promise.all([
       this.world.glb.loadFoliageGroups(),
       this.loader
-        .loadTexture("/textures/foliage/foliageSDF.png")
+        .loadTexture("/textures/foliage/foliageSDF.png", {
+          ktx2Url: "/textures/foliage/foliageSDF.ktx2",
+        })
         .then((tex) => {
           tex.minFilter = THREE.NearestFilter;
           tex.magFilter = THREE.NearestFilter;
@@ -1563,7 +1568,7 @@ export class App extends EventTarget {
       Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0) >= 2;
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
-      antialias: true,
+      antialias: this.sizes.pixelRatio < 2,
       powerPreference: "high-performance",
       alpha: false,
       forceWebGL,
@@ -1586,6 +1591,19 @@ export class App extends EventTarget {
     // warm sun. (ACES@1.3 was washing out the authored palette.)
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Perf: skip Three's per-frame painter sort. The default distance sort
+    // projects every renderable's bounding-sphere centre through the proj
+    // matrix AND Array.sorts the whole render list every frame — pure CPU on
+    // the (submission-bound) bottleneck axis with our large object count.
+    // NOTE (three r184 / WebGPU): sortObjects=false skips the sort AND the
+    // per-object z projection entirely (Renderer.js gates both on
+    // sortObjects===true), so renderOrder is NOT honoured and any
+    // setOpaqueSort/setTransparentSort comparators never run. Opaque order is
+    // depth-tested (visually unaffected); opaque-before-transparent is still
+    // enforced by separate render lists. Only ordering WITHIN the transparent
+    // list changes — it now follows scene-graph traversal order. Verify
+    // water-edge/particle blending after this change.
+    this.renderer.sortObjects = false;
     // Disable per-render auto-reset so renderer.info accumulates across the
     // frame's water pre-render + every composer pass. #tick resets once at
     // frame start; the debug HUD reads the full per-frame totals.
@@ -1640,6 +1658,9 @@ export class App extends EventTarget {
 
   #initScene() {
     this.scene = new THREE.Scene();
+    // Give the debug overlay the scene so `?debug=calls` can attribute draw
+    // calls per system (Phase-0 instrumentation).
+    this.debug?.setScene(this.scene);
     // Background = null because the Sky sphere paints the gradient itself.
     this.scene.background = null;
     // Fog tinted to the warm horizon, pushed farther so it doesn't smother
@@ -1745,6 +1766,10 @@ export class App extends EventTarget {
     const scaledDelta = frameDelta * this.timeScale;
 
     this.renderer.info.reset();
+    // CPU-cost instrumentation (?debug): time the JS update work per frame,
+    // split sim vs world/effects, excluding the GPU render submit. Decides
+    // GPU-bound vs CPU-bound — see Debug HUD `cpu` line.
+    const _cpuStart = performance.now();
     this.#updateAdaptiveDpr(frameDelta);
 
     const fixedDelta = this.quality.physicsStep ?? 1 / 60;
@@ -1798,6 +1823,7 @@ export class App extends EventTarget {
         speed: 0,
       };
     this._lastPlayerSample = sample;
+    const _cpuAfterSim = performance.now();
 
     // Render the character at the interpolated position between the last two
     // simulated states. With 0 substeps this frame, prev/curr are unchanged and
@@ -1894,10 +1920,16 @@ export class App extends EventTarget {
       this.actionPrompts.tick(this.player.position, frameDelta);
     if (this.interaction && !inGarden)
       this.interaction.tick(this.player.position);
-    if (this.skillSphere) this.skillSphere.update(frameDelta);
-    if (this.projectsHut) this.projectsHut.update(frameDelta);
-    if (this.contactBoard) this.contactBoard.update(elapsed);
-    if (this.experience)
+    if (this.skillSphere && this.#shouldTickSection("skills", this.skillSphere)) {
+      this.skillSphere.update(frameDelta);
+    }
+    if (this.projectsHut && this.#shouldTickSection("projects", this.projectsHut)) {
+      this.projectsHut.update(frameDelta);
+    }
+    if (this.contactBoard && this.#shouldTickSection("contact", this.contactBoard)) {
+      this.contactBoard.update(elapsed);
+    }
+    if (this.experience && this.#shouldTickSection("experience", this.experience, 58))
       this.experience.update(
         frameDelta,
         this.player.position,
@@ -2078,10 +2110,8 @@ export class App extends EventTarget {
     // Rebuild the sky-derived IBL when the sky colours move (no-op most frames).
     if (this.environment) this.environment.update();
 
-    // Refresh the shared water reflection + refraction RTs once per frame
-    // BEFORE the composer renders. With one master Reflector / Refractor
-    // shared across every pool + the river, this is 2 scene re-renders per
-    // frame total (vs. 10 if each surface owned its own pair).
+    // Water no longer owns reflection/refraction render targets; this stays as a
+    // stable hook for any future pre-render work the water system may need.
     if (this.water) this.water.preRender(this.renderer, this.camera);
 
     // Defensive: the off-screen map snapshot binds a render target and may be
@@ -2089,16 +2119,44 @@ export class App extends EventTarget {
     // on-screen frame back to the default framebuffer so it never lands in the
     // map's texture.
     this.renderer.setRenderTarget(null);
+    // Mark the end of CPU update work (everything above) before the GPU submit.
+    const _cpuEnd = performance.now();
+    this.debug.setCpuTiming(
+      _cpuEnd - _cpuStart,
+      _cpuAfterSim - _cpuStart,
+      _cpuEnd - _cpuAfterSim,
+    );
     this.postfx.render(frameDelta);
     this.debug.tick();
   };
 
   /**
-   * Cardinal section + experience-sign proximity, plus off-path detection.
-   * Cheap enough to run every frame (handful of squared-distance checks);
-   * the heavy off-path scan early-exits on water + on the first path tile
-   * within range.
+   * Whether a cardinal section's per-frame update() should run this tick.
+   * Skipping it saves CPU for sections the player isn't at — but these are
+   * VISIBLE animated landmarks (the skill sphere's orbiting cards, etc.), so
+   * we must never freeze one that's on screen. Gate only when the section is
+   * BOTH far AND behind the camera (outside the forward hemisphere), where a
+   * frozen animation can't be seen. `this._camFwd` is refreshed earlier in the
+   * tick (grass needs it) so this is a couple of squared-distance + dot ops.
    */
+  #shouldTickSection(key, module, radius = 46) {
+    if (!module) return false;
+    if (module.active || module.zooming || module.transitioning) return true;
+    if (module._near || module.inGameMode) return true;
+    const ref = this.world?.glb?.refs?.sections?.[key]?.position;
+    const p = this.player?.position;
+    if (!ref || !p) return true;
+    const dx = p.x - ref.x;
+    const dz = p.z - ref.z;
+    if (dx * dx + dz * dz <= radius * radius) return true; // near → always tick
+    // Far: keep ticking unless the section is behind the camera (can't be seen).
+    const fwd = this._camFwd;
+    if (!fwd) return true;
+    const toX = ref.x - this.camera.position.x;
+    const toZ = ref.z - this.camera.position.z;
+    return fwd.x * toX + fwd.z * toZ > 0; // in front → tick, behind → skip
+  }
+
   #tickAchievementProximity(playerPos, inWater) {
     const ach = this.achievements;
     if (!ach) return;

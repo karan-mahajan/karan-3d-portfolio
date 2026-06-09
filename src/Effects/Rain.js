@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 import {
   Fn, attribute, varying, float, vec3, vec4,
-  positionLocal, modelViewMatrix, cameraProjectionMatrix,
+  positionLocal, modelViewMatrix, cameraProjectionMatrix, uniform,
 } from 'three/tsl';
 
 /**
@@ -19,6 +19,8 @@ const DEFAULT_RAIN_COUNT = 1200;
 const AREA = 70;            // half-extent of the rain volume
 const FALL_SPEED = 18;      // units per second
 const SPAWN_HEIGHT = 28;
+const SPLASH_EMIT_RADIUS = 22;  // near-camera disc where ground splashes spawn
+const SPLASH_RATE = 22;         // target splash spawns / sec (before per-frame budget cap)
 const STORAGE_KEY = 'karan-portfolio:rain-off';
 
 export class Rain {
@@ -31,6 +33,12 @@ export class Rain {
     // Transient hide (e.g. while it snows) that does NOT touch the user's
     // on/off preference — driven each frame by App, never persisted.
     this._suppressed = false;
+    this._time = 0;
+    // Splash impacts used to be triggered per-drop as each drop crossed y=0.
+    // With drops now falling on the GPU we have no per-drop ground event, so
+    // splashes are emitted on a steady rate timer at random near-camera ground
+    // points — same visual patter, decoupled from the drop simulation.
+    this._splashAccum = 0;
     this.group = new THREE.Group();
     this.group.name = 'rain';
     scene.add(this.group);
@@ -90,9 +98,23 @@ export class Rain {
       transparent: true,
       depthWrite: false,
     });
+    // Time-driven on the GPU: the old CPU per-drop fall loop + full aOffset
+    // re-upload (1200 instances every frame) is gone. The vertex node derives
+    // each drop's live Y analytically from its seed (aOffset = spawn x/y/z),
+    // aSpeed and a single uTime uniform. `aOffset` is now an immutable seed
+    // buffer; splash impacts are emitted on a decoupled rate timer (see update).
+    this.uTime = uniform(0);
+    const H = float(SPAWN_HEIGHT);
     const vAlpha = varying(float(0), 'vRainAlpha');
     mat.vertexNode = Fn(() => {
-      const local = positionLocal.add(attribute('aOffset'));
+      const seed = attribute('aOffset'); // spawn x/y/z
+      const speed = attribute('aSpeed');
+      // Fall wraps in [0, H]: y0 sets the start so drops desync; the modulo
+      // recycles to the top exactly as the old `y < 0 → y = SPAWN_HEIGHT` did.
+      const fallPhase = H.sub(seed.y);
+      const progressed = fallPhase.add(this.uTime.mul(speed)).mod(H);
+      const base = vec3(seed.x, H.sub(progressed), seed.z);
+      const local = positionLocal.add(base);
       const view = modelViewMatrix.mul(vec4(local, 1.0));
       // Fade by distance so drops in the far horizon don't clutter.
       vAlpha.assign(view.z.negate().div(65.0).oneMinus().clamp(0.0, 1.0));
@@ -264,24 +286,23 @@ export class Rain {
     const cz = this.camera.position.z;
     this.drops.position.set(cx, 0, cz);
 
-    // Advance each drop. When a drop falls below y=0, recycle it to the top.
-    let splashBudget = this.splashBudget; // quality tier scales the splash cost.
-    for (let i = 0; i < this.count; i++) {
-      this.offsets[i * 3 + 1] -= this.speeds[i] * delta;
-      if (this.offsets[i * 3 + 1] < 0) {
-        // World x/z of the drop = base offset + camera position.
-        const wx = this.offsets[i * 3] + cx;
-        const wz = this.offsets[i * 3 + 2] + cz;
-        if (splashBudget > 0 && Math.random() < 0.06) {
-          this.#spawnSplash(wx, wz);
-          splashBudget--;
-        }
-        this.offsets[i * 3]     = (Math.random() - 0.5) * AREA * 2;
-        this.offsets[i * 3 + 1] = SPAWN_HEIGHT;
-        this.offsets[i * 3 + 2] = (Math.random() - 0.5) * AREA * 2;
-      }
+    // Drops fall on the GPU now — just advance the shared clock.
+    this._time += delta;
+    this.uTime.value = this._time;
+
+    // Emit ground splashes on a steady rate, capped per frame by the quality
+    // tier's splash budget, at random points within the near-camera disc.
+    let splashBudget = this.splashBudget;
+    this._splashAccum += delta * SPLASH_RATE;
+    while (this._splashAccum >= 1 && splashBudget > 0) {
+      this._splashAccum -= 1;
+      const ang = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * SPLASH_EMIT_RADIUS; // uniform over disc
+      this.#spawnSplash(cx + Math.cos(ang) * r, cz + Math.sin(ang) * r);
+      splashBudget--;
     }
-    this.drops.geometry.attributes.aOffset.needsUpdate = true;
+    // Don't bank a backlog across slow frames — keep the patter even.
+    if (this._splashAccum > 4) this._splashAccum = 4;
 
     // Animate splash rings. Each ring carries its own maxScale +
     // lifetime in userData (set when spawned), so ground vs pond rings

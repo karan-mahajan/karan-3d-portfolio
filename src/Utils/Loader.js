@@ -58,9 +58,21 @@ export class Loader extends EventTarget {
     });
   }
 
-  loadTexture(url) {
+  loadTexture(url, { ktx2Url = null } = {}) {
+    if (ktx2Url && this.ktx2) {
+      return this.loadKTX2(ktx2Url).catch(() => this.loadTexture(url));
+    }
     return new Promise((resolve, reject) => {
       this.texture.load(url, resolve, undefined, reject);
+    });
+  }
+
+  loadKTX2(url) {
+    if (!this.ktx2) {
+      return Promise.reject(new Error('KTX2Loader is not attached to a renderer'));
+    }
+    return new Promise((resolve, reject) => {
+      this.ktx2.load(url, resolve, undefined, reject);
     });
   }
 

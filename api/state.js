@@ -9,7 +9,11 @@ import {
   cleanVisitorId,
   getClientIp,
   isLocalRequest,
+  isHardBanned,
+  isSoftBanned,
+  enforceIpRateLimit,
   logAudit,
+  RATE_LIMITS,
   VISIT_DEDUP_S,
 } from "./_lib.js";
 
@@ -28,6 +32,7 @@ export default async function handler(req, res) {
       whispers: [],
     });
   }
+  if (isHardBanned(req)) return sendJson(res, 403, { error: "blocked" });
   const redis = getRedis();
   // No DB configured (e.g. local `vite` dev without keys) — degrade gracefully.
   if (!redis) {
@@ -43,6 +48,17 @@ export default async function handler(req, res) {
   const vid = cleanVisitorId(req.query?.v);
 
   try {
+    if (await isSoftBanned(redis, req, vid)) {
+      return sendJson(res, 403, { error: "blocked" });
+    }
+    const ipRate = await enforceIpRateLimit(redis, req, RATE_LIMITS.stateIp);
+    if (ipRate.limited) {
+      return sendJson(res, 429, {
+        error: "rate_limited",
+        retryAfter: ipRate.retryAfter,
+      });
+    }
+
     // Count this visitor as a unique explorer (no-op if already seen).
     if (vid) await redis.pfadd(KEYS.visitors, vid);
 

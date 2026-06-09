@@ -31,8 +31,6 @@ import {
 const DEFAULT_COUNT = 350;
 const VOL_X = 60;            // full extent in x
 const VOL_Z = 60;            // full extent in z
-const HALF_X = VOL_X * 0.5;
-const HALF_Z = VOL_Z * 0.5;
 const Y_MIN = 0.3;
 const Y_MAX = 4.0;
 const RIBBON_LENGTH = 1.2;
@@ -87,9 +85,10 @@ export class WindLines {
       this.speeds[i] = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN);
     }
 
-    this.offsetAttr = new THREE.InstancedBufferAttribute(this.offsets, 3);
-    this.offsetAttr.setUsage(THREE.DynamicDrawUsage);
-    instGeom.setAttribute('aOffset', this.offsetAttr);
+    // aOffset is now an IMMUTABLE seed (spawn center). Drift + wrap happen on
+    // the GPU, so the buffer is never re-uploaded.
+    instGeom.setAttribute('aOffset', new THREE.InstancedBufferAttribute(this.offsets, 3));
+    instGeom.setAttribute('aSpeed', new THREE.InstancedBufferAttribute(this.speeds, 1));
 
     // ── TSL uniforms (synced from the Wind module in update()) ──
     const wd = this.wind.uniforms.uWindDir.value;
@@ -100,6 +99,11 @@ export class WindLines {
     // they glow against the dusk sky instead of washing out into it.
     this.uColor = uniform(vec3(1.5, 1.5, 1.5));
     this.uVisibility = uniform(0);
+    // Shared wind-travel integral ∫windDir·dt (accumulated once per frame on
+    // the CPU). Every ribbon's drift is speed[i]·travel — same time-varying
+    // direction, its own speed — so one vec2 replaces the old 350-ribbon loop.
+    this.uTravel = uniform(vec2(0, 0));
+    this.uPlayer = uniform(vec2(0, 0)); // player x/z, for the wrap centre
 
     const mat = new MeshBasicNodeMaterial({
       transparent: true,
@@ -117,7 +121,20 @@ export class WindLines {
       const headFrac = lengthT.add(0.5);        // 0 tail, 1 head
 
       const along = vec3(this.uWindDir.x, 0.0, this.uWindDir.y);
-      const worldCenter = attribute('aOffset');
+
+      // Live center = immutable seed drifted by speed·travel, then wrapped into
+      // the VOL box around the player. True modulo (rel − V·round(rel/V)) — not
+      // the old single-step ±VOL — so it stays correct as travel grows large.
+      const seed = attribute('aOffset');
+      const speed = attribute('aSpeed');
+      const driftedX = seed.x.add(speed.mul(this.uTravel.x));
+      const driftedZ = seed.z.add(speed.mul(this.uTravel.y));
+      const relX = driftedX.sub(this.uPlayer.x);
+      const relZ = driftedZ.sub(this.uPlayer.y);
+      const wrapX = relX.sub(float(VOL_X).mul(relX.div(VOL_X).add(0.5).floor()));
+      const wrapZ = relZ.sub(float(VOL_Z).mul(relZ.div(VOL_Z).add(0.5).floor()));
+      const worldCenter = vec3(this.uPlayer.x.add(wrapX), seed.y, this.uPlayer.y.add(wrapZ));
+
       const toCam = cameraPosition.sub(worldCenter);
       const across = normalize(cross(along, toCam));
 
@@ -188,27 +205,11 @@ export class WindLines {
 
     if (!this.enabled || this.visibility < 0.005) return;
 
-    const dx = dirVec.x;
-    const dz = dirVec.y;
-    const px = playerPos.x;
-    const pz = playerPos.z;
-
-    for (let i = 0; i < this.count; i++) {
-      const v = this.speeds[i];
-      const ix = i * 3;
-      this.offsets[ix]     += dx * v * delta;
-      this.offsets[ix + 2] += dz * v * delta;
-
-      // Wrap relative to the player so the volume travels with them.
-      const rx = this.offsets[ix] - px;
-      if (rx >  HALF_X) this.offsets[ix] -= VOL_X;
-      else if (rx < -HALF_X) this.offsets[ix] += VOL_X;
-
-      const rz = this.offsets[ix + 2] - pz;
-      if (rz >  HALF_Z) this.offsets[ix + 2] -= VOL_Z;
-      else if (rz < -HALF_Z) this.offsets[ix + 2] += VOL_Z;
-    }
-    this.offsetAttr.needsUpdate = true;
+    // Advance the shared wind-travel integral (one vec2 add) and feed the
+    // player position; the GPU derives all 350 ribbon positions from these.
+    this.uTravel.value.x += dirVec.x * delta;
+    this.uTravel.value.y += dirVec.y * delta;
+    this.uPlayer.value.set(playerPos.x, playerPos.z);
   }
 }
 
