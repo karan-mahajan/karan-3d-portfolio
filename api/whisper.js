@@ -10,9 +10,14 @@ import {
   cleanVisitorId,
   getClientIp,
   isLocalRequest,
+  isHardBanned,
+  isSoftBanned,
+  enforceIpRateLimit,
+  registerAbuseStrike,
   logAudit,
   sanitizeText,
   containsProfanity,
+  RATE_LIMITS,
   WHISPER_MAX,
   WHISPER_MAXLEN,
   NAME_MAXLEN,
@@ -26,17 +31,31 @@ export default async function handler(req, res) {
   if (isLocalRequest(req)) {
     return sendJson(res, 200, { configured: false, error: "local" });
   }
+  if (isHardBanned(req)) return sendJson(res, 403, { error: "blocked" });
   const redis = getRedis();
   if (!redis) return sendJson(res, 503, { error: "not_configured" });
 
   const body = await readJsonBody(req);
   const vid = cleanVisitorId(body.visitorId);
   if (!vid) return sendJson(res, 400, { error: "bad_visitor_id" });
+  if (await isSoftBanned(redis, req, vid)) {
+    return sendJson(res, 403, { error: "blocked" });
+  }
+
+  const ipRate = await enforceIpRateLimit(redis, req, RATE_LIMITS.whisperIp);
+  if (ipRate.limited) {
+    await registerAbuseStrike(redis, req, vid, "whisper_ip_rate");
+    return sendJson(res, 429, {
+      error: "rate_limited",
+      retryAfter: ipRate.retryAfter,
+    });
+  }
 
   const text = sanitizeText(body.text, WHISPER_MAXLEN);
   const name = sanitizeText(body.name, NAME_MAXLEN);
   if (!text) return sendJson(res, 400, { error: "empty" });
   if (containsProfanity(text) || (name && containsProfanity(name))) {
+    await registerAbuseStrike(redis, req, vid, "profanity");
     return sendJson(res, 422, { error: "blocked" });
   }
 

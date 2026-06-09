@@ -10,7 +10,12 @@ import {
   cleanVisitorId,
   getClientIp,
   isLocalRequest,
+  isHardBanned,
+  isSoftBanned,
+  enforceIpRateLimit,
+  registerAbuseStrike,
   logAudit,
+  RATE_LIMITS,
 } from "./_lib.js";
 
 export default async function handler(req, res) {
@@ -20,12 +25,25 @@ export default async function handler(req, res) {
   if (isLocalRequest(req)) {
     return sendJson(res, 200, { configured: false, likes: 0, liked: false });
   }
+  if (isHardBanned(req)) return sendJson(res, 403, { error: "blocked" });
   const redis = getRedis();
   if (!redis) return sendJson(res, 200, { configured: false, likes: 0, liked: false });
 
   const body = await readJsonBody(req);
   const vid = cleanVisitorId(body.visitorId);
   if (!vid) return sendJson(res, 400, { error: "bad_visitor_id" });
+  if (await isSoftBanned(redis, req, vid)) {
+    return sendJson(res, 403, { error: "blocked" });
+  }
+
+  const ipRate = await enforceIpRateLimit(redis, req, RATE_LIMITS.likeIp);
+  if (ipRate.limited) {
+    await registerAbuseStrike(redis, req, vid, "like_ip_rate");
+    return sendJson(res, 429, {
+      error: "rate_limited",
+      retryAfter: ipRate.retryAfter,
+    });
+  }
 
   try {
     const added = await redis.sadd(KEYS.likers, vid);
