@@ -2,7 +2,7 @@
 
 A Bruno Simon–style walkable 3D portfolio. Spawn on a small island and wander
 toward the four cardinal directions to discover projects, skills, experience,
-and contact details — with mini-games, achievements, and a magical résumé book
+and contact details — with mini-games, achievements, and a magical resume book
 hidden along the way.
 
 <p align="center">
@@ -29,8 +29,8 @@ hidden along the way.
   - **North** — Experience, a trail of signs you walk past
   - **South** — Skills, interactive skill spheres
   - **West** — Contact links
-- **Floating magical résumé book** — open it (E) for a turn.js-style
-  drag-to-flip reading view of the real résumé.
+- **Floating magical resume book** — open it (E) for a turn.js-style
+  drag-to-flip reading view of the real resume.
 - **Mini-games** — the Colour Garden paint-throw game mode and a shoreline
   distance-guessing game.
 - **42 achievements** with rarity tiers, a cinematic unlock toast, and a
@@ -50,20 +50,20 @@ hidden along the way.
 
 ## Controls
 
-| Key | Action |
-|---|---|
-| `W` `A` `S` `D` | Move |
-| `Shift` | Run |
-| `Space` | Jump |
-| `Z` | Crouch |
-| `E` | Interact / act on prompt |
-| `P` (hold) | Push prop |
-| `B` | Backflip |
-| `C` | Cartwheel |
-| `M` | Open map |
-| `J` | Open achievements panel |
-| `Esc` | Close modal / back |
-| Mouse drag | Look around |
+| Key             | Action                   |
+| --------------- | ------------------------ |
+| `W` `A` `S` `D` | Move                     |
+| `Shift`         | Run                      |
+| `Space`         | Jump                     |
+| `Z`             | Crouch                   |
+| `E`             | Interact / act on prompt |
+| `P` (hold)      | Push prop                |
+| `B`             | Backflip                 |
+| `C`             | Cartwheel                |
+| `M`             | Open map                 |
+| `J`             | Open achievements panel  |
+| `Esc`           | Close modal / back       |
+| Mouse drag      | Look around              |
 
 ## Tech stack
 
@@ -72,7 +72,7 @@ hidden along the way.
 - **[@dimforge/rapier3d-compat](https://rapier.rs/) 0.19** — physics (async WASM init)
 - **[camera-controls](https://github.com/yomotsu/camera-controls) 3** — smoothed third-person follow cam
 - **[gsap](https://greensock.com/gsap/) 3** — UI fades + interaction transitions
-- **[page-flip](https://nodlik.github.io/StPageFlip/) 2** — résumé book page turns
+- **[page-flip](https://nodlik.github.io/StPageFlip/) 2** — resume book page turns
 - **[howler](https://howlerjs.com/) 2** — audio playback
 - **[@vercel/speed-insights](https://vercel.com/docs/speed-insights) 2** — perf telemetry
 - **[vite](https://vitejs.dev/) 8** — dev server & bundler (`publicDir: 'static'`)
