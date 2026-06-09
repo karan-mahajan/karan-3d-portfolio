@@ -308,6 +308,7 @@ export class Foliage {
     this.clouds.push({
       key: cloud.key, mesh: shell, core, coreGeom, shellGeom,
       material: shellMat, coreMat, colorANode, colorBNode,
+      fullCount: refs.length,
     });
   }
 
@@ -347,6 +348,22 @@ export class Foliage {
       rot[i * 3 + 2] = (rng() - 0.5) * 0.6;    // tilt Z
       scale[i] = r.scale || 1;
     }
+    // Spatially shuffle the instances (Fisher–Yates, seeded RNG so it's stable
+    // per cloud). refs arrive clustered, so any prefix [0,k) would be a spatial
+    // clump — shuffling makes every prefix a UNIFORM sample, which is what lets
+    // the adaptive perf-shed thin a cloud just by lowering instanceCount and
+    // have trees drop out evenly instead of clearing one corner. The full set
+    // (instanceCount === n) is unchanged — only the drop ORDER differs.
+    for (let i = n - 1; i > 0; i--) {
+      const j = (rng() * (i + 1)) | 0;
+      [center[i * 3], center[j * 3]] = [center[j * 3], center[i * 3]];
+      [center[i * 3 + 1], center[j * 3 + 1]] = [center[j * 3 + 1], center[i * 3 + 1]];
+      [center[i * 3 + 2], center[j * 3 + 2]] = [center[j * 3 + 2], center[i * 3 + 2]];
+      [scale[i], scale[j]] = [scale[j], scale[i]];
+      [rot[i * 3], rot[j * 3]] = [rot[j * 3], rot[i * 3]];
+      [rot[i * 3 + 1], rot[j * 3 + 1]] = [rot[j * 3 + 1], rot[i * 3 + 1]];
+      [rot[i * 3 + 2], rot[j * 3 + 2]] = [rot[j * 3 + 2], rot[i * 3 + 2]];
+    }
     return { center, scale, rot };
   }
 
@@ -375,13 +392,40 @@ export class Foliage {
 
   /**
    * Show/hide the entire foliage layer. Visibility-only (no geometry/material
-   * churn, no pipeline recompile), so it's safe to toggle at runtime — used by
-   * the adaptive perf-shed ladder as a last resort on weak hardware.
+   * churn, no pipeline recompile), so it's safe to toggle at runtime. NOTE: the
+   * adaptive perf-shed no longer calls this — hiding ALL trees read as a broken
+   * "bare terrain". It now thins via setDensityFactor + drops the shell only.
    */
   setVisible(v) {
     for (const c of this.clouds) {
       if (c.core) c.core.visible = v;
       if (c.mesh) c.mesh.visible = v; // shell may be gated off (medium/low)
+    }
+  }
+
+  /**
+   * Show/hide only the leaf-card shell (the ragged SDF overdraw pass) — the
+   * priciest foliage layer on fill-bound hardware. Cores stay put, so the
+   * canopies are still solid, just without the soft edge. Visibility-only
+   * (safe at runtime); no-op on tiers that never built a shell.
+   */
+  setShellVisible(v) {
+    for (const c of this.clouds) if (c.mesh) c.mesh.visible = v;
+  }
+
+  /**
+   * Thin every cloud's rendered instance count to a fraction (1 = all). Cheap +
+   * reversible: lowers `instanceCount` on the core (and shell) geometry — a
+   * draw-count parameter, not a rebuild/recompile. Instances were spatially
+   * shuffled at build, so trees drop out uniformly. Cores are never hidden, so
+   * the lowest rung is a sparser forest, never an empty field. Used by the
+   * adaptive perf-shed.
+   */
+  setDensityFactor(f) {
+    for (const c of this.clouds) {
+      const k = Math.max(0, Math.min(c.fullCount, Math.round(c.fullCount * f)));
+      if (c.coreGeom) c.coreGeom.instanceCount = k;
+      if (c.shellGeom) c.shellGeom.instanceCount = k;
     }
   }
 

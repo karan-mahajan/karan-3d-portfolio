@@ -239,6 +239,25 @@ export class Grass {
         drySeed[i] = Math.random();
       }
     }
+    // Spatially shuffle the instances (Fisher–Yates). The grid above is built
+    // row-major, so any prefix [0,k) would be one contiguous strip. Shuffling
+    // makes every prefix a UNIFORM random sample of the field — that's what lets
+    // the adaptive perf-shed thin grass just by lowering instanceCount (a
+    // draw-count parameter, no rebuild/recompile) and have it sparsen evenly
+    // instead of carving a hole off one edge. Done once at build; CPU never
+    // touches these buffers again. (The full field at instanceCount === count
+    // is unchanged — only the drop ORDER differs.)
+    for (let i = this.count - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [offset[i * 2], offset[j * 2]] = [offset[j * 2], offset[i * 2]];
+      [offset[i * 2 + 1], offset[j * 2 + 1]] = [offset[j * 2 + 1], offset[i * 2 + 1]];
+      [yaw[i], yaw[j]] = [yaw[j], yaw[i]];
+      [tilt[i * 2], tilt[j * 2]] = [tilt[j * 2], tilt[i * 2]];
+      [tilt[i * 2 + 1], tilt[j * 2 + 1]] = [tilt[j * 2 + 1], tilt[i * 2 + 1]];
+      [sizeRand[i], sizeRand[j]] = [sizeRand[j], sizeRand[i]];
+      [drySeed[i], drySeed[j]] = [drySeed[j], drySeed[i]];
+    }
+
     geom.setAttribute("aOffset", new THREE.InstancedBufferAttribute(offset, 2));
     geom.setAttribute("aYaw", new THREE.InstancedBufferAttribute(yaw, 1));
     geom.setAttribute("aTilt", new THREE.InstancedBufferAttribute(tilt, 2));
@@ -457,6 +476,22 @@ export class Grass {
     if (state.camPos) {
       this.uCameraPos.value.set(state.camPos.x, state.camPos.z);
     }
+  }
+
+  /**
+   * Thin the rendered blade count to a fraction of the full field (1 = all,
+   * 0.35 = ~a third). Cheap + reversible: it only lowers `geometry.instanceCount`
+   * — a draw-count parameter, NOT a geometry rebuild or material/pipeline
+   * recompile (which would invalidate WebGPU bind groups → black screen). The
+   * instance buffer was spatially shuffled at build time, so the dropped blades
+   * are a uniform sample and the field sparsens evenly. Used by the adaptive
+   * perf-shed so weak hardware keeps a thinner grass field instead of a bare
+   * terrain (we never hide it outright).
+   */
+  setDensityFactor(f) {
+    if (!this.geometry) return;
+    const k = Math.max(0, Math.min(this.count, Math.round(this.count * f)));
+    this.geometry.instanceCount = k;
   }
 
   /** Day/night tint (TimeOfDay.applyInstant) — normalised against the day ref. */
