@@ -2057,6 +2057,18 @@ export class App extends EventTarget {
       this._snowSeenPersisted = true;
       localStorage.setItem("karan-portfolio:snow-seen", "1");
     }
+    // Winter outfit follows the snow blanket with hysteresis: dress once the
+    // ground is visibly whitening (cov ≥ 0.4), undress only when the melt is
+    // nearly done (cov ≤ 0.12) so the swap never flickers near a threshold.
+    // The GLB prefetches as soon as any snow phase starts — the 30s onset is
+    // plenty of lead time. set() is idempotent, safe to call every tick.
+    const outfits = this.player?.character?.outfits;
+    if (outfits) {
+      const cov = this.weather?.coverage ?? 0;
+      if (snowActive) outfits.prefetch();
+      if (cov >= 0.4) outfits.set('snow');
+      else if (cov <= 0.12) outfits.set('default');
+    }
     this.windLines.update(scaledDelta, this.player.position);
     // Leaves only fall once released (~8s post-spawn) and never while it snows —
     // autumn drift and a snowstorm can't share the sky.

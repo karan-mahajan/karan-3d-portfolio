@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { FootIK } from './FootIK.js';
+import { FootIK, SNOW_RISE } from './FootIK.js';
+import { OutfitSwap } from './OutfitSwap.js';
 
 const TARGET_HEIGHT = 1.7;
 const AVATAR_GLB = '/models/character/avatar.glb';
@@ -8,7 +9,7 @@ const AVATAR_GLB = '/models/character/avatar.glb';
 // aerial/special clips (jump, backflip, cartwheel, dance, sit, lava death…)
 // play untouched so IK never yanks an airborne foot down to the ground.
 const IK_GROUNDED_POSES = new Set([
-  'idle', 'walking', 'walkingBackwards', 'running', 'crouchWalk', 'startWalking',
+  'idle', 'breathingIdle', 'walking', 'walkingBackwards', 'running', 'crouchWalk',
 ]);
 // Foot-above-ground distance (m) over which IK fades to 0, so walking off a
 // ledge (still in the 'walking' clip) releases the planting smoothly.
@@ -17,7 +18,18 @@ const IK_AIR_FADE = 0.35;
 // Each entry: a GLB whose first animation clip is extracted and renamed to
 // `action`. The mesh inside is discarded — only the AnimationClip is kept.
 const AVATURN_CLIPS = [
-  { action: 'running',         url: '/models/character/animations/running-avaturn.glb' },
+  // Core locomotion set (2026-06-09 batch) — Mixamo exports whose tracks
+  // already use bare Avaturn bone names, so they bind without retargeting.
+  // The avatar GLB itself is a clean T-pose; 'idle' comes from this list.
+  // breathingIdle is NOT the base idle — Player plays it for a few seconds
+  // as a catch-breath when the player stops from a run, then settles to idle.
+  { action: 'idle',            url: '/models/character/animations/idle.glb' },
+  { action: 'breathingIdle',   url: '/models/character/animations/breathing-idle.glb' },
+  { action: 'walking',         url: '/models/character/animations/walking.glb' },
+  { action: 'running',         url: '/models/character/animations/running.glb' },
+  // Two in-place jump arcs — Player picks by ground speed at takeoff.
+  { action: 'jumpStanding',    url: '/models/character/animations/jump-standing.glb' },
+  { action: 'jumpMoving',      url: '/models/character/animations/jump-moving.glb' },
   { action: 'crouchWalk',      url: '/models/character/animations/crouch-walk.glb' },
 ];
 
@@ -49,11 +61,7 @@ const DEFERRED_AVATURN_CLIPS = [
 // orientations are preserved because the same FBXLoader that reads them in
 // the app is the one that produced the GLBs.
 const MIXAMO_CLIPS = [
-  { action: 'walking',          url: '/models/character/walking.glb' },
   { action: 'walkingBackwards', url: '/models/character/walking-backwards.glb' },
-  { action: 'jump',             url: '/models/character/jump.glb' },
-  { action: 'standingUp',       url: '/models/character/standing-up.glb' },
-  { action: 'startWalking',     url: '/models/character/start-walking.glb' },
   // Intro cinematic: looping mid-air descent + one-shot superhero landing.
   // Root motion is stripped (like all clips) so IntroCinematic drives the
   // actual fall height; the landing plays in-place at the spawn point.
@@ -84,6 +92,38 @@ function stripRootMotion(clip) {
 }
 
 /**
+ * Some Mixamo FBX→GLB conversions are authored in Z-up armature space: the
+ * clip carries a constant -90° X rotation track on the "Armature" node and
+ * the hips tracks live in that rotated frame. Our avatar rig is Y-up with an
+ * identity Armature, and update() pins the hips to the Y-up bind position —
+ * under a rotated Armature that pin puts the hips at ground level (body sinks
+ * waist-deep, foot IK folds the legs trying to compensate). Bake the armature
+ * rotation into the hips tracks and drop the Armature tracks so every clip
+ * plays in the avatar's Y-up space. Clips without an Armature rotation track
+ * pass through untouched.
+ */
+function normalizeClipUpAxis(clip) {
+  const armRot = clip.tracks.find((t) => t.name === 'Armature.quaternion');
+  if (!armRot) return clip;
+  const q = new THREE.Quaternion().fromArray(armRot.values, 0).normalize();
+  const tmpQ = new THREE.Quaternion();
+  const tmpV = new THREE.Vector3();
+  for (const track of clip.tracks) {
+    if (track.name === 'Hips.quaternion') {
+      for (let i = 0; i < track.values.length; i += 4) {
+        tmpQ.fromArray(track.values, i).premultiply(q).toArray(track.values, i);
+      }
+    } else if (track.name === 'Hips.position') {
+      for (let i = 0; i < track.values.length; i += 3) {
+        tmpV.fromArray(track.values, i).applyQuaternion(q).toArray(track.values, i);
+      }
+    }
+  }
+  clip.tracks = clip.tracks.filter((t) => !t.name.startsWith('Armature.'));
+  return clip;
+}
+
+/**
  * Mixamo FBX exports name bones like "mixamorigHips" (or "mixamorig:Hips").
  * Avaturn's rig uses the bare Mixamo convention ("Hips"). Stripping the
  * prefix lets AnimationMixer bind Mixamo tracks onto the Avaturn skeleton.
@@ -96,9 +136,46 @@ function retargetMixamoToAvaturn(clip) {
 }
 
 /**
- * Avaturn avatar (GLB) + a mix of Avaturn-native and Mixamo-retargeted clips
- * driven by a single AnimationMixer. The avatar's embedded "Animation" clip
- * serves as the idle.
+ * Correct each rotation track for the difference between the CLIP skeleton's
+ * rest pose and the avatar's. Clip GLBs carry their own armature, and its
+ * joint rest orientations differ from the Avaturn rig by a few degrees
+ * (spine/neck/shoulders) — raw track copy stacks those errors down the chain
+ * into a puffed-out chest, tilted head and twisted arms. Rebase each key as
+ * q' = restTarget * restSource⁻¹ * q so the motion is replayed relative to
+ * OUR bind pose. Identical rests → identity correction (skipped).
+ */
+function rebaseClipToBind(clip, sourceRoot, targetRoot) {
+  if (!sourceRoot || !targetRoot) return clip;
+  const srcRest = new Map();
+  sourceRoot.traverse((o) => srcRest.set(o.name.replace(/^mixamorig:?/, ''), o.quaternion));
+  const dstRest = new Map();
+  targetRoot.traverse((o) => {
+    if (o.isBone) dstRest.set(o.name, o.quaternion);
+  });
+  const corr = new THREE.Quaternion();
+  const tmp = new THREE.Quaternion();
+  for (const track of clip.tracks) {
+    if (!track.name.endsWith('.quaternion')) continue;
+    const bone = track.name.slice(0, -'.quaternion'.length);
+    // Hips lives under the (possibly Z-up) Armature frame handled by
+    // normalizeClipUpAxis; its residual rest delta is <0.5°, so leave it.
+    if (bone === 'Hips' || bone === 'Armature') continue;
+    const qs = srcRest.get(bone);
+    const qt = dstRest.get(bone);
+    if (!qs || !qt) continue;
+    corr.copy(qt).multiply(tmp.copy(qs).invert());
+    if (Math.abs(2 * Math.acos(Math.min(1, Math.abs(corr.w)))) < 0.003) continue;
+    for (let i = 0; i < track.values.length; i += 4) {
+      tmp.fromArray(track.values, i).premultiply(corr).toArray(track.values, i);
+    }
+  }
+  return clip;
+}
+
+/**
+ * Avaturn avatar (GLB, clean T-pose) + a mix of bare-named and
+ * Mixamo-retargeted clips driven by a single AnimationMixer. The idle is the
+ * breathing-idle clip from AVATURN_CLIPS, not an embedded animation.
  */
 export class Character {
   constructor(loader, quality = {}) {
@@ -154,6 +231,13 @@ export class Character {
         const apply = (m) => {
           if (!m) return;
           if (m.envMapIntensity !== undefined) m.envMapIntensity = 0.6;
+          // Hair is thin alpha cards — FrontSide makes it vanish whenever the
+          // camera sees its back faces (low camera angles, swimming). Keep it
+          // DoubleSide; only solid body/clothing gets the FrontSide treatment.
+          if (/hair/i.test(child.name) || /hair/i.test(m.name ?? '')) {
+            m.side = THREE.DoubleSide;
+            return;
+          }
           // Force front-side only. Avaturn ships some clothing as DoubleSide
           // (jackets, hair planes); when the third-person camera momentarily
           // clips inside the body — e.g. when wading into a pool and
@@ -198,15 +282,13 @@ export class Character {
     // quality flag is missing). Built here so it shares the loaded bones.
     if (this._footIKEnabled) this.footIK = new FootIK(this.mesh);
 
+    // Weather outfit (winter clothes during snow) — second GLB grafted onto
+    // this same skeleton, revealed by a frost-line wipe. App drives it from
+    // the WeatherDirector's coverage.
+    this.outfits = new OutfitSwap(this, this.loader);
+
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.mixer.addEventListener('finished', this.#onActionFinished);
-
-    // Idle: the GLB's embedded animation is authored for this exact rig.
-    if (gltf.animations?.length) {
-      const idleClip = stripRootMotion(gltf.animations[0]);
-      idleClip.name = 'idle';
-      this.actions.idle = this.mixer.clipAction(idleClip);
-    }
 
     // Avaturn-native clips: each GLB ships its own skeleton + one anim. We
     // discard the mesh and just bind the clip onto our existing mixer (bone
@@ -214,12 +296,14 @@ export class Character {
     const avaturnResults = await Promise.allSettled(
       AVATURN_CLIPS.map(async ({ action, url }) => {
         const g = await this.loader.loadGLTF(url);
-        return { action, clip: g.animations?.[0] };
+        return { action, clip: g.animations?.[0], rig: g.scene };
       }),
     );
     for (const r of avaturnResults) {
       if (r.status !== 'fulfilled' || !r.value.clip) continue;
-      const { action, clip } = r.value;
+      const { action, clip, rig } = r.value;
+      rebaseClipToBind(clip, rig, this.mesh);
+      normalizeClipUpAxis(clip);
       stripRootMotion(clip);
       clip.name = action;
       this.actions[action] = this.mixer.clipAction(clip);
@@ -230,18 +314,28 @@ export class Character {
     const mixamoResults = await Promise.allSettled(
       MIXAMO_CLIPS.map(async ({ action, url, keepRoot }) => {
         const g = await this.loader.loadGLTF(url);
-        return { action, clip: g.animations?.[0], keepRoot };
+        return { action, clip: g.animations?.[0], keepRoot, rig: g.scene };
       }),
     );
     for (const r of mixamoResults) {
       if (r.status !== 'fulfilled' || !r.value.clip) continue;
-      const { action, clip, keepRoot } = r.value;
+      const { action, clip, keepRoot, rig } = r.value;
+      retargetMixamoToAvaturn(clip);
+      rebaseClipToBind(clip, rig, this.mesh);
+      normalizeClipUpAxis(clip);
       // keepRoot clips (e.g. the landing) preserve their hips translation so the
       // crouch reads correctly; everything else is flattened to in-place.
       if (!keepRoot) stripRootMotion(clip);
-      retargetMixamoToAvaturn(clip);
       clip.name = action;
       this.actions[action] = this.mixer.clipAction(clip);
+    }
+
+    // Fallback idle: if the breathing-idle clip failed to load but the GLB
+    // ships an embedded animation (the old Avaturn export did), use that.
+    if (!this.actions.idle && gltf.animations?.length) {
+      const idleClip = stripRootMotion(gltf.animations[0]);
+      idleClip.name = 'idle';
+      this.actions.idle = this.mixer.clipAction(idleClip);
     }
 
     if (this.actions.idle) {
@@ -326,6 +420,10 @@ export class Character {
     // play (e.g. waving played at 0.3× because the player stopped mid-walk).
     next.reset().fadeIn(fade).play();
     next.timeScale = 1;
+    // Optional playhead offset — jumps skip their authored anticipation crouch
+    // because the physics impulse has already left the ground by the time the
+    // clip starts.
+    if (opts.startAt) next.time = opts.startAt;
 
     this.currentName = name;
     this.currentAction = next;
@@ -340,8 +438,10 @@ export class Character {
         const g = await this.loader.loadGLTF(cfg.url);
         const clip = g.animations?.[0];
         if (!clip) return false;
-        stripRootMotion(clip);
         if (cfg.retarget) retargetMixamoToAvaturn(clip);
+        rebaseClipToBind(clip, g.scene, this.mesh);
+        normalizeClipUpAxis(clip);
+        stripRootMotion(clip);
         clip.name = name;
         this.actions[name] = this.mixer.clipAction(clip);
         return true;
@@ -432,13 +532,21 @@ export class Character {
    */
   solveFootIK(terrain, snowCoverage = 0) {
     if (!this.footIK?.valid || !terrain) return;
+    // Stand ON the snow blanket: the IK raises the ankle targets by the snow
+    // surface rise, so the body must ride up by the same amount or the hips
+    // stay at bare-ground level and the knees fold. Applied before the pose
+    // gates so it persists through one-shots/jumps too (coverage itself ramps
+    // over ~30s, so no extra smoothing is needed).
+    this.root.position.y = snowCoverage * SNOW_RISE;
     if (this._oneShot || !IK_GROUNDED_POSES.has(this.currentName)) return;
 
     const parent = this.root.parent;
     if (!parent) return;
     // Fade IK out as the body lifts off the ground (e.g. stepping off a ledge
     // mid-walk) so the planting releases instead of stretching the legs down.
-    const groundY = terrain.heightAt(parent.position.x, parent.position.z);
+    // The snow rise counts as ground here, not as an air gap.
+    const groundY = terrain.heightAt(parent.position.x, parent.position.z)
+      + snowCoverage * SNOW_RISE;
     const footY = parent.position.y + this.lowestContactLocalY();
     const airGap = Math.max(0, footY - groundY);
     const t = Math.min(1, airGap / IK_AIR_FADE);
@@ -451,6 +559,7 @@ export class Character {
   update(delta) {
     if (!this.mixer) return;
     this.mixer.update(delta);
+    this.outfits?.update(delta);
     // Charge-hold: once the playhead reaches the wind-up frame, pin it there
     // and pause until releaseHold(). Re-pinning each frame is idempotent.
     if (this._chargeHold) {

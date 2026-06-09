@@ -171,6 +171,18 @@ physics.step → player.update → playerCamera.update → discovery.update
   on trophy click or `J` (completion %, per-category badges, NEW badge, 100%
   celebration). Persists to localStorage. App tick feeds it
   player pos / moving / running / grounded / inWater / mode / isRaining.
+- **Character animation** (`Player/Character.js`): Avaturn T-pose avatar +
+  bare-named clip GLBs; base idle = `idle.glb`; `breathing-idle.glb` plays
+  ONLY ~4s after stopping from a run (no embedded-anim idle, no look-around
+  gesture, no startWalking bridge — all removed 2026-06-09). Every clip is
+  rest-pose-rebased (`rebaseClipToBind`) AND Z-up-normalized
+  (`normalizeClipUpAxis`) at load — skipping either twists arms / sinks the
+  body. WALK/RUN speeds track the clips' measured natural paces (1.65 /
+  4.43 m/s) — keep within ~20% or locomotion reads frantic. Jumps: two
+  in-place arcs picked by takeoff speed; knobs in `Player.JUMP_ANIM`.
+- **Snow outfit** (`Player/OutfitSwap.js`): `avatar-snow.glb` meshes grafted
+  onto the live skeleton (bones matched by name), revealed by a TSL frost-line
+  wipe; App tick swaps at weather coverage ≥0.4, back at ≤0.12.
 - **Tutorial** (`UI/Tutorial.js`): first-visit coachmarks for WASD/joystick,
   drag-to-look, zoom. Detects look/zoom from raw input events, NOT camera
   state (camera-controls smoothes and gives false positives).

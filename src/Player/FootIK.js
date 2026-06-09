@@ -27,7 +27,9 @@ const EPS = 1e-4;
 // sole reads planted without clipping into terrain micro-noise.
 const CONTACT_LIFT = 0.02;
 // Snow surface rise the ground shader applies (terrainSnowDrift in GlbV3World).
-const SNOW_RISE = 0.16;
+// Exported: Character lifts the whole body by the same amount so the player
+// stands ON the blanket — feet-only lift folds the knees by exactly this.
+export const SNOW_RISE = 0.16;
 // Cap how far the foot tilts toward a slope normal, so steep ground doesn't
 // twist the ankle into a break.
 const MAX_FOOT_TILT = THREE.MathUtils.degToRad(20);

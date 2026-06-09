@@ -5,8 +5,12 @@ import * as THREE from 'three/webgpu';
  * Pure logic — no physics yet (Rapier lands in Step 7).
  */
 export class PlayerController {
-  static WALK_SPEED = 3.6;
-  static RUN_SPEED = 7.2;
+  // Tuned to sit just above the locomotion clips' measured natural paces
+  // (walk 1.65 m/s, run 4.43 m/s — see Player.ANIM_NATURAL_SPEED) so the
+  // animations play near 1× instead of being overdriven into a frantic
+  // scramble. Raising these is fine, but keep them within ~20% of natural.
+  static WALK_SPEED = 1.9;
+  static RUN_SPEED = 5.0;
   // Speed ramps instead of snapping. The numbers keep controls responsive
   // while leaving enough pickup / release time for the animation blend to
   // read as weight instead of a hard velocity step.

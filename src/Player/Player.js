@@ -10,7 +10,6 @@ export class Player {
   static RADIUS = 0.38;
   static GRAVITY = -25;
   static JUMP_VELOCITY = 8.5;
-  static IDLE_LOOK_AROUND_SECONDS = 8;
   // Ocean/pond interaction. Wading is gated on actual terrain water-depth
   // (ground dipping below the water surface), NOT a radial ring — the v3
   // island is r≈60 and the legacy r=120 ring never triggered, so ponds/river
@@ -22,17 +21,33 @@ export class Player {
   static WATER_SLOWDOWN_PER_M = 0.45;
   static WATER_SLOWDOWN_MIN = 0.15;
 
-  // Natural foot-speed of each locomotion clip in m/s (estimated from typical
-  // Mixamo / Avaturn pacing; the position track was stripped on import so we
-  // can't measure at runtime). Used as `timeScale = currentSpeed / natural`
-  // so feet plant on the ground instead of skating. Tune in-game if the foot
-  // still slides — increase the value if feet move too fast, decrease if too
-  // slow. See CLAUDE.md / fix-character-movement notes.
+  // Natural foot-speed of each locomotion clip in m/s, MEASURED from the
+  // source clips' hip root-motion (forward travel / duration) before the
+  // position tracks are stripped on import: walking 1.7m over 1.03s, running
+  // 3.1m over 0.70s. Used as `timeScale = currentSpeed / natural` so feet
+  // plant on the ground instead of skating. PlayerController WALK/RUN speeds
+  // are tuned to sit near these so playback stays close to 1× (the old
+  // 3.6/7.2 m/s speeds overdrove the clips ~1.5× and read as frantic).
   static ANIM_NATURAL_SPEED = {
-    walking: 2.3,
-    running: 5.2,
+    walking: 1.65,
+    running: 4.43,
     crouchWalk: 1.35,
   };
+  // Jump clips are full authored arcs (crouch→launch→air→land, ~2s) while the
+  // physics arc is snappy (~0.7s airborne). startAt skips the anticipation
+  // crouch (the impulse already happened); timeScale compresses the rest so
+  // the clip's airborne stretch roughly matches the physics airtime. Landing
+  // crossfades back to locomotion the moment physics touches down.
+  static JUMP_ANIM = {
+    jumpStanding: { startAt: 0.45, timeScale: 1.35 },
+    jumpMoving:   { startAt: 0.40, timeScale: 1.35 },
+  };
+  // Ground speed at takeoff above which the running-style jump plays.
+  static JUMP_MOVING_SPEED = 2.5;
+  // Stopping from a RUN plays the heavier breathing idle this long (catching
+  // breath), then settles into the calm base idle. Stopping from a walk goes
+  // straight to the calm idle.
+  static BREATH_AFTER_RUN_SECONDS = 4;
   // Soft clamp at the far edge of the world.glb terrain. TODO Phase 5:
   // tighten this once WorldWater can identify the actual ocean meshes.
   // Original v1 island used 52 (island ended at r=45, ocean floor at r=57).
@@ -61,7 +76,14 @@ export class Player {
     this._verticalVelocity = 0;
     this._grounded = true;
     this._jumpLatched = false;
-    this._idleTimer = 0;
+    // Which jump clip this jump uses — latched at takeoff (so mid-air speed
+    // changes can't flip the animation) and cleared on landing.
+    this._jumpClip = null;
+    // Continuous airborne seconds; brief ground-contact blips (stepping off
+    // rocks) stay under the falling-clip threshold so the pose doesn't flicker.
+    this._airTime = 0;
+    // Seconds spent in the post-run catch-breath idle.
+    this._breathTimer = 0;
     this._state = 'spawn';
     // Most recent physics sample; updateVisual() reads it for animation state
     // since it runs decoupled from (and possibly without) a physics substep.
@@ -191,9 +213,6 @@ export class Player {
       // animations remain loaded but aren't auto-triggered by WASD. Only the
       // TARGET is set here; updateVisual() smooths toward it once per frame.
       this._targetYaw = sample.facing;
-      this._idleTimer = 0;
-    } else {
-      this._idleTimer += delta;
     }
 
     if (this.body) {
@@ -244,6 +263,8 @@ export class Player {
 
     this.#applySlopeTilt();
 
+    this._airTime = this._grounded ? 0 : this._airTime + frameDelta;
+    if (this._state === 'breathingIdle') this._breathTimer += frameDelta;
     if (this._lastSample) this.#updateAnimationState(this._lastSample);
 
     if (this.character) this.character.update(frameDelta);
@@ -304,6 +325,7 @@ export class Player {
     const pressing = this.controller.isJumping;
     if (pressing && !this._jumpLatched && this.body.grounded) {
       this.body.jump(Player.JUMP_VELOCITY);
+      this.#latchJumpClip(sample);
     }
     this._jumpLatched = pressing;
 
@@ -332,6 +354,7 @@ export class Player {
     if (pressing && !this._jumpLatched && this._grounded) {
       this._verticalVelocity = Player.JUMP_VELOCITY;
       this._grounded = false;
+      this.#latchJumpClip(sample);
     }
     this._jumpLatched = pressing;
 
@@ -348,8 +371,22 @@ export class Player {
   }
 
   /**
-   * State machine: idle, walking, running, walkingBackwards, standingWalkRight,
-   * jump, lookingAround. startWalking is a brief one-shot bridge from idle.
+   * Latch the jump animation for this takeoff: a running-style leap when
+   * moving, a vertical hop from standstill. Called at the exact frame the
+   * jump impulse fires so the choice can't flip mid-air.
+   */
+  #latchJumpClip(sample) {
+    this._jumpClip = (sample?.speed ?? 0) >= Player.JUMP_MOVING_SPEED
+      ? 'jumpMoving'
+      : 'jumpStanding';
+  }
+
+  /**
+   * State machine: idle, walking, running, walkingBackwards, crouchWalk,
+   * jumpStanding/jumpMoving (latched at takeoff), falling. The idle is ONLY
+   * the breathing clip — no periodic look-around gesture and no startWalking
+   * bridge (both removed 2026-06-09: the gesture read as a second restless
+   * idle, the bridge foot-slid against the fast physics acceleration).
    *
    * Non-interruptible one-shots block all transitions. Cosmetic one-shots
    * (lookingAround / pointing / waving) are interrupted by movement so the
@@ -375,39 +412,63 @@ export class Player {
 
     let nextState;
     if (!this._grounded) {
-      nextState = 'jump';
+      if (this._jumpClip) {
+        // Deliberate jump — play the latched arc.
+        nextState = this._jumpClip;
+      } else if (this._airTime > 0.3) {
+        // Walked off a ledge and genuinely falling.
+        nextState = 'falling';
+      } else {
+        // Sub-300ms airborne blip (stepping off a rock) — hold the current
+        // pose instead of flashing a jump/fall clip.
+        return;
+      }
     } else if (sample.moving) {
       if (this.controller.isCrouching && this.character.actions.crouchWalk) nextState = 'crouchWalk';
       else if (this.controller.isRunning) nextState = 'running';
       else nextState = 'walking';
-    } else if (this._idleTimer >= Player.IDLE_LOOK_AROUND_SECONDS) {
-      this._idleTimer = 0;
-      this.character.play('lookingAround', { once: true, then: 'idle', interruptible: true });
-      this._state = 'lookingAround';
-      return;
+    } else if (this._state === 'running' && this.character.actions.breathingIdle) {
+      // Fresh stop from a RUN — catch breath before settling to the calm idle.
+      nextState = 'breathingIdle';
+      this._breathTimer = 0;
+    } else if (this._state === 'breathingIdle'
+      && this._breathTimer < Player.BREATH_AFTER_RUN_SECONDS) {
+      nextState = 'breathingIdle'; // still catching breath
     } else {
       nextState = 'idle';
     }
 
+    // Landed — release the takeoff latch so the next airborne frame without a
+    // jump press reads as a fall, and so jump→locomotion can crossfade now.
+    if (this._grounded && this._jumpClip && nextState !== this._jumpClip) {
+      this._jumpClip = null;
+    }
+
     if (nextState !== this._state) {
-      // Idle → walking: brief startWalking bridge for natural pickup.
-      if (this._state === 'idle' && nextState === 'walking' && this.character.actions.startWalking) {
-        this._state = 'walking'; // record the target so we don't re-trigger
-        this.character.play('startWalking', {
-          once: true,
-          then: 'walking',
-          interruptible: true,
-          fade: 0.15,
-        });
+      // Jump takeoff: skip the clip's authored anticipation crouch and
+      // compress the arc to the physics airtime, then let landing crossfade
+      // straight back into whatever locomotion the player is holding.
+      const jumpCfg = Player.JUMP_ANIM[nextState];
+      if (jumpCfg) {
+        this._state = nextState;
+        this.character.play(nextState, { fade: 0.12, startAt: jumpCfg.startAt });
+        const action = this.character.actions[nextState];
+        if (action) action.timeScale = jumpCfg.timeScale;
         return;
       }
+      // NO startWalking bridge from idle — the clip is a slow authored
+      // acceleration while the body reaches full speed in ~0.15s, so it foot-
+      // slides badly. A direct crossfade + the per-frame timeScale ramp below
+      // gives the same pickup as the (good) run→walk transition.
       // Locomotion → idle reads smoother with a slightly longer crossfade;
       // the walk clip's timeScale is also approaching zero by this point,
-      // so the longer fade hides the last-frame freeze.
+      // so the longer fade hides the last-frame freeze. The breath → calm-idle
+      // settle is slower still so the wind-down feels gradual.
       const exitingLoco = (this._state === 'walking' || this._state === 'running' || this._state === 'crouchWalk')
-        && nextState === 'idle';
+        && (nextState === 'idle' || nextState === 'breathingIdle');
+      const settling = this._state === 'breathingIdle' && nextState === 'idle';
       this._state = nextState;
-      this.character.play(nextState, exitingLoco ? { fade: 0.3 } : undefined);
+      this.character.play(nextState, settling ? { fade: 0.6 } : exitingLoco ? { fade: 0.3 } : undefined);
     }
 
     // Per-frame timeScale on the active locomotion clip so foot speed
