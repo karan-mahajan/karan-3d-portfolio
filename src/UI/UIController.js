@@ -1,3 +1,5 @@
+import { setQualityPreference, autoQualityTier } from '../Utils/Quality.js';
+
 /**
  * UI redesign controller.
  *
@@ -53,6 +55,7 @@ export class UIController {
     this.#reparentModuleButtons();
     this.#wireBottomLeftExpander();
     this.#wireControlsPanel();
+    this.#wireQualityOptions();
 
     if (this.isMobile) {
       this.#updateWelcomeHint();
@@ -158,6 +161,38 @@ export class UIController {
       e.stopPropagation();
       panel.classList.add('hidden');
       this.audio?.playToggle?.();
+    });
+  }
+
+  // Graphics-quality picker (in the controls panel). The current tier is baked
+  // at boot from a saved choice or auto-detection (see Utils/Quality.js), so a
+  // change can't be applied live without black-screening the consolidated
+  // materials — we persist the choice and reload. "Auto" clears the override
+  // and shows which tier detection resolves to so the label isn't a mystery.
+  #wireQualityOptions() {
+    const group = document.getElementById('quality-options');
+    if (!group) return;
+
+    const saved = window.__quality?.usingSaved ? window.__quality.name : 'auto';
+    const note = document.getElementById('quality-auto-note');
+    if (note) {
+      const auto = window.__quality?.auto ?? autoQualityTier();
+      note.textContent = saved === 'auto' ? `(detected: ${auto})` : '';
+    }
+
+    group.querySelectorAll('.quality-opt').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.quality === saved);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const choice = btn.dataset.quality;
+        const current = window.__quality?.usingSaved
+          ? window.__quality.name
+          : 'auto';
+        if (choice === current) return; // no change → no reload
+        this.audio?.playToggle?.();
+        setQualityPreference(choice);
+        window.location.reload();
+      });
     });
   }
 

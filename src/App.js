@@ -12,8 +12,8 @@ import { Thunderstorm } from "./Effects/Thunderstorm.js";
 import { Water } from "./Effects/Water.js";
 import { WindLines } from "./Effects/WindLines.js";
 import { Physics } from "./Physics/Physics.js";
-import { Player } from "./Player/Player.js";
 import { Character } from "./Player/Character.js";
+import { Player } from "./Player/Player.js";
 import { PlayerCamera } from "./Player/PlayerCamera.js";
 import { ActionPrompts } from "./Portfolio/ActionPrompts.js";
 import { ContactBoard } from "./Portfolio/ContactBoard.js";
@@ -65,6 +65,7 @@ import { Grass } from "./World/Grass.js";
 import { Lava } from "./World/Lava.js";
 import { Lights } from "./World/Lights.js";
 import { DUSK } from "./World/Palette.js";
+import { initFog, buildSceneFogNode } from "./World/FogState.js";
 import { Sun } from "./World/Sun.js";
 import { TimeOfDay } from "./World/TimeOfDay.js";
 import { WeatherDirector } from "./World/WeatherDirector.js";
@@ -265,6 +266,15 @@ export class App extends EventTarget {
       playerGroup: null, // wired after player loads in boot()
       character: null, // wired after player loads in boot()
     });
+
+    // View-direction scene fog (FogState): overrides the flat THREE.Fog so
+    // distant geometry dissolves into the actual sky-gradient band behind it.
+    // initFog must run BEFORE the world materials are built (in boot → world
+    // load), because the faked-light world material reads the fog colour node at
+    // build time. THREE.Fog is kept on the scene only as a typed reference for
+    // code that reads scene.fog; the node is what renders.
+    initFog(this.world.sky.material.uniforms);
+    this.scene.fogNode = buildSceneFogNode();
 
     // Achievements — persistent counter system + toast + side panel. Built
     // here so all modules already exist (Rain, Thunderstorm, TimeOfDay,
@@ -787,7 +797,7 @@ export class App extends EventTarget {
       audio: this.audio,
     });
 
-    // Floating magical résumé book — the new home for the résumé (replaces the
+    // Floating magical resume book — the new home for the resume (replaces the
     // old E-lectern flat panel). Placed in the NW quadrant; hovers, glows and
     // throws a light-shaft beacon so it reads as a "go here" attraction.
     this.resumeBook = new ResumeBook({
@@ -977,7 +987,10 @@ export class App extends EventTarget {
       console.warn("[App] background shader warm failed:", err),
     );
     await Promise.race([
-      Promise.all([this.#waitFrames(prewarm.frames), this.shaderPrewarmPromise]),
+      Promise.all([
+        this.#waitFrames(prewarm.frames),
+        this.shaderPrewarmPromise,
+      ]),
       new Promise((r) => setTimeout(r, prewarm.capMs)),
     ]);
 
@@ -1920,16 +1933,28 @@ export class App extends EventTarget {
       this.actionPrompts.tick(this.player.position, frameDelta);
     if (this.interaction && !inGarden)
       this.interaction.tick(this.player.position);
-    if (this.skillSphere && this.#shouldTickSection("skills", this.skillSphere)) {
+    if (
+      this.skillSphere &&
+      this.#shouldTickSection("skills", this.skillSphere)
+    ) {
       this.skillSphere.update(frameDelta);
     }
-    if (this.projectsHut && this.#shouldTickSection("projects", this.projectsHut)) {
+    if (
+      this.projectsHut &&
+      this.#shouldTickSection("projects", this.projectsHut)
+    ) {
       this.projectsHut.update(frameDelta);
     }
-    if (this.contactBoard && this.#shouldTickSection("contact", this.contactBoard)) {
+    if (
+      this.contactBoard &&
+      this.#shouldTickSection("contact", this.contactBoard)
+    ) {
       this.contactBoard.update(elapsed);
     }
-    if (this.experience && this.#shouldTickSection("experience", this.experience, 58))
+    if (
+      this.experience &&
+      this.#shouldTickSection("experience", this.experience, 58)
+    )
       this.experience.update(
         frameDelta,
         this.player.position,

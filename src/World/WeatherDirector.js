@@ -1,5 +1,5 @@
-import * as THREE from "three/webgpu";
 import { snowCoverage, snowFall } from "./SnowState.js";
+import { fogWhiten } from "./FogState.js";
 
 /**
  * Drives the automatic snow cycle. The portfolio has no other weather
@@ -28,7 +28,7 @@ const approach = (a, b, rate, delta) =>
   a + (b - a) * Math.min(1, Math.max(0, rate * delta));
 
 export class WeatherDirector {
-  /** @param {{ fog?: THREE.Fog|null }} [o] */
+  /** @param {{ fog?: object|null }} [o] fog kept for back-compat; unused now. */
   constructor({ fog = null } = {}) {
     this.fog = fog;
     this.enabled = true;
@@ -37,8 +37,8 @@ export class WeatherDirector {
     this._wait = FIRST_DELAY;
     this._cov = 0;
     this._fall = 0;
-    this._baseFog = fog ? fog.color.clone() : null;
-    this._winterFog = new THREE.Color(0xc9dee9);
+    // Winter fog tint now lives in FogState (fogWinterColor); WeatherDirector
+    // only drives the whiten amount (see #applyFog).
   }
 
   /** True once snow is visibly falling or laying — for achievements / HUD. */
@@ -114,12 +114,10 @@ export class WeatherDirector {
   }
 
   #applyFog() {
-    if (!this.fog || !this._baseFog) return;
-    // While there's no snow, TimeOfDay owns the fog — keep snapshotting it.
-    if (this._cov < 0.02) {
-      this._baseFog.copy(this.fog.color);
-      return;
-    }
-    this.fog.color.copy(this._baseFog).lerp(this._winterFog, this._cov * 0.7);
+    // The scene fog is now a view-direction node ([FogState.js]) whose colour is
+    // the live sky gradient; winter just lerps that toward the cold tint. One
+    // uniform, no per-frame base-colour snapshotting (the gradient is already
+    // live), so day/night changes are picked up for free and never fought over.
+    fogWhiten.value = this._cov < 0.02 ? 0 : this._cov * 0.7;
   }
 }

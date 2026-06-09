@@ -161,10 +161,14 @@ export class PostFX {
 
     // Grade uniforms (live-tunable). Conservative defaults.
     this.#grade = {
-      contrast: uniform(quality.gradeContrast ?? 1.08),
-      saturation: uniform(quality.gradeSaturation ?? 1.10),
-      splitStrength: uniform(quality.gradeSplitStrength ?? 0.06),
-      vignette: uniform(quality.gradeVignette ?? 0.22),
+      // Pushed from the old near-identity (1.08/1.10/0.06) so the grade is
+      // actually visible: more depth + richer colour. Split-tone eased a touch
+      // (shadows now get real per-phase colour from ShadowTint.js, so the grade
+      // no longer has to fake it — it just warms highlights).
+      contrast: uniform(quality.gradeContrast ?? 1.11),
+      saturation: uniform(quality.gradeSaturation ?? 1.16),
+      splitStrength: uniform(quality.gradeSplitStrength ?? 0.05),
+      vignette: uniform(quality.gradeVignette ?? 0.24),
     };
 
     this.#buildOutputNode();

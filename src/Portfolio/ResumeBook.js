@@ -1,14 +1,27 @@
-import gsap from 'gsap';
-import * as THREE from 'three/webgpu';
-import { MeshStandardNodeMaterial, MeshBasicNodeMaterial } from 'three/webgpu';
+import gsap from "gsap";
 import {
-  Fn, attribute, uniform, varying, vec3, vec4, float,
-  positionGeometry, uv, sin, cos, length, smoothstep, mix,
-  modelViewMatrix, cameraProjectionMatrix,
-} from 'three/tsl';
+  Fn,
+  attribute,
+  cameraProjectionMatrix,
+  cos,
+  float,
+  length,
+  mix,
+  modelViewMatrix,
+  positionGeometry,
+  sin,
+  smoothstep,
+  uniform,
+  uv,
+  varying,
+  vec3,
+  vec4,
+} from "three/tsl";
+import * as THREE from "three/webgpu";
+import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from "three/webgpu";
 
 /**
- * The floating magical résumé book.
+ * The floating magical resume book.
  *
  * Phase 1 (this file) is the in-world PROP only: a dark-leather + gold-trim
  * book that hovers in the air, leaks warm light, throws a tall glowing light
@@ -25,18 +38,18 @@ import {
 
 // Book dimensions (metres), lying flat — thickness runs along local +Y, the
 // covers are the broad faces, the spine binds the -Z edge.
-const W = 0.64;          // width  (local X)
-const D = 0.82;          // page depth/height (local Z)
-const CT = 0.045;        // cover thickness
-const PT = 0.13;         // page-block thickness
+const W = 0.64; // width  (local X)
+const D = 0.82; // page depth/height (local Z)
+const CT = 0.045; // cover thickness
+const PT = 0.13; // page-block thickness
 const TOTAL_THK = PT + 2 * CT;
-const COVER_Y = PT / 2 + CT / 2;   // ± offset of each cover from centre
+const COVER_Y = PT / 2 + CT / 2; // ± offset of each cover from centre
 
-const HOVER_HEIGHT = 1.5;   // book centre height above the ground
-const BOB_AMP = 0.08;       // idle vertical bob
-const SPIN_SPEED = 0.22;    // idle yaw spin (rad/s)
+const HOVER_HEIGHT = 1.5; // book centre height above the ground
+const BOB_AMP = 0.08; // idle vertical bob
+const SPIN_SPEED = 0.22; // idle yaw spin (rad/s)
 
-const BEACON_HEIGHT = 6.0;  // light-shaft length
+const BEACON_HEIGHT = 6.0; // light-shaft length
 const MOTE_COUNT = 28;
 
 const DEFAULT_PROXIMITY = 4.0; // prompt radius (XZ)
@@ -63,18 +76,18 @@ export class ResumeBook {
     this.proximity = DEFAULT_PROXIMITY;
 
     // Idle ↔ focused animation state.
-    this._last = null;       // last elapsed (for dt)
-    this._yaw = 0;           // integrated spin so focus/idle hand off smoothly
-    this._bob = 1;           // bob amplitude scalar (eased to 0 while focused)
-    this._glow = 1;          // emissive/light multiplier (bloom on open)
-    this._beacon = 1;        // beacon opacity multiplier (dimmed while reading)
+    this._last = null; // last elapsed (for dt)
+    this._yaw = 0; // integrated spin so focus/idle hand off smoothly
+    this._bob = 1; // bob amplitude scalar (eased to 0 while focused)
+    this._glow = 1; // emissive/light multiplier (bloom on open)
+    this._beacon = 1; // beacon opacity multiplier (dimmed while reading)
     this._focused = false;
-    this._targetYaw = null;  // yaw that faces the reader while focused
+    this._targetYaw = null; // yaw that faces the reader while focused
 
     // Root that bobs + spins. Beacon, motes and glow disc ride along so the
     // whole artifact reads as one floating object.
     this.group = new THREE.Group();
-    this.group.name = 'resumeBook';
+    this.group.name = "resumeBook";
     this.group.position.set(x, this.hoverY, z);
     scene.add(this.group);
 
@@ -96,7 +109,7 @@ export class ResumeBook {
     const dx = playerPosition.x - this.baseX;
     const dz = playerPosition.z - this.baseZ;
     if (dx * dx + dz * dz <= radius * radius) {
-      return { kind: 'resume', position: this.position };
+      return { kind: "resume", position: this.position };
     }
     return null;
   }
@@ -105,7 +118,7 @@ export class ResumeBook {
 
   #buildBook() {
     const leather = new MeshStandardNodeMaterial({
-      color: new THREE.Color(0x4a1c24),   // dark burgundy leather
+      color: new THREE.Color(0x4a1c24), // dark burgundy leather
       roughness: 0.55,
       metalness: 0.0,
     });
@@ -184,7 +197,14 @@ export class ResumeBook {
   #buildBeacon() {
     const uTime = uniform(0);
     const uBeacon = uniform(1); // dimmed while the book is open for reading
-    const geo = new THREE.CylinderGeometry(0.5, 0.16, BEACON_HEIGHT, 28, 1, true);
+    const geo = new THREE.CylinderGeometry(
+      0.5,
+      0.16,
+      BEACON_HEIGHT,
+      28,
+      1,
+      true,
+    );
     const mat = new MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
@@ -192,11 +212,18 @@ export class ResumeBook {
       blending: THREE.AdditiveBlending,
     });
 
-    const v = uv().y;                              // 0 at base → 1 at top
+    const v = uv().y; // 0 at base → 1 at top
     const pulse = float(0.7).add(sin(uTime.mul(1.6)).mul(0.16));
     // Bright near the book, fading out toward the sky; soft cut at the very base.
-    const fade = v.oneMinus().pow(1.7).mul(smoothstep(0.0, 0.05, v));
-    mat.colorNode = mix(vec3(1.0, 0.78, 0.42), vec3(1.0, 0.96, 0.82), v.oneMinus());
+    const fade = v
+      .oneMinus()
+      .pow(1.7)
+      .mul(smoothstep(0.0, 0.05, v));
+    mat.colorNode = mix(
+      vec3(1.0, 0.78, 0.42),
+      vec3(1.0, 0.96, 0.82),
+      v.oneMinus(),
+    );
     mat.opacityNode = fade.mul(pulse).mul(0.55).mul(uBeacon);
     mat.uniforms = { uTime, uBeacon };
 
@@ -235,13 +262,13 @@ export class ResumeBook {
       -0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0,
     ]);
     const uvs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-    baseGeom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-    baseGeom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    baseGeom.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+    baseGeom.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
     baseGeom.setIndex([0, 1, 2, 0, 2, 3]);
 
     const geo = new THREE.InstancedBufferGeometry();
-    geo.setAttribute('position', baseGeom.attributes.position);
-    geo.setAttribute('uv', baseGeom.attributes.uv);
+    geo.setAttribute("position", baseGeom.attributes.position);
+    geo.setAttribute("uv", baseGeom.attributes.uv);
     geo.setIndex(baseGeom.index);
     geo.instanceCount = MOTE_COUNT;
 
@@ -254,12 +281,12 @@ export class ResumeBook {
       bases[i * 3] = Math.cos(a) * r;
       bases[i * 3 + 1] = -0.1 + Math.random() * 0.7;
       bases[i * 3 + 2] = Math.sin(a) * r;
-      seeds[i * 3] = Math.random() * Math.PI * 2;       // phase
-      seeds[i * 3 + 1] = 0.4 + Math.random() * 0.7;     // speed
-      seeds[i * 3 + 2] = 0.06 + Math.random() * 0.16;   // amplitude
+      seeds[i * 3] = Math.random() * Math.PI * 2; // phase
+      seeds[i * 3 + 1] = 0.4 + Math.random() * 0.7; // speed
+      seeds[i * 3 + 2] = 0.06 + Math.random() * 0.16; // amplitude
     }
-    geo.setAttribute('aBase', new THREE.InstancedBufferAttribute(bases, 3));
-    geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 3));
+    geo.setAttribute("aBase", new THREE.InstancedBufferAttribute(bases, 3));
+    geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 3));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 4);
 
     const uTime = uniform(0);
@@ -269,19 +296,25 @@ export class ResumeBook {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-    const vTwinkle = varying(float(0), 'vMoteTwinkle');
+    const vTwinkle = varying(float(0), "vMoteTwinkle");
 
     mat.vertexNode = Fn(() => {
-      const base = attribute('aBase');
-      const seed = attribute('aSeed');
+      const base = attribute("aBase");
+      const seed = attribute("aSeed");
       const phase = seed.x;
       const speed = seed.y;
       const amp = seed.z;
       const pos = base.toVar();
       pos.x.addAssign(sin(uTime.mul(speed).add(phase)).mul(amp));
-      pos.y.addAssign(sin(uTime.mul(speed.mul(1.4)).add(phase.mul(2.0))).mul(amp.mul(2.0)));
-      pos.z.addAssign(cos(uTime.mul(speed.mul(0.8)).add(phase.mul(1.5))).mul(amp));
-      vTwinkle.assign(float(0.5).add(sin(uTime.mul(2.4).add(phase.mul(4.0))).mul(0.5)));
+      pos.y.addAssign(
+        sin(uTime.mul(speed.mul(1.4)).add(phase.mul(2.0))).mul(amp.mul(2.0)),
+      );
+      pos.z.addAssign(
+        cos(uTime.mul(speed.mul(0.8)).add(phase.mul(1.5))).mul(amp),
+      );
+      vTwinkle.assign(
+        float(0.5).add(sin(uTime.mul(2.4).add(phase.mul(4.0))).mul(0.5)),
+      );
       const view = modelViewMatrix.mul(vec4(pos, 1.0)).toVar();
       view.xy.addAssign(positionGeometry.xy.mul(quadSize));
       return cameraProjectionMatrix.mul(view);
@@ -293,7 +326,7 @@ export class ResumeBook {
     mat.uniforms = { uTime };
 
     const motes = new THREE.Mesh(geo, mat);
-    motes.name = 'resumeBook-motes';
+    motes.name = "resumeBook-motes";
     motes.frustumCulled = false;
     this.motes = motes;
     this.group.add(motes);
@@ -318,7 +351,13 @@ export class ResumeBook {
     const height = TOTAL_THK + 2 * BOB_AMP + 0.1;
     // addStaticCylinder lifts by height/2 internally → pass the bottom Y.
     const bottomY = this.hoverY - height / 2;
-    this.physics.addStaticCylinder(this.baseX, bottomY, this.baseZ, radius, height);
+    this.physics.addStaticCylinder(
+      this.baseX,
+      bottomY,
+      this.baseZ,
+      radius,
+      height,
+    );
   }
 
   // ── Focus / cinematic hooks (driven by Interaction) ────────────────────────
@@ -361,21 +400,30 @@ export class ResumeBook {
   /** Swing the cover open with a warm bloom that flares then settles. */
   playOpen(duration = 0.9) {
     gsap.killTweensOf(this.coverPivot.rotation);
-    gsap.to(this.coverPivot.rotation, { x: -2.3, duration, ease: 'power3.out' });
+    gsap.to(this.coverPivot.rotation, {
+      x: -2.3,
+      duration,
+      ease: "power3.out",
+    });
     gsap.killTweensOf(this);
-    gsap.timeline()
-      .to(this, { _glow: 2.6, duration: 0.35, ease: 'power2.out' })
-      .to(this, { _glow: 1.6, duration: 0.7, ease: 'power2.inOut' });
-    gsap.to(this, { _beacon: 0.18, duration: 0.5, ease: 'power2.out' });
+    gsap
+      .timeline()
+      .to(this, { _glow: 2.6, duration: 0.35, ease: "power2.out" })
+      .to(this, { _glow: 1.6, duration: 0.7, ease: "power2.inOut" });
+    gsap.to(this, { _beacon: 0.18, duration: 0.5, ease: "power2.out" });
   }
 
   /** Reverse: cover shuts, glow dims, beacon returns. */
   playClose(duration = 0.6) {
     gsap.killTweensOf(this.coverPivot.rotation);
-    gsap.to(this.coverPivot.rotation, { x: 0, duration, ease: 'power2.inOut' });
+    gsap.to(this.coverPivot.rotation, { x: 0, duration, ease: "power2.inOut" });
     gsap.killTweensOf(this);
-    gsap.to(this, { _glow: 1, duration, ease: 'power2.inOut' });
-    gsap.to(this, { _beacon: 1, duration: duration + 0.2, ease: 'power2.inOut' });
+    gsap.to(this, { _glow: 1, duration, ease: "power2.inOut" });
+    gsap.to(this, {
+      _beacon: 1,
+      duration: duration + 0.2,
+      ease: "power2.inOut",
+    });
   }
 
   // ── Per-frame ──────────────────────────────────────────────────────────────
