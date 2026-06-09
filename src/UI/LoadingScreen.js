@@ -42,7 +42,6 @@ export class LoadingScreen {
     this.#els = {
       screen: document.getElementById('loading-screen'),
       bar: document.getElementById('loading-bar-fill'),
-      percent: document.getElementById('loading-percent'),
       trivia: document.getElementById('loading-trivia'),
       hint: document.getElementById('loading-hint'),
       refresh: document.getElementById('loading-refresh'),
@@ -221,7 +220,6 @@ export class LoadingScreen {
     if (this.#booted && this.#displayed > 99.5) this.#displayed = 100;
     const pct = Math.min(100, Math.floor(this.#displayed));
     if (this.#els.bar) this.#els.bar.style.width = `${pct}%`;
-    if (this.#els.percent) this.#els.percent.textContent = `${pct}%`;
 
     if (!this.#booted && !this.#hintShown && elapsed > LoadingScreen.#HINT_AFTER_MS) {
       this.#hintShown = true;

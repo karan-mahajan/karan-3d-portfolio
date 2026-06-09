@@ -80,16 +80,20 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.2rem;
-  padding: 2rem;
+  /* Gap + padding shrink on short viewports so the title can't get pushed off
+     the top on small laptops (the map box is large; see .loading-map vh cap). */
+  gap: clamp(0.5rem, 1.8vh, 1.2rem);
+  padding: clamp(1rem, 3vh, 2rem);
+  max-height: 100dvh;
 }
 
 .loading-title {
   font-family: 'Fredoka', sans-serif;
   font-weight: 700;
   /* Fredoka is rounder/wider than the old condensed Oswald, so heavy 0.25em
-     tracking now reads as gaps — tightened, and bumped up a size for presence. */
-  font-size: clamp(2.4rem, 6vw, 4rem);
+     tracking now reads as gaps — tightened, and bumped up a size for presence.
+     The 8vh term shrinks it on short screens so it stays fully on-screen. */
+  font-size: clamp(1.9rem, min(6vw, 8vh), 4rem);
   letter-spacing: 0.06em;
   color: var(--paper);
   text-shadow: 0 0 30px rgba(255, 153, 68, 0.4);
@@ -97,9 +101,11 @@ body {
 
 .loading-bar {
   margin-top: 0.5rem;
-  width: min(320px, 70vw);
-  height: 3px;
-  background: rgba(245, 230, 211, 0.12);
+  width: min(380px, 78vw);
+  /* Taller bar so progress reads visually — no % number needed (a thin line
+     plus a number made people wonder if it was stuck). */
+  height: 9px;
+  background: rgba(245, 230, 211, 0.14);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -110,18 +116,6 @@ body {
   background: linear-gradient(90deg, var(--warm-orange), var(--warm-amber));
   transition: width 0.3s ease;
   box-shadow: 0 0 12px var(--warm-orange);
-}
-
-.loading-percent {
-  margin-top: 0.5rem;
-  font-family: 'Nunito', sans-serif;
-  font-weight: 600;
-  font-size: 1.25rem;
-  letter-spacing: 0.08em;
-  color: var(--warm-amber);
-  font-variant-numeric: tabular-nums;
-  min-width: 3ch;
-  text-align: center;
 }
 
 .loading-hint {
@@ -228,7 +222,11 @@ body {
 /* ── Map image + marker layer ─────────────────────────────────────────────── */
 .loading-map {
   position: relative;
-  width: min(608px, 96vw);
+  /* The map is a square (aspect-ratio 1/1) and CSS transforms don't shrink the
+     layout box, so on short laptops a fixed 608px box pushes the title off the
+     top. Cap by viewport HEIGHT (56vh) too — large screens still get 608px;
+     short screens shrink the whole square to fit. */
+  width: min(608px, 92vw, 56vh);
   aspect-ratio: 1 / 1;
   margin: 0.2rem auto;
   perspective: 1015px;
