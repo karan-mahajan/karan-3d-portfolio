@@ -515,6 +515,10 @@ export class ColourGarden {
   #enterGame() {
     if (this.mode !== 'out') return;
     this.mode = 'entering';
+    // paintThrow is a deferred clip with no lazy fallback in playCharged — make
+    // sure it's loading before the player can charge a throw (the post-spawn
+    // background warm has usually already done this; this just guarantees it).
+    this.player.ensureAction?.('paintThrow');
     this.beacon.visible = false;
     this.hud.showPrompt(false);
     this.hud.enter();

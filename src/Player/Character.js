@@ -8,6 +8,14 @@ const AVATAR_GLB = '/models/character/avatar.glb';
 const AVATURN_CLIPS = [
   { action: 'running',         url: '/models/character/animations/running-avaturn.glb' },
   { action: 'crouchWalk',      url: '/models/character/animations/crouch-walk.glb' },
+];
+
+// Emote / interaction / mini-game clips — fired only by explicit input, never at
+// spawn. Deferred off the reveal-blocking load (~1.6 MB total): warmed in the
+// background shortly after spawn (preloadDeferredAnimations), with a lazy
+// load-on-first-use fallback in play(). Avaturn format → bind directly, no
+// retarget.
+const DEFERRED_AVATURN_CLIPS = [
   { action: 'push',            url: '/models/character/animations/push.glb' },
   { action: 'fightStance',     url: '/models/character/animations/fight-stance.glb' },
   { action: 'supermanPunch',   url: '/models/character/animations/superman-punch.glb' },
@@ -51,7 +59,13 @@ const DEFERRED_MIXAMO_CLIPS = [
   { action: 'pointing',      url: '/models/character/pointing.glb' },
   { action: 'waving',        url: '/models/character/waving-gesture.glb' },
 ];
-const DEFERRED_MIXAMO_BY_ACTION = new Map(DEFERRED_MIXAMO_CLIPS.map((clip) => [clip.action, clip]));
+// Combined deferred registry used by both the background warm and the lazy
+// load-on-play path. `retarget: true` → mixamo clip needs retargetMixamoToAvaturn;
+// avaturn clips bind directly.
+const DEFERRED_BY_ACTION = new Map([
+  ...DEFERRED_AVATURN_CLIPS.map((c) => [c.action, { ...c, retarget: false }]),
+  ...DEFERRED_MIXAMO_CLIPS.map((c) => [c.action, { ...c, retarget: true }]),
+]);
 
 function stripRootMotion(clip) {
   clip.tracks = clip.tracks.filter((t) => !t.name.endsWith('.position'));
@@ -219,16 +233,26 @@ export class Character {
       ok: true,
       animationCount: Object.keys(this.actions).length,
       availableActions: Object.keys(this.actions),
-      deferredActions: DEFERRED_MIXAMO_CLIPS.map((clip) => clip.action),
+      deferredActions: [...DEFERRED_BY_ACTION.keys()],
     };
   }
 
   preloadDeferredAnimations() {
-    for (const { action } of DEFERRED_MIXAMO_CLIPS) {
-      this.#loadDeferredAction(action).catch((err) => {
-        console.warn(`[Character] deferred animation "${action}" failed:`, err);
+    for (const name of DEFERRED_BY_ACTION.keys()) {
+      this.#loadDeferredAction(name).catch((err) => {
+        console.warn(`[Character] deferred animation "${name}" failed:`, err);
       });
     }
+  }
+
+  /**
+   * Force a single deferred clip to load NOW (idempotent — returns the shared
+   * load promise; true once bound, false if unknown / no clip). For opt-in
+   * features that need a charged clip ready before the player can trigger it
+   * (e.g. Colour Garden's paintThrow, which has no lazy fallback in playCharged).
+   */
+  ensureAction(name) {
+    return this.#loadDeferredAction(name);
   }
 
   /**
@@ -241,7 +265,7 @@ export class Character {
   play(name, opts = {}) {
     const action = this.actions[name];
     if (!action) {
-      if (DEFERRED_MIXAMO_BY_ACTION.has(name)) {
+      if (DEFERRED_BY_ACTION.has(name)) {
         this.#loadDeferredAction(name)
           .then((loaded) => {
             if (loaded) this.play(name, opts);
@@ -290,7 +314,7 @@ export class Character {
 
   async #loadDeferredAction(name) {
     if (this.actions[name]) return true;
-    const cfg = DEFERRED_MIXAMO_BY_ACTION.get(name);
+    const cfg = DEFERRED_BY_ACTION.get(name);
     if (!cfg) return false;
     if (!this._deferredClipPromises.has(name)) {
       this._deferredClipPromises.set(name, (async () => {
@@ -298,7 +322,7 @@ export class Character {
         const clip = g.animations?.[0];
         if (!clip) return false;
         stripRootMotion(clip);
-        retargetMixamoToAvaturn(clip);
+        if (cfg.retarget) retargetMixamoToAvaturn(clip);
         clip.name = name;
         this.actions[name] = this.mixer.clipAction(clip);
         return true;

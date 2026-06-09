@@ -507,6 +507,15 @@ export class Player {
     this.character?.releaseHold?.();
   }
 
+  /**
+   * Force a deferred character clip to load (e.g. before a mini-game that uses a
+   * charged clip with no lazy fallback). Safe no-op if the character isn't
+   * loaded yet. Returns the load promise or undefined.
+   */
+  ensureAction(name) {
+    return this.character?.ensureAction?.(name);
+  }
+
   /** Normalised 0..1 playhead of a character action (for release timing). */
   actionProgress(name) {
     return this.character?.actionProgress?.(name) ?? 0;
