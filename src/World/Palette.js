@@ -27,10 +27,10 @@ export const DUSK = Object.freeze({
 /**
  * @deprecated NO-OP on the WebGPU world. This patches GLSL via `onBeforeCompile`,
  * which three.js does NOT run for `MeshStandardNodeMaterial` (the consolidated
- * world props). The chromatic-shadow look is now delivered the palette-safe way:
- * the PostFX split-tone grade ([Effects/PostFX.js]) nudges shadows toward
- * `shadowTint` (#7a2da8) + highlights warm, and the per-phase ambient/hemiGround
- * are biased toward the purple family. Kept only for any future WebGL fallback.
+ * world props). The chromatic-shadow look is now delivered the proper TSL way by
+ * [ShadowTint.js] — `material.receivedShadowNode` lifts the sun's shadow term to
+ * a per-phase tint colour (driven by TimeOfDay) so shadows carry hue instead of
+ * going black, on both the props and the ground. Kept only for a WebGL fallback.
  *
  * Tint a `MeshStandardMaterial` so shadowed fragments mix toward
  * `baseColor * shadowTint` instead of fading to black.

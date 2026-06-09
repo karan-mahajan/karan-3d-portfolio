@@ -99,9 +99,13 @@ export class MapSnapshot {
     this._capturing = true;
     const scene = this.scene;
     const prevFog = scene.fog;
+    // The scene fog is now a TSL node (FogState); nulling scene.fog alone no
+    // longer disables it, so clear the node too for the un-fogged top-down map.
+    const prevFogNode = scene.fogNode;
     const hidden = [];
     try {
       scene.fog = null;
+      scene.fogNode = null;
       if (hide) {
         for (const obj of this.hideList) {
           if (obj && obj.visible) {
@@ -124,6 +128,7 @@ export class MapSnapshot {
       console.warn('[MapSnapshot] capture failed', err);
     } finally {
       scene.fog = prevFog;
+      scene.fogNode = prevFogNode;
       for (const obj of hidden) obj.visible = true;
       this._capturing = false;
     }

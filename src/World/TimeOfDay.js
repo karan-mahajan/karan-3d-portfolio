@@ -2,6 +2,14 @@ import gsap from "gsap";
 import * as THREE from "three/webgpu";
 import { MeshBasicNodeMaterial } from "three/webgpu";
 import { DUSK } from "./Palette.js";
+import { shadowTintColor } from "./ShadowTint.js";
+import { fogNear, fogFar } from "./FogState.js";
+import { sunDir, sunRadiance } from "./WorldLight.js";
+
+// Maps the real DirectionalLight intensity (tuned for PBR, e.g. day 2.1) into
+// the faked-light radiance range the world material expects (Bruno ~1.0).
+const FAKE_SUN_SCALE = 0.52;
+const FAKE_SUN_FLOOR = 0.18;
 import { makeMoonSprite, randomMoonPhaseAngle } from "./celestialSprite.js";
 import {
   Fn, attribute, uniform, varying, vec3, vec4, float,
@@ -48,24 +56,30 @@ export const DAY_PALETTE = Object.freeze({
   // Faint edge separation only (was 0.35) — IBL + hemi now carry the fill, so
   // a strong rim would just flatten contrast.
   rimIntensity: 0.18,
-  // Ambient pulled down (was 0.5) and warmed slightly toward the shadow-purple
-  // family so unlit/shadowed surfaces drift to colour, not flat grey-black —
-  // this is the palette-safe half of the chromatic-shadow look (the other half
-  // is PostFX split-tone). IBL provides the real sky-coloured fill now.
-  ambientColor: "#b59bb0",
+  // Cool sky-blue ambient: physically the shadow side of a sunlit object is
+  // filled by blue skylight, so a cool fill reads as real daylight (the old
+  // muddy purple #b59bb0 flattened it). The chromatic-shadow look is now
+  // carried properly by ShadowTint.js (real coloured shadows), so ambient no
+  // longer has to fake it.
+  ambientColor: "#a7b4d2",
   ambientIntensity: 0.28,
-  hemiSky: "#88bbee",
-  // Warm-purple ground bounce so undersides catch a hint of the shadow tint.
-  hemiGround: "#7a5a6a",
+  hemiSky: "#8fc4f0",
+  // Warm-neutral ground bounce — sunlit earth kicking light back up.
+  hemiGround: "#9a8472",
   hemiIntensity: 0.32,
-  skyTop: "#4488cc",
-  skyMid: "#88bbee",
-  // Horizon === fog colour so the ocean fades seamlessly into the sky band
-  // — no visible ring where the water plane ends. Tuned cool-steel-blue to
-  // bridge the deep-ocean tint (#1a4a6a) into the upper sky.
-  skyHorizon: "#88aabb",
+  // Rich-but-clean zenith → soft mid → pale airy horizon. The earlier flat
+  // steel-blue horizon (#88aabb) made midday read murky; lifting the horizon to
+  // a bright haze gives the sky depth and air.
+  skyTop: "#3f86d4",
+  skyMid: "#7eb6ea",
+  // Horizon === fog colour so the ocean fades seamlessly into the sky band —
+  // no visible ring where the water plane ends. Pale warm-cyan haze: bright
+  // enough to read as a real horizon, still bridging the deep ocean tint.
+  skyHorizon: "#aac6d2",
   skyGround: "#4a3528",
-  fogColor: "#88aabb",
+  fogColor: "#aac6d2",
+  // Cool periwinkle daytime shadows (realistic sky-fill hue, faint violet).
+  shadowTint: "#6a78c4",
   // Pulled tighter than the old 65→165 so the ocean plane (extending 150 m
   // from the island centre) fully dissolves into fog before its edge.
   fogNear: 50,
@@ -101,27 +115,31 @@ export const DAY_PALETTE = Object.freeze({
 });
 
 export const NIGHT_PALETTE = Object.freeze({
-  sunColor: "#6688bb",
-  sunIntensity: 0.3,
+  // Moonlight: cooler + a touch brighter than the old steel-blue so the moon
+  // actually shapes surfaces instead of leaving them flat-dark.
+  sunColor: "#8fa6d6",
+  sunIntensity: 0.4,
   sunOffset: new THREE.Vector3(-30, 25, -20),
-  rimColor: "#3a4d80",
+  rimColor: "#46608f",
   rimIntensity: 0.0,
-  ambientColor: "#0a1525",
+  ambientColor: "#0e1a30",
   // Lifted from 0.18 so the world between street lamps isn't pitch black —
   // first-time visitors should be able to see paths + trees as silhouettes.
   ambientIntensity: 0.25,
-  hemiSky: "#112244",
-  hemiGround: "#0a0a15",
+  hemiSky: "#163052",
+  hemiGround: "#0a0e1c",
   hemiIntensity: 0.12,
   // Lifted from near-black so the night sky still reads as a sky band
-  // rather than the void around the canvas. Bands kept in deep blue family
-  // so stars + moon still stand out brightly against them. Horizon === fog
-  // so the night ocean dissolves into the sky band at the horizon ring.
-  skyTop: "#0c1228",
-  skyMid: "#15203f",
-  skyHorizon: "#0a1520",
-  skyGround: "#0a0a18",
-  fogColor: "#0a1520",
+  // rather than the void around the canvas. Bands kept in a deep cobalt-blue
+  // family (less murky than the old grey-navy) so stars + moon still stand out.
+  // Horizon === fog so the night ocean dissolves into the sky band.
+  skyTop: "#0a1230",
+  skyMid: "#13224a",
+  skyHorizon: "#16263f",
+  skyGround: "#08080f",
+  fogColor: "#16263f",
+  // Deep indigo shadows — cohesive with the cobalt night sky.
+  shadowTint: "#1f3270",
   fogNear: 30,
   fogFar: 95,
   grassColor: "#1f3a2a",
@@ -163,11 +181,13 @@ export const DUSK_PALETTE = Object.freeze({
   rimIntensity: 0.3,
   ambientColor: DUSK.ambientColor,  // #ffb088
   ambientIntensity: 0.34,
-  hemiSky: DUSK.hemiSky,            // #a8c4ff
+  hemiSky: "#b3a6dc",              // warm lavender skylight
   hemiGround: DUSK.hemiGround,      // #d4845a
   hemiIntensity: 0.34,
-  skyTop: DUSK.skyTop,             // #6e95c7
-  skyMid: "#c79a86",               // warm band between zenith + horizon
+  // Deeper blue-violet zenith → warm coral mid → golden horizon. The deeper top
+  // gives the sunset real vertical range instead of washing the whole dome warm.
+  skyTop: "#4a568f",
+  skyMid: "#c98a72",               // warm coral band between zenith + horizon
   skyHorizon: DUSK.skyHorizon,     // #ffb084
   skyGround: DUSK.skyGround,       // #4a3528
   fogColor: DUSK.fogColor,         // #ffb084 (=== skyHorizon)
@@ -186,14 +206,26 @@ export const DUSK_PALETTE = Object.freeze({
   streetLightIntensity: 0.6,
   streetLightBulbEmissive: 0.9,
   waterColor: "#3a6a8a",
+  // Magenta-rose dusk shadows — the authored warm-sunset chromatic shadow.
+  shadowTint: "#9a3f86",
 });
 
 /** DAWN keyframe — sunrise. Same warm dusk colours, slightly cooler sun + the
  *  stars/moon/lamps a touch dimmer than dusk (night is ending, not starting). */
 export const DAWN_PALETTE = Object.freeze({
   ...DUSK_PALETTE,
-  sunColor: "#ffd0a0",
+  sunColor: "#ffd9b0",
   rimColor: "#ff8a5a",
+  // Sunrise reads COOLER than sunset: a cool morning-blue dome with a soft peach
+  // glow at the horizon, lavender in between — distinct from dusk's hot orange.
+  ambientColor: "#9a93b8",
+  hemiSky: "#a9c2e8",
+  skyTop: "#54709f",
+  skyMid: "#b89fb4",
+  skyHorizon: "#ffc59a",
+  fogColor: "#ffc59a",
+  // Cool morning violet shadows (vs dusk's warmer magenta-rose).
+  shadowTint: "#7a5fb0",
   starsOpacity: 0.1,
   moonOpacity: 0.18,
   streetLightIntensity: 0.4,
@@ -225,7 +257,15 @@ const CYCLE_STOPS = [
   // immediately lerping toward day. This stretch runs at the base day rate
   // (1/CYCLE_SECONDS progress/s), so 0.06 span ≈ 9s of held dawn.
   { at: 0.06, palette: DAWN_PALETTE },
-  { at: 0.3, palette: DAY_PALETTE },
+  // DAY is held flat across a plateau (0.2→0.45) so bright, clean daytime
+  // actually LINGERS. Previously day was a single instantaneous keyframe at 0.3
+  // — the cycle reached full day for one frame and immediately ramped back
+  // toward dusk, so the world read as permanently mid-transition and never
+  // settled into a stable bright day (dawn/dusk/night all had plateaus; day
+  // didn't). 0.3 (day phase peak) sits inside the plateau; ~37s of held day at
+  // the base rate, delivering the intended long-day/short-night cadence.
+  { at: 0.2, palette: DAY_PALETTE },
+  { at: 0.45, palette: DAY_PALETTE },
   // DUSK is held flat (0.513→0.58) too, so golden hour lingers instead of
   // peaking for an instant and then being rushed into night by the speed-up
   // that kicks in at NIGHT_THRESHOLD (0.5833). This plateau sits entirely on
@@ -247,6 +287,7 @@ const CYCLE_STOPS = [
 const CYCLE_COLOR_FIELDS = [
   "sunColor", "rimColor", "ambientColor", "hemiSky", "hemiGround",
   "skyTop", "skyMid", "skyHorizon", "skyGround", "fogColor", "grassColor", "fillColor",
+  "shadowTint",
 ];
 const CYCLE_SCALAR_FIELDS = [
   "sunIntensity", "rimIntensity", "ambientIntensity", "hemiIntensity",
@@ -353,6 +394,7 @@ export class TimeOfDay {
     this.#sampleCycle(this.progress);
     this.#applyContinuous();
     this.sunOffset = this.#calcOffset();
+    sunDir.value.copy(this.sunOffset).normalize();
     // Separate DISPLAY directions for the sun disc (sun arc) and the moon
     // (moon arc), so at dawn/dusk the sun sits WEST while the moon rises EAST —
     // they never stack on top of each other the way they did when both used
@@ -434,22 +476,29 @@ export class TimeOfDay {
   /**
    * Ease from the forced day-start to the REAL local-clock time, then resume
    * the automatic cycle. Called ~12s after spawn so visitors always open on a
-   * bright day, which then settles to the actual time of day. Eases FORWARD
-   * (sky never runs backwards); if it's already daytime the change is a no-op
-   * resume.
+   * bright day, which then settles to the actual time of day.
+   *
+   * Eases via the SHORTEST direction (nearest path), NOT always-forward: a
+   * forward-only wrap could traverse nearly a full cycle — e.g. day-peak (0.3)
+   * settling to a morning clock (~0.2) is +0.9 forward, which timelapses through
+   * dusk→night→dawn and back to day in a few seconds (a jarring flash). The
+   * nearest path (−0.1 here) stays inside the flat day plateau and is
+   * imperceptible. A backward step within day never reads as "sky running
+   * backwards" because the day colours barely change across the plateau.
    */
   easeToClock(duration = 4.0) {
     this._tween?.kill?.();
     const target = progressFromClock();
-    const fwd = (((target - this.progress) % 1) + 1) % 1; // forward distance [0,1)
-    if (fwd < 0.04) {
+    // Signed shortest distance in [-0.5, 0.5).
+    const signed = ((((target - this.progress + 0.5) % 1) + 1) % 1) - 0.5;
+    if (Math.abs(signed) < 0.04) {
       // Real time is already ~day — just hand back to the automatic cycle.
       this.paused = false;
       return;
     }
     this.paused = true;
     this._tween = gsap.to(this, {
-      _raw: this._raw + fwd,
+      _raw: this._raw + signed,
       duration,
       ease: "sine.inOut",
       onComplete: () => {
@@ -592,6 +641,8 @@ export class TimeOfDay {
     }
     // Shadow-light direction (mode-based arc). Lerped so transitions are smooth.
     this.sunOffset.lerp(this.#calcOffset(), 0.06);
+    // Feed the faked-light world material the same sun direction.
+    sunDir.value.copy(this.sunOffset).normalize();
     // Independent sun-disc + moon display directions (separate arcs → opposite
     // sides of the sky at dawn/dusk, never stacked). Snap is fine: both are
     // continuous functions of progress and only visible when their opacity > 0.
@@ -943,6 +994,14 @@ export class TimeOfDay {
     this.hemi.groundColor.copy(p.hemiGround);
     this.hemi.intensity = p.hemiIntensity;
 
+    // Coloured-shadow tint (ShadowTint.js) — the world material's shadow ambient.
+    shadowTintColor.value.copy(p.shadowTint);
+    // Faked sun radiance for the world material (WorldLight) — sun colour scaled
+    // from the PBR intensity into Bruno's ~1.0 range.
+    sunRadiance.value
+      .copy(p.sunColor)
+      .multiplyScalar(Math.max(FAKE_SUN_FLOOR, p.sunIntensity * FAKE_SUN_SCALE));
+
     this.sky.material.uniforms.uTop.value.copy(p.skyTop);
     this.sky.material.uniforms.uMid.value.copy(p.skyMid);
     this.sky.material.uniforms.uHorizon.value.copy(p.skyHorizon);
@@ -951,6 +1010,10 @@ export class TimeOfDay {
     this.fog.color.copy(p.fogColor);
     this.fog.near = p.fogNear;
     this.fog.far = p.fogFar;
+    // Drive the view-direction scene fog node (FogState) — its COLOUR comes from
+    // the sky gradient automatically; only the range needs feeding per phase.
+    fogNear.value = p.fogNear;
+    fogFar.value = p.fogFar;
 
     if (this.grass) {
       this.grass.baseColor.copy(p.grassColor);

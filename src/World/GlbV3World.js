@@ -13,22 +13,20 @@ import {
   vertexColor,
   vec2,
   vec3,
+  vec4,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
-import {
-  MeshLambertNodeMaterial,
-  MeshStandardNodeMaterial,
-} from "three/webgpu";
+import { MeshLambertNodeMaterial } from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { positionLocal } from "three/tsl";
 import {
   snowMask,
   snowColor4,
   snowColor,
-  snowRoughness,
   snowEmissive,
   terrainSnowDrift,
 } from "./SnowState.js";
+import { worldShadowCatcher, worldLitOutput } from "./WorldLight.js";
 
 // Tree GLB systems that ship a solid low-poly GREEN canopy primitive (material
 // `*_canopy_*`) alongside their trunk → foliage species key. ONLY oak does:
@@ -930,7 +928,8 @@ export class GlbV3World {
       furnMask.needsUpdate = true;
     }
 
-    const mat = new MeshLambertNodeMaterial();
+    // fog:false — the faked-light outputNode applies fog itself (matches props).
+    const mat = new MeshLambertNodeMaterial({ fog: false });
     // Snow blanket: drift the surface up (depth + dunes) and whiten the ground
     // by the shared snowCoverage uniform. Flat ground covers fully; steep banks
     // stay bare via the normal-keyed mask.
@@ -939,9 +938,10 @@ export class GlbV3World {
     // creeps across the meadow before the walkways whiten.
     const maskGrass = snowMask({ low: 0.2, high: 0.5, bias: 0.2 });
     const maskPath = snowMask({ low: 0.2, high: 0.5, bias: -0.18 });
+    let groundColor;
     if (this.grassMask) {
       const invSpan = 1 / (this.grassGrid.bounds * 2);
-      mat.colorNode = Fn(() => {
+      groundColor = Fn(() => {
         // Mask is authored in Blender XY; Blender Y → runtime -Z, so negate Z
         // (same as the slabs sampling below). Without this the grass mask reads
         // Z-mirrored — grass/clears land on the opposite side from authoring.
@@ -983,11 +983,18 @@ export class GlbV3World {
         );
       })();
     } else {
-      mat.colorNode = snowColor(olive, maskGrass);
+      groundColor = snowColor(olive, maskGrass);
     }
     // Sparkle + cool lift on the snowy ground so it reads as bright snow, not
     // cream, under the warm sunset light.
-    mat.emissiveNode = snowEmissive(maskGrass);
+    const groundEmissive = snowEmissive(maskGrass);
+    // Same Bruno-style faked lighting as the props (WorldLight): wrapped soft
+    // terminator + coloured shadows + manual fog, so the big ground surface
+    // shades cohesively with everything standing on it.
+    mat.colorNode = groundColor;
+    const catchedShadow = float(1).toVar();
+    mat.receivedShadowNode = worldShadowCatcher(catchedShadow);
+    mat.outputNode = worldLitOutput(vec4(groundColor, 1.0), groundEmissive, catchedShadow);
     mesh.material = mat;
     mesh.receiveShadow = true;
   }
@@ -1240,28 +1247,33 @@ export class GlbV3World {
     if (existing) return existing;
 
     const transparent = kind === "transparent";
-    const mat = new MeshStandardNodeMaterial({
+    // Bruno-style FAKED lighting (WorldLight.js): MeshLambert (lights:true) only
+    // so the shadow graph runs + receivedShadowNode fires; the outputNode then
+    // shades the world itself (wrapped soft terminator + coloured shadows) and
+    // discards the Lambert result. fog:false — fog is applied inside outputNode.
+    const mat = new MeshLambertNodeMaterial({
       side,
       transparent,
       depthWrite: !transparent,
-      roughness: 1,
-      metalness: 0,
       opacity: 1,
+      fog: false,
     });
     mat.name = `worldShared:${kind}:${this.#sideName(side)}`;
-    // Shape-hugging snow: whiten + roughen upward-facing fragments by the shared
+    // Shape-hugging snow: whiten upward-facing fragments by the shared
     // snowCoverage uniform. Colour-only (NO vertex displacement) — this material
     // spans merged/consolidated geometry + the rocks InstancedMesh, and pushing
-    // vertices along the normal here breaks the shading normals (props render
-    // unlit/black). Thickness on props needs a different approach (see snowShell
-    // docs); the lumpy mask below carries the uneven look without geometry.
+    // vertices along the normal here breaks the shading normals.
     // vertexColor() is a vec4 (rgb + baked opacity in .a) — preserve the alpha.
     const baseColor = vertexColor();
-    const baseRough = attribute(WORLD_ROUGHNESS_ATTR, "float");
     const mask = snowMask();
-    mat.colorNode = snowColor4(baseColor, mask);
-    mat.emissiveNode = attribute(WORLD_EMISSIVE_ATTR, "vec3").add(snowEmissive(mask));
-    mat.roughnessNode = snowRoughness(baseRough, mask);
+    const albedo = snowColor4(baseColor, mask);
+    const emissive = attribute(WORLD_EMISSIVE_ATTR, "vec3").add(snowEmissive(mask));
+    // colorNode keeps diffuseColor + baked alpha correct for setupLighting /
+    // transparency; the outputNode below re-reads the same albedo for shading.
+    mat.colorNode = albedo;
+    const catchedShadow = float(1).toVar();
+    mat.receivedShadowNode = worldShadowCatcher(catchedShadow);
+    mat.outputNode = worldLitOutput(albedo, emissive, catchedShadow);
     mat.userData.worldSharedMaterial = true;
     this._sharedWorldMaterials.set(key, mat);
     return mat;

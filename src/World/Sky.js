@@ -4,6 +4,25 @@ import { Fn, positionWorld, cameraPosition, uniform, mix, smoothstep, normalize,
 import { DUSK } from './Palette.js';
 
 /**
+ * The sky's vertical gradient as a reusable TSL node, given the four band
+ * uniforms and a view-direction elevation `h` (dir.y, -1..1). Exported so the
+ * scene fog ([FogState.js]) fades distant geometry into the EXACT same gradient
+ * band behind it — not a single flat horizon colour — keeping the dissolve
+ * seamless. Single source of truth: both the sky dome and the fog call this, so
+ * they can never drift apart.
+ * @param {{uTop,uMid,uHorizon,uGround}} u live colour-uniform nodes
+ * @param {*} h elevation node (view dir .y)
+ */
+export function skyGradientColor(u, h) {
+  // Above horizon: horizon → mid → top three-stop gradient.
+  const lower = mix(u.uHorizon, u.uMid, smoothstep(0.005, 0.08, h));
+  const above = mix(lower, u.uTop, smoothstep(0.1, 0.5, h));
+  // Below horizon: horizon → ground.
+  const below = mix(u.uHorizon, u.uGround, smoothstep(0.0, -0.25, h));
+  return h.greaterThan(0.0).select(above, below);
+}
+
+/**
  * Sunset sky: large inverted sphere with a top→mid→horizon→ground gradient.
  * The visible sun disc + halo live in Sun.js — this material only paints the
  * gradient bands.
@@ -31,15 +50,7 @@ export class Sky {
     const colorNode = Fn(() => {
       // View direction from the camera to this fragment's world position.
       const dir = normalize(positionWorld.sub(cameraPosition));
-      const h = dir.y;
-
-      // Above horizon: horizon → mid → top three-stop gradient.
-      const lower = mix(uHorizon, uMid, smoothstep(0.005, 0.08, h));
-      const above = mix(lower, uTop, smoothstep(0.1, 0.5, h));
-      // Below horizon: horizon → ground.
-      const below = mix(uHorizon, uGround, smoothstep(0.0, -0.25, h));
-
-      const color = h.greaterThan(0.0).select(above, below);
+      const color = skyGradientColor({ uTop, uMid, uHorizon, uGround }, dir.y);
       return vec4(color, 1.0);
     })();
 
