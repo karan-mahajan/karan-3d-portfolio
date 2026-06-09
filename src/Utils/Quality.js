@@ -106,16 +106,128 @@ function autoTier() {
   return 'medium';
 }
 
+const QUALITY_STORAGE_KEY = 'karan-portfolio:quality';
+const TIER_RANK = { low: 0, medium: 1, high: 2 };
+const TIERS = ['low', 'medium', 'high'];
+
+function lowerOf(a, b) {
+  return TIER_RANK[a] <= TIER_RANK[b] ? a : b;
+}
+
+/**
+ * Demote-only GPU heuristic. Returns the HIGHEST tier this GPU should be
+ * trusted with ('low' | 'medium'), or null when the GPU is unknown or discrete
+ * (no cap — defer to the spec tier). We never UPGRADE off this: a capable-spec
+ * machine (8+ cores, 8+ GB) sitting on a weak integrated GPU is the exact
+ * mis-tier this guards against — the reported Windows-laptop-on-`high` lag was
+ * a strong CPU/RAM box with a fill-bound integrated GPU. Detection is kept
+ * conservative because a false "integrated" match only costs a slightly
+ * lighter scene, never a black screen, so erring toward demotion is safe.
+ * (Bruno rejected GPU scoring for *picking* a tier; using it only to *cap* one
+ * sidesteps his accuracy concern — the failure mode is benign in this
+ * direction.)
+ */
+function gpuTierCap() {
+  let gl = null;
+  try {
+    const canvas = document.createElement('canvas');
+    gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  } catch {
+    gl = null;
+  }
+  if (!gl) return 'low'; // no WebGL at all → weakest hardware/software path
+
+  let renderer = '';
+  try {
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    renderer = String(
+      (ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) ||
+        gl.getParameter(gl.RENDERER) ||
+        '',
+    ).toLowerCase();
+  } catch {
+    renderer = '';
+  }
+  // Release the probe context immediately so it doesn't linger as a live GL
+  // context alongside the real WebGPU one.
+  try {
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+  } catch {
+    /* no-op */
+  }
+
+  if (!renderer) return null; // info withheld (Firefox/privacy) → defer to spec
+
+  // Pure-software rasterizers — always the floor.
+  if (/swiftshader|llvmpipe|software|microsoft basic|\bwarp\b|softpipe/.test(renderer)) {
+    return 'low';
+  }
+  // Intel integrated graphics.
+  if (/intel/.test(renderer)) {
+    if (/\barc\b/.test(renderer)) return null; // discrete Arc — trust the spec tier
+    if (/iris/.test(renderer)) return 'medium'; // Iris / Iris Xe — middling
+    if (/uhd|hd graphics|\bgraphics\b/.test(renderer)) return 'low'; // UHD/HD/generic
+  }
+  // AMD integrated APUs (Vega 3–11, plain "Radeon(TM) Graphics") — note a
+  // discrete "Radeon RX 6800" or APU "Radeon 780M Graphics" won't match these
+  // contiguous patterns, so strong parts correctly escape the cap.
+  if (/vega [0-9]|radeon\(tm\) graphics|radeon graphics/.test(renderer)) {
+    return 'low';
+  }
+  return null; // discrete NVIDIA/AMD, Apple M-series, anything else → no cap
+}
+
+/** Tier the heuristics (spec ∩ GPU cap) would pick, ignoring any saved override. */
+export function autoQualityTier() {
+  const cap = gpuTierCap();
+  const spec = autoTier();
+  return cap ? lowerOf(spec, cap) : spec;
+}
+
+function readSavedTier() {
+  try {
+    const s = localStorage.getItem(QUALITY_STORAGE_KEY);
+    return TIERS.includes(s) ? s : null;
+  } catch {
+    return null;
+  }
+}
+
 export function detectQuality() {
   const params = new URLSearchParams(window.location.search);
-  const requested = (params.get('quality') || 'auto').toLowerCase();
-  const forced = requested === 'high' || requested === 'medium' || requested === 'low'
-    ? requested
-    : null;
-  const tier = forced || autoTier();
+  const requested = (params.get('quality') || '').toLowerCase();
+  const urlForced = TIERS.includes(requested) ? requested : null;
+
+  // Precedence: ?quality= URL param (dev/repro) > saved user choice > auto.
+  const saved = urlForced ? null : readSavedTier();
+  const auto = autoQualityTier();
+  const tier = urlForced || saved || auto;
+
   return {
     ...PROFILES[tier],
-    requested: forced || 'auto',
-    forced: !!forced,
+    requested: urlForced || (saved ? 'saved' : 'auto'),
+    forced: !!urlForced,
+    auto, // what auto-detection alone would choose (drives the toggle's "Auto" state)
+    usingSaved: !urlForced && !!saved,
   };
+}
+
+/**
+ * Persist the user's manual quality choice (or clear it back to Auto). The
+ * post-FX chain, water shader and material bind groups are all baked at
+ * construction, and toggling post-FX/toneMapping live black-screens the
+ * consolidated materials (see App #applyPerfShed), so the ONLY safe way to
+ * apply a new tier is a full reload — detectQuality() reads this on next boot.
+ * Caller is responsible for the reload.
+ */
+export function setQualityPreference(tier) {
+  try {
+    if (tier === 'auto' || tier == null) {
+      localStorage.removeItem(QUALITY_STORAGE_KEY);
+    } else if (TIERS.includes(tier)) {
+      localStorage.setItem(QUALITY_STORAGE_KEY, tier);
+    }
+  } catch {
+    /* storage blocked (private mode) — choice just won't persist */
+  }
 }
