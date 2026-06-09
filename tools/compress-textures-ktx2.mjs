@@ -7,8 +7,9 @@
  *   KTX_BIN=/path/to/ktx npm run compress:textures
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,6 +52,26 @@ const JOBS = [
       '--qlevel', '128',
     ],
   },
+  {
+    // Painted path/slab art, sampled (RepeatWrapping) in the terrain ground
+    // material — always GPU-resident. KTX2 is ~+40KB on disk but stays
+    // block-compressed in VRAM (~1MB) vs the WebP decoding to full RGBA+mips
+    // (~8MB at 1254²). `ktx create` can't read WebP → pre-decode via sips.
+    kind: 'srgb-color',
+    src: 'static/world/tiles.webp',
+    dst: 'static/world/tiles.ktx2',
+    decodeWebp: true,
+    // Source is 1254² (non-POT, not a mult of 4 → fails basis block compression
+    // + RepeatWrapping mipmaps want POT). Resize to 1024² on decode.
+    resizeTo: 1024,
+    args: [
+      '--format', 'R8G8B8A8_SRGB',
+      '--assign-tf', 'srgb',
+      '--generate-mipmap',
+      '--encode', 'basis-lz',
+      '--qlevel', '128',
+    ],
+  },
 ];
 
 const version = spawnSync(KTX, ['--version'], { encoding: 'utf8' });
@@ -73,13 +94,27 @@ for (const job of JOBS) {
     continue;
   }
   mkdirSync(dirname(dst), { recursive: true });
-  run([
-    'create',
-    ...job.args,
-    src,
-    dst,
-  ]);
+
+  // ktx create reads PNG/JPEG only — WebP sources are pre-decoded to a temp PNG
+  // via macOS `sips` (this is a dev-machine tool, run on the author's Mac).
+  let input = src;
+  let tmpPng = null;
+  if (job.decodeWebp) {
+    tmpPng = join(tmpdir(), `ktx-decode-${job.kind}.png`);
+    const sipsArgs = ['-s', 'format', 'png'];
+    if (job.resizeTo) sipsArgs.push('-z', String(job.resizeTo), String(job.resizeTo));
+    sipsArgs.push(src, '--out', tmpPng);
+    const dec = spawnSync('sips', sipsArgs, { encoding: 'utf8' });
+    if (dec.status !== 0) {
+      console.warn(`skip ${job.src}: WebP→PNG decode failed (sips, macOS only)`);
+      continue;
+    }
+    input = tmpPng;
+  }
+
+  run(['create', ...job.args, input, dst]);
   run(['validate', '--gltf-basisu', dst]);
+  if (tmpPng) rmSync(tmpPng, { force: true });
 
   const start = statSync(src).size;
   const end = statSync(dst).size;

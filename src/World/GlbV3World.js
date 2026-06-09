@@ -390,8 +390,14 @@ export class GlbV3World {
     // 0b. Tile/slab art for the painted paths. Sampled by world XZ in the
     // terrain ground material; tolerate failure (paths fall back to flat stone).
     const tileFile = manifest.tileTexture ?? "tiles.webp";
+    // Prefer the block-compressed KTX2 sibling (stays compressed in VRAM vs the
+    // WebP decoding to full RGBA + mips); loadTexture() falls back to the WebP
+    // if KTX2 is unavailable.
+    const tileKtx2 = tileFile.endsWith(".webp")
+      ? GlbV3World.ASSET_BASE + tileFile.replace(/\.webp$/, ".ktx2")
+      : null;
     const tilePromise = this.loader
-      .loadTexture(GlbV3World.ASSET_BASE + tileFile)
+      .loadTexture(GlbV3World.ASSET_BASE + tileFile, tileKtx2 ? { ktx2Url: tileKtx2 } : {})
       .then((tex) => {
         tex.wrapS = THREE.RepeatWrapping;
         tex.wrapT = THREE.RepeatWrapping;
