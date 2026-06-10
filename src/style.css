@@ -5059,3 +5059,12 @@ body[data-tod="night"] .control-hint-key {
 .guestbook-back.hidden {
   display: none;
 }
+/* ── Museum interior: outdoor HUD hides while underground. Map/compass are
+      meaningless there, and the time-of-day / weather toggles would fight the
+      frozen outdoor cycle. The trophy panel (J) keeps working. ── */
+body.in-museum #minimap-root,
+body.in-museum #compass,
+body.in-museum #top-left-stack,
+body.in-museum #bottom-left-stack {
+  display: none;
+}

@@ -94,6 +94,13 @@ export class Player {
     // the character doesn't smear/pull toward the pre-snap position for a frame.
     this._teleported = false;
 
+    // Museum interior: skip the terrain-coupled effects (wading slowdown,
+    // slope tilt) and swap the void-fall respawn — the basement sits at
+    // y≈−45, far below RESPAWN_FALL_Y, and its x/z overlaps outdoor ponds.
+    this.interiorMode = false;
+    this.respawnFallY = Player.RESPAWN_FALL_Y;
+    this.respawnPoint = null; // {x,y,z} override while inside the museum
+
     // Build the kinematic capsule once physics is ready. The body's feet sit
     // at y=0 to match the visual group; gravity will be integrated by the
     // character controller helper.
@@ -175,17 +182,23 @@ export class Player {
     const dx = this.group.position.x;
     const dz = this.group.position.z;
     const distFromCenter = Math.hypot(dx, dz);
-    const groundY = this.terrain ? this.terrain.heightAt(dx, dz) : 0;
-    const waterDepth = Player.WATER_SURFACE_Y - groundY;
-    // Only wade-slow when actually down in the water — feet at/below the
-    // surface. On a bridge deck over the river the feet are up on the planks
-    // (the deck collider, not the terrain, is the floor), so skip the slowdown.
-    const submergedFeet = this.group.position.y <= Player.WATER_SURFACE_Y + 0.1;
-    if (waterDepth > 0 && submergedFeet) {
-      const slow = waterDepth * Player.WATER_SLOWDOWN_PER_M;
-      this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - slow);
-    } else {
+    if (this.interiorMode) {
+      // Museum floors are dry — the terrain sampled here is the OUTDOOR
+      // surface 45m above the player's actual floor (and may dip into ponds).
       this.controller.speedMultiplier = 1.0;
+    } else {
+      const groundY = this.terrain ? this.terrain.heightAt(dx, dz) : 0;
+      const waterDepth = Player.WATER_SURFACE_Y - groundY;
+      // Only wade-slow when actually down in the water — feet at/below the
+      // surface. On a bridge deck over the river the feet are up on the planks
+      // (the deck collider, not the terrain, is the floor), so skip the slowdown.
+      const submergedFeet = this.group.position.y <= Player.WATER_SURFACE_Y + 0.1;
+      if (waterDepth > 0 && submergedFeet) {
+        const slow = waterDepth * Player.WATER_SLOWDOWN_PER_M;
+        this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - slow);
+      } else {
+        this.controller.speedMultiplier = 1.0;
+      }
     }
 
     const sample = this.controller.sample(delta);
@@ -281,6 +294,15 @@ export class Player {
    */
   #applySlopeTilt() {
     if (!this.terrain) return;
+    if (this.interiorMode) {
+      // Level out smoothly — interior floors are flat; outdoor gradients here
+      // are phantom (sampled 45m above the player's actual floor).
+      this._tiltX = (this._tiltX ?? 0) * 0.85;
+      this._tiltZ = (this._tiltZ ?? 0) * 0.85;
+      this.group.rotation.x = this._tiltX;
+      this.group.rotation.z = this._tiltZ;
+      return;
+    }
     const eps = 0.5;
     const x = this.group.position.x;
     const z = this.group.position.z;
@@ -313,10 +335,14 @@ export class Player {
    */
   #enforceWorldBounds() {
     const p = this.body ? this.body.position : this.group.position;
-    if (p.y < Player.RESPAWN_FALL_Y) {
-      const y = (this.terrain ? this.terrain.heightAt(0, 0) : 0) + 0.1;
-      if (this.body) this.body.teleport(0, y, 0);
-      this.group.position.set(0, y, 0);
+    if (p.y < this.respawnFallY) {
+      const rp = this.respawnPoint;
+      const x = rp ? rp.x : 0;
+      const z = rp ? rp.z : 0;
+      const y = rp ? rp.y : (this.terrain ? this.terrain.heightAt(0, 0) : 0) + 0.1;
+      if (this.body) this.body.teleport(x, y, z);
+      this.group.position.set(x, y, z);
+      this.markTeleported();
     }
   }
 

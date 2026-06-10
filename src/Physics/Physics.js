@@ -186,6 +186,21 @@ export class Physics {
   }
 
   /**
+   * Box collider with a full quaternion rotation — used by the museum's
+   * Blender-authored proxies (pitched stair ramps; flat walls pass an
+   * identity-ish quaternion through the same path). `(x, y, z)` is the centre.
+   */
+  addStaticRotatedCuboid(x, y, z, hx, hy, hz, rotation = { x: 0, y: 0, z: 0, w: 1 }) {
+    const { RAPIER, world } = this;
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+      .setTranslation(x, y, z)
+      .setRotation(rotation);
+    const body = world.createRigidBody(bodyDesc);
+    world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz), body);
+    return body;
+  }
+
+  /**
    * Static convex hull from a flat `[x,y,z,…]` Float32Array of WORLD-space
    * points. The body sits at the origin so the hull lives directly in world
    * space. Rapier reduces the point set to its convex hull internally (pass every

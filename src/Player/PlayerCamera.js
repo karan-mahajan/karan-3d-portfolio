@@ -78,6 +78,18 @@ export class PlayerCamera {
 
     this._target = new THREE.Vector3(0, HEAD_HEIGHT, 0);
     this._tmpOffset = new THREE.Vector3();
+    // Floor for the orbit target's Y. The 0.4 default keeps the camera from
+    // dipping under the ocean plane while wading (see follow()). The museum
+    // basement LOWERS this while the player is underground — otherwise the
+    // clamp pins the camera at the surface 45m above the character and the
+    // player stares at a black hidden world.
+    this.minTargetY = 0.4;
+    // Optional occluder list (e.g. the museum's interior wall boxes). When
+    // set, update() raycasts head→camera and pulls the camera in front of the
+    // first hit so the orbit can never poke through a wall into the void.
+    this.collisionMeshes = null;
+    this._raycaster = new THREE.Raycaster();
+    this._tmpDir = new THREE.Vector3();
     this.locked = false; // when true, update() doesn't move the camera (used by zoom)
     // Impact shake — decaying positional jitter added after the camera is
     // placed. Driven by addImpulse() (intro landing today; reusable for any
@@ -249,10 +261,11 @@ export class PlayerCamera {
     // Clamp the orbit target above the water surface (WATER_LEVEL_Y=0).
     // Without this, wading drops target.y below sea level and certain
     // azimuths push the camera through the back of the double-sided
-    // transparent ocean plane (Effects/Water.js).
+    // transparent ocean plane (Effects/Water.js). minTargetY is lowered by
+    // the museum while the player is in the underground gallery.
     this._target.set(
       position.x,
-      Math.max(position.y + HEAD_HEIGHT, 0.4),
+      Math.max(position.y + HEAD_HEIGHT, this.minTargetY),
       position.z,
     );
   }
@@ -311,6 +324,18 @@ export class PlayerCamera {
       distance * Math.cos(polar),
       distance * sinPolar * Math.cos(azimuth),
     );
+
+    if (this.collisionMeshes?.length) {
+      this._tmpDir.copy(this._tmpOffset).normalize();
+      this._raycaster.set(this._target, this._tmpDir);
+      this._raycaster.far = distance + 0.3;
+      const hit = this._raycaster.intersectObjects(this.collisionMeshes, false)[0];
+      if (hit && hit.distance < distance) {
+        // 0.3m skin keeps the near plane out of the wall; never closer than
+        // 0.6m or the camera ends up inside the character's head.
+        this._tmpOffset.setLength(Math.max(hit.distance - 0.3, 0.6));
+      }
+    }
 
     this.camera.position.copy(this._target).add(this._tmpOffset);
     this.camera.lookAt(this._target);
@@ -394,7 +419,11 @@ export class PlayerCamera {
       false,
     );
     this.controls.distance = distance;
-    this.controls.azimuthAngle = azimuth;
+    // Wrapped exactly the way setLookAt derives its internal azimuth — an
+    // unwrapped `facing + π` here can sit a full 2π from the internal value,
+    // and camera-controls then damps through a slow 360° orbit right after
+    // the teleport (seen as "the camera faces the door, not the character").
+    this.controls.azimuthAngle = Math.atan2(this._tmpOffset.x, this._tmpOffset.z);
     this.controls.polarAngle = polar;
     this.camera.position.copy(cameraPos);
     this.camera.lookAt(this._target);

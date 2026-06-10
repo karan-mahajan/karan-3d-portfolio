@@ -22,6 +22,7 @@ import { Experience } from "./Portfolio/Experience.js";
 import { GuestbookTree } from "./Portfolio/GuestbookTree.js";
 import { Interactables } from "./Portfolio/Interactables.js";
 import { Interaction } from "./Portfolio/Interaction.js";
+import { Museum } from "./Portfolio/Museum.js";
 import { ProjectsHut } from "./Portfolio/ProjectsHut.js";
 import { ResumeBook } from "./Portfolio/ResumeBook.js";
 import { SkillSphere } from "./Portfolio/SkillSphere.js";
@@ -117,6 +118,8 @@ export class App extends EventTarget {
     this.player = null;
     this.skillSphere = null;
     this.colourGarden = null;
+    this.museum = null;
+    this._inMuseum = false;
     this.discovery = null;
 
     // Global slow-motion (Colour Garden paint payoff). timeScale eases toward
@@ -961,6 +964,29 @@ export class App extends EventTarget {
 
     this.#initMapSystems();
 
+    // Hidden making-of museum — magic door + lazy underground gallery.
+    // NOTHING museum-side loads with the world: door.glb only starts fetching
+    // on the player's FIRST MOVEMENT after the intro (see the one-shot in
+    // #tick), and museum.glb waits for 25m door proximity on top of that.
+    // Neither is in the boot manifest (Colour Garden precedent) — zero boot
+    // bytes, zero boot work. Constructing here is still required: the 4
+    // interior PointLights must exist (intensity 0) before the first material
+    // compile or every lit material recompiles when they appear (see the
+    // Lights-rig note above).
+    this.museum = new Museum({
+      scene: this.scene,
+      terrain: this.world.terrain,
+      physics: this.physics,
+      loader: this.loader,
+      player: this.player,
+      playerCamera: this.playerCamera,
+      audio: this.audio,
+      transitionFx: this.transitionFx,
+      navmask: this.navmask,
+      onInteriorChange: (active) => this.#setMuseumInterior(active),
+      warmShaders: () => this.#warmShadersInBackground(),
+    });
+
     // First-visit tutorial coachmarks. Constructed eagerly so main.js can
     // call .start() at the right moment (after the welcome overlay clears
     // and the controller is unpaused). No-ops on repeat visits via the
@@ -1278,6 +1304,57 @@ export class App extends EventTarget {
     if (this.debug?.enabled) console.log(`[perf] shed level → ${level}`);
   }
 
+  /**
+   * Museum interior mode — hide/restore every outdoor system App owns.
+   * Visibility-only on meshes; the lit-material light COUNT never changes
+   * (the museum's PointLights exist from boot; resumeBook/guestbook groups
+   * stay visible because they contain lights and the void shell occludes
+   * them anyway). The swap happens behind the TransitionFX iris, so
+   * first-render pipeline compiles are masked. Light intensities are simply
+   * overwritten here — timeOfDay.tick is gated off while inside, so they
+   * stick — and exit restores everything via timeOfDay.reapply(), which owns
+   * the full palette (sun disc included).
+   */
+  #setMuseumInterior(active) {
+    this._inMuseum = active;
+    const show = !active;
+    if (this.world?.glb?.root) this.world.glb.root.visible = show;
+    if (this.world?.sky?.mesh) this.world.sky.mesh.visible = show;
+    if (this.grass?.mesh) this.grass.mesh.visible = show;
+    if (this.water?.mesh) this.water.mesh.visible = show;
+    this.foliage?.setVisible?.(show);
+    if (this.flowers?.meshes) {
+      for (const m of this.flowers.meshes) m.mesh.visible = show;
+    }
+    if (this.fireflies?.points) this.fireflies.points.visible = show;
+    if (this.leaves?.mesh) this.leaves.mesh.visible = show;
+    if (this.rain?.group) this.rain.group.visible = show && this.rain.enabled;
+    if (this.snow?.group) this.snow.group.visible = show;
+    if (this.windLines?.mesh) this.windLines.mesh.visible = show;
+    if (this.footprints?._mesh) this.footprints._mesh.visible = show;
+    if (this.contactShadow?._mesh) this.contactShadow._mesh.visible = show;
+    if (this.likeLights?.swarm) this.likeLights.swarm.visible = show;
+    if (this.likeLights?.rise) this.likeLights.rise.visible = show;
+
+    if (active) {
+      // No PMREM/IBL underground (spec §6) — and no sun: torch PointLights +
+      // a warm ambient/hemi base only.
+      this._museumSavedEnv = this.scene.environment ?? null;
+      this.scene.environment = null;
+      this.lights.sun.intensity = 0;
+      this.lights.rim.intensity = 0;
+      this.lights.ambient.color.set(0xffd9b0);
+      this.lights.ambient.intensity = 0.35;
+      this.lights.hemi.color.set(0xffc890);
+      this.lights.hemi.groundColor.set(0x3a2a1c);
+      this.lights.hemi.intensity = 0.26;
+      this.sun?.setOpacity?.(0);
+    } else {
+      this.scene.environment = this._museumSavedEnv ?? null;
+      this.timeOfDay?.reapply?.();
+    }
+  }
+
   #initMapSystems() {
     assertCoordRoundTrip(WORLD_BOUNDS);
     const solidPushSpots =
@@ -1504,6 +1581,7 @@ export class App extends EventTarget {
     window.addEventListener("keydown", (e) => {
       if (document.body.classList.contains("booting")) return;
       if (e.code === "KeyM") {
+        if (this._inMuseum) return; // map UI is hidden in the museum
         e.preventDefault();
         this.mapOverlay?.toggle?.();
       } else if (e.code === "Escape" && this.mapOverlay?.isOpen) {
@@ -1843,6 +1921,9 @@ export class App extends EventTarget {
     // GPU-bound vs CPU-bound — see Debug HUD `cpu` line.
     const _cpuStart = performance.now();
     this.#updateAdaptiveDpr(frameDelta);
+    // Museum interior — most outdoor systems below skip while underground
+    // (their meshes are hidden by #setMuseumInterior; this saves their CPU).
+    const inMuseum = this._inMuseum === true;
 
     const fixedDelta = this.quality.physicsStep ?? 1 / 60;
     const maxSteps = this.quality.maxPhysicsSteps ?? 5;
@@ -1923,14 +2004,18 @@ export class App extends EventTarget {
 
     // Plant the feet on the terrain BEFORE anything reads the pose — so both
     // the contact shadow and the renderer see the solved (grounded) feet.
-    this.player.character?.solveFootIK(
-      this.world.terrain,
-      this.weather?.coverage ?? 0,
-    );
+    // Both read the OUTDOOR heightfield, so they pause inside the museum
+    // (its floors sit ~45m below the terrain surface they'd sample).
+    if (!inMuseum) {
+      this.player.character?.solveFootIK(
+        this.world.terrain,
+        this.weather?.coverage ?? 0,
+      );
+    }
 
     // Ground the character: place the contact pool under the (now interpolated)
     // player with mixer-synced bones, so the lowest-foot read is valid.
-    if (this.contactShadow) {
+    if (this.contactShadow && !inMuseum) {
       this.contactShadow.update(this.player, this.world.terrain, this.weather);
     }
 
@@ -1943,23 +2028,32 @@ export class App extends EventTarget {
     // Intro cinematic drives the camera + character descent directly while the
     // orbit cam is locked; no-op once control has handed off.
     if (this.intro?.active) this.intro.update(frameDelta);
-    if (this.discovery)
+    if (this.discovery && !inMuseum)
       this.discovery.update(this.player.position.x, this.player.position.z);
     // While the Colour Garden game mode owns the camera + locks movement,
     // suppress click-to-move so canvas clicks don't drop walk-flags behind it.
     const inGarden = this.colourGarden?.inGameMode === true;
-    if (this.clickToMove && !inGarden) this.clickToMove.update(frameDelta);
-    if (this.miniMap) this.miniMap.update();
-    if (this.mapOverlay) this.mapOverlay.update();
-    if (this.compass) this.compass.update();
+    if (this.clickToMove && !inGarden && !inMuseum)
+      this.clickToMove.update(frameDelta);
+    if (this.miniMap && !inMuseum) this.miniMap.update();
+    if (this.mapOverlay && !inMuseum) this.mapOverlay.update();
+    if (this.compass && !inMuseum) this.compass.update();
     // World + ambient motion run on the SCALED delta so the whole scene visibly
     // slows during the Colour Garden paint payoff (snow drift, grass/wind sway,
     // leaves, orb arc + bloom). Camera/UI/audio + the weather schedule stay on
     // real time. scaledDelta === frameDelta outside slow-mo → normal play same.
-    this.world.update(elapsed, this.camera, scaledDelta, this.player.position, {
-      nightFactor: this.timeOfDay?.nightFactor ?? 0,
-      snowCoverage: this.weather?.coverage ?? 0,
-    });
+    if (!inMuseum) {
+      this.world.update(
+        elapsed,
+        this.camera,
+        scaledDelta,
+        this.player.position,
+        {
+          nightFactor: this.timeOfDay?.nightFactor ?? 0,
+          snowCoverage: this.weather?.coverage ?? 0,
+        },
+      );
+    }
     this.colourGarden?.update(scaledDelta, this.player.position);
     if (this._colliderDebugLines) this.#updateColliderDebug();
     this.wind.update(scaledDelta);
@@ -1968,32 +2062,35 @@ export class App extends EventTarget {
     // ripple locally around the legs while running.
     const camFwd = (this._camFwd ??= new THREE.Vector3());
     this.camera.getWorldDirection(camFwd);
-    this.grass?.setPlayerPos(this.player.position, {
-      velocity: sample?.velocity,
-      speed: sample?.speed ?? 0,
-      running: this.player.controller.isRunning,
-      camDir: { x: camFwd.x, z: camFwd.z },
-      camPos: { x: this.camera.position.x, z: this.camera.position.z },
-    });
+    if (!inMuseum) {
+      this.grass?.setPlayerPos(this.player.position, {
+        velocity: sample?.velocity,
+        speed: sample?.speed ?? 0,
+        running: this.player.controller.isRunning,
+        camDir: { x: camFwd.x, z: camFwd.z },
+        camPos: { x: this.camera.position.x, z: this.camera.position.z },
+      });
+    }
     // Foliage parts/flutters around the player (bushes at walking height,
     // canopies when jumped into) — driven by the player's 3D position.
-    if (this.world.foliage)
+    if (this.world.foliage && !inMuseum)
       this.world.foliage.setPlayerPos(this.player.position);
-    if (this.world.flowers)
+    if (this.world.flowers && !inMuseum)
       this.world.flowers.setPlayerPos(this.player.position);
     // Phase F — day/night lamp + bonfire intensity, lava glow, animated props.
-    if (this.worldLights)
+    if (this.worldLights && !inMuseum)
       this.worldLights.update(frameDelta, this.timeOfDay.mode, elapsed);
-    if (this.bonfires)
+    if (this.bonfires && !inMuseum)
       this.bonfires.update(
         elapsed,
         frameDelta,
         this.player.position,
         this.timeOfDay.mode,
       );
-    if (this.lava) this.lava.update(elapsed, this.timeOfDay?.nightFactor ?? 0);
-    if (this.lavaHazard) this.lavaHazard.update(frameDelta);
-    if (this.animatedProps) {
+    if (this.lava && !inMuseum)
+      this.lava.update(elapsed, this.timeOfDay?.nightFactor ?? 0);
+    if (this.lavaHazard && !inMuseum) this.lavaHazard.update(frameDelta);
+    if (this.animatedProps && !inMuseum) {
       this.animatedProps.setPlayerPos(this.player.position);
       this.animatedProps.update(elapsed, frameDelta);
     }
@@ -2001,30 +2098,34 @@ export class App extends EventTarget {
     // suppress its own prompt in case of overlap (Dance tile near Contact).
     // Both are suppressed inside the Colour Garden game mode so stray prop
     // prompts don't appear over the mini-game HUD.
-    if (this.actionPrompts && !inGarden)
+    if (this.actionPrompts && !inGarden && !inMuseum)
       this.actionPrompts.tick(this.player.position, frameDelta);
-    if (this.interaction && !inGarden)
+    if (this.interaction && !inGarden && !inMuseum)
       this.interaction.tick(this.player.position);
     if (
       this.skillSphere &&
+      !inMuseum &&
       this.#shouldTickSection("skills", this.skillSphere)
     ) {
       this.skillSphere.update(frameDelta);
     }
     if (
       this.projectsHut &&
+      !inMuseum &&
       this.#shouldTickSection("projects", this.projectsHut)
     ) {
       this.projectsHut.update(frameDelta);
     }
     if (
       this.contactBoard &&
+      !inMuseum &&
       this.#shouldTickSection("contact", this.contactBoard)
     ) {
       this.contactBoard.update(elapsed);
     }
     if (
       this.experience &&
+      !inMuseum &&
       this.#shouldTickSection("experience", this.experience, 58)
     )
       this.experience.update(
@@ -2036,13 +2137,34 @@ export class App extends EventTarget {
     // UI sync — only does work on mobile (interact-pill label, push-button
     // enabled state, dance toggle teardown). On desktop this is a no-op.
     if (this.ui) this.ui.tick();
-    if (this.fireflies) this.fireflies.update(elapsed);
-    if (this.resumeBook) this.resumeBook.update(elapsed);
-    if (this.likeLights) {
+    if (this.fireflies && !inMuseum) this.fireflies.update(elapsed);
+    if (this.resumeBook && !inMuseum) this.resumeBook.update(elapsed);
+    // Museum assets are fully deferred off boot: the first movement after the
+    // intro hands off is the "visitor is actually playing" signal — only then
+    // does the tiny door.glb fetch start in the background. A fresh spawn
+    // can't see the door spot (~29m away), so the pop-in is invisible.
+    if (
+      !this._museumDoorRequested &&
+      this.museum &&
+      !this.intro?.active &&
+      sample?.moving
+    ) {
+      this._museumDoorRequested = true;
+      this.museum.load();
+    }
+    // Museum runs in BOTH worlds: outdoors it drives the beacon + door prompt
+    // and the 25m lazy fetch; inside it drives torches/props/prompts.
+    this.museum?.update(
+      elapsed,
+      frameDelta,
+      this.player.position,
+      this.timeOfDay?.nightFactor ?? 0,
+    );
+    if (this.likeLights && !inMuseum) {
       this.likeLights.update(elapsed);
       this.likeLights.setNightFactor(this.timeOfDay?.nightFactor ?? 0);
     }
-    if (this.guestbookTree)
+    if (this.guestbookTree && !inMuseum)
       this.guestbookTree.update(elapsed, frameDelta, this.player.position);
     if (this.groundBreak) this.groundBreak.update(frameDelta);
     // Snow and rain never share the sky. While any snow phase is active
@@ -2052,21 +2174,21 @@ export class App extends EventTarget {
     // clears. (Uses last frame's snow phase — a 1-frame lag on a 30s ramp.)
     const snowActive = !!this.weather?.isActive;
     const rainActive = !!this.rain?.enabled && !snowActive;
-    if (this.water) {
+    if (this.water && !inMuseum) {
       // Rain wetness drives the water's rain-impact rings.
       this.water.rainTarget = rainActive ? 1 : 0;
       this.water.update(elapsed, frameDelta, this.player.position, sample);
     }
-    this.rain.setSuppressed(snowActive);
-    this.rain.update(scaledDelta);
+    this.rain.setSuppressed(snowActive || inMuseum);
+    if (!inMuseum) this.rain.update(scaledDelta);
     // Weather director advances the snow cycle + writes the shared uniforms;
     // Snow reads them this same frame for its falling flakes. The director runs
     // on real time (don't slow the storm schedule); only the flake FALL slows.
     this.weather.update(frameDelta);
-    this.snow.update(scaledDelta);
+    if (!inMuseum) this.snow.update(scaledDelta);
     // Auto-thunder only fires while rain is genuinely active (and never during
-    // snow). The manual ⚡ button stays live regardless — it's user-initiated.
-    this.thunderstorm.setActive(rainActive);
+    // snow or underground). The manual ⚡ button stays live regardless.
+    this.thunderstorm.setActive(rainActive && !inMuseum);
     this.thunderstorm.update(frameDelta, this.player.position);
     // Stamp snow-seen the first time flakes are actually visible, so a returning
     // visitor who caught it keeps the full-cycle pacing (see boot).
@@ -2080,31 +2202,36 @@ export class App extends EventTarget {
     // The GLB prefetches as soon as any snow phase starts — the 30s onset is
     // plenty of lead time. set() is idempotent, safe to call every tick.
     const outfits = this.player?.character?.outfits;
-    if (outfits) {
+    if (outfits && !inMuseum) {
       const cov = this.weather?.coverage ?? 0;
       if (snowActive) outfits.prefetch();
       if (cov >= 0.4) outfits.set('snow');
       else if (cov <= 0.12) outfits.set('default');
     }
-    this.windLines.update(scaledDelta, this.player.position);
+    if (!inMuseum) this.windLines.update(scaledDelta, this.player.position);
     // Leaves only fall once released (~8s post-spawn) and never while it snows —
     // autumn drift and a snowstorm can't share the sky.
-    this.leaves.setActive(this._leavesUnlocked && !this.weather.isSnowing);
-    this.leaves.update(scaledDelta, this.player.position);
+    this.leaves.setActive(
+      this._leavesUnlocked && !this.weather.isSnowing && !inMuseum,
+    );
+    if (!inMuseum) this.leaves.update(scaledDelta, this.player.position);
     const _grounded = this.player._grounded !== false;
-    this.footprints.update(frameDelta);
+    if (!inMuseum) this.footprints.update(frameDelta);
     const px = this.player.position.x;
     const py = this.player.position.y;
     const pz = this.player.position.z;
-    let surface = this.#surfaceAt(px, py, pz);
+    // Underground everything is stonework — skip the terrain-based surface
+    // pick (the museum's x/z would read as outdoor sand/water).
+    let surface = inMuseum ? "stone" : this.#surfaceAt(px, py, pz);
     // Prints only drop on grass; the snow look kicks in once the same storm
     // coverage that swaps the crunch audio (>0.55) has blanketed the ground.
     const coverage = this.weather?.coverage ?? 0;
-    this._printable = surface === "grass";
+    this._printable = !inMuseum && surface === "grass";
     this._snowPrint = this._printable && coverage > 0.55;
     // Once a storm has blanketed the ground, footsteps crunch through snow
-    // (separate walk vs run packs). Water wading keeps its own steps.
-    if (surface !== "water" && coverage > 0.55) {
+    // (separate walk vs run packs). Water wading keeps its own steps. The
+    // museum stays stone — no snow crunch underground.
+    if (!inMuseum && surface !== "water" && coverage > 0.55) {
       surface = this.player.controller.isRunning ? "snowRun" : "snow";
     }
     this.audio?.tick(frameDelta, {
@@ -2112,7 +2239,8 @@ export class App extends EventTarget {
       running: this.player.controller.isRunning,
       grounded: _grounded, // default to true so we don't false-trigger on first frame
       surface,
-      rainOn: rainActive, // false while it snows → no rain ambient over a snowfall
+      // false while it snows or underground → no rain ambient over either
+      rainOn: rainActive && !inMuseum,
     });
     // Landing one-shot — pick the right surface sample.
     if (this.audio && this._wasGroundedApp === false && _grounded === true) {
@@ -2151,7 +2279,7 @@ export class App extends EventTarget {
     }
     // Ocean ambience volume rides player proximity to the shoreline. Inside
     // the island it falls off with distance; in the water it's at full level.
-    if (this.audio && this.water) {
+    if (this.audio && this.water && !inMuseum) {
       this.audio.setOceanProximity(Math.hypot(px, pz), this.water.islandRadius);
     }
 
@@ -2173,26 +2301,29 @@ export class App extends EventTarget {
         : 0;
       const waterDepth = Math.max(0, Player.WATER_SURFACE_Y - groundY);
       // Gate on the player's feet height (ppos.y is feet) so standing on a
-      // bridge deck over the pond/river doesn't register as in-water.
-      const inWater = waterDepth > 0 && ppos.y <= Player.WATER_SURFACE_Y + 0.1;
+      // bridge deck over the pond/river doesn't register as in-water. The
+      // museum floors sit below the water line at outdoor pond x/z — never
+      // in-water (or rained-on) underground.
+      const inWater =
+        !inMuseum && waterDepth > 0 && ppos.y <= Player.WATER_SURFACE_Y + 0.1;
       this.achievements.tick(frameDelta, {
         playerPos: ppos,
         moving: !!sample?.moving,
         running: this.player.controller.isRunning,
         grounded: _grounded,
         inWater,
-        waterDepth,
+        waterDepth: inMuseum ? 0 : waterDepth,
         isNight: this.timeOfDay?.mode === "night",
-        isRaining: rainActive,
-        isSnowing: !!this.weather?.isSnowing,
+        isRaining: rainActive && !inMuseum,
+        isSnowing: !inMuseum && !!this.weather?.isSnowing,
         mode: this.timeOfDay?.mode,
       });
-      this.#tickAchievementProximity(ppos, inWater);
+      if (!inMuseum) this.#tickAchievementProximity(ppos, inWater);
     }
 
     // Distance-guess mini-game — early-exits when the player isn't in the
     // shore zone, so the cost off-trigger is one hypot + branch per frame.
-    if (this.distanceGame) {
+    if (this.distanceGame && !inMuseum) {
       this.distanceGame.update(frameDelta, this.player.position, {
         moving: !!sample?.moving,
         isNight: this.timeOfDay?.mode === "night",
@@ -2201,23 +2332,28 @@ export class App extends EventTarget {
 
     // Sun + shadow camera follow the player so shadows stay sharp wherever
     // they walk. TimeOfDay owns the offset so it can be lerped between
-    // day-sun and night-moon positions during the transition.
-    const p = this.player.position;
-    const off = this.timeOfDay.sunOffset;
-    this.lights.sun.position.set(p.x + off.x, p.y + off.y, p.z + off.z);
-    this.lights.sun.target.position.set(p.x, p.y, p.z);
-    this.lights.sun.target.updateMatrixWorld();
-    // Foliage two-tone blend follows the sun: direction = (light - target).
-    if (this.world.foliage) {
-      this.world.foliage.setSunDirection(off);
-    }
-    this.timeOfDay.tick(p, this.camera, elapsed, frameDelta);
-    // Sun disc follows its OWN arc (set by TimeOfDay), not the shadow light, so
-    // it sets in the west while the moon rises in the east.
-    this.sun.update(this.camera, this.timeOfDay.sunDiscDir);
+    // day-sun and night-moon positions during the transition. The whole block
+    // pauses in the museum: timeOfDay.tick would overwrite the interior light
+    // setup every frame (exit restores via reapply()), and there's no sun,
+    // sky or IBL underground.
+    if (!inMuseum) {
+      const p = this.player.position;
+      const off = this.timeOfDay.sunOffset;
+      this.lights.sun.position.set(p.x + off.x, p.y + off.y, p.z + off.z);
+      this.lights.sun.target.position.set(p.x, p.y, p.z);
+      this.lights.sun.target.updateMatrixWorld();
+      // Foliage two-tone blend follows the sun: direction = (light - target).
+      if (this.world.foliage) {
+        this.world.foliage.setSunDirection(off);
+      }
+      this.timeOfDay.tick(p, this.camera, elapsed, frameDelta);
+      // Sun disc follows its OWN arc (set by TimeOfDay), not the shadow light,
+      // so it sets in the west while the moon rises in the east.
+      this.sun.update(this.camera, this.timeOfDay.sunDiscDir);
 
-    // Rebuild the sky-derived IBL when the sky colours move (no-op most frames).
-    if (this.environment) this.environment.update();
+      // Rebuild the sky-derived IBL when the sky colours move (no-op most frames).
+      if (this.environment) this.environment.update();
+    }
 
     // Water no longer owns reflection/refraction render targets; this stays as a
     // stable hook for any future pre-render work the water system may need.
