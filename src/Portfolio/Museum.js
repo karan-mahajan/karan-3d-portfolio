@@ -731,7 +731,9 @@ export class Museum {
     );
     c.lock?.();
     this.audio?.playTeleportWoosh?.();
-    this.audio?.duckAmbient?.(0.25, 400); // hushed until the underground loop (Phase D)
+    // Full hush — it's a museum. All outdoor beds (day/night, birds, wind)
+    // fade to silence; exit() restores them with duckAmbient(1).
+    this.audio?.duckAmbient?.(0, 500);
     await this.transitionFx.play(50, 58, async () => {
       this.#setInside(true);
       const p = this._spawnEntryWorld;
@@ -974,7 +976,12 @@ export class Museum {
       // wading guard). Drop the floor to the basement, or the camera stays
       // pinned at the surface 45m above the character — black screen.
       this.playerCamera.minTargetY = this.interiorY - 5;
-      this.audio?.setOceanProximity?.(1e9, 45); // shore ambience falls silent
+      // Silence the ocean/wave loops. NOTE: distance 0 = island CENTRE =
+      // proximity 0 = volume 0. Passing a huge distance reads as "swimming
+      // in the ocean" and pins both loops to MAX — the original Phase B bug
+      // that filled the museum with water noise. App's per-frame proximity
+      // update is gated off while inMuseum, so this value holds until exit.
+      this.audio?.setOceanProximity?.(0, 45);
     } else if (this._saved) {
       p.respawnFallY = this._saved.respawnFallY;
       p.respawnPoint = null;
