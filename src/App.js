@@ -983,9 +983,20 @@ export class App extends EventTarget {
       audio: this.audio,
       transitionFx: this.transitionFx,
       navmask: this.navmask,
+      discovery: this.discovery,
+      achievements: this.achievements,
       onInteriorChange: (active) => this.#setMuseumInterior(active),
       warmShaders: () => this.#warmShadersInBackground(),
     });
+    // The door is a hidden map entry — pushed into the LIVE mapSections array
+    // so Discovery/MiniMap/MapOverlay/Teleport all see it (they hold the same
+    // reference); it only renders once the first crossing discovers it.
+    this.mapSections?.push(this.museum.mapSection());
+    // Back-references (both were constructed before the museum existed): the
+    // mobile interact pill mirrors the museum's E-prompt, and ActionPrompts
+    // refuses flips/pushes while a portal crossing is scripting the character.
+    this.ui.museum = this.museum;
+    this.actionPrompts.museum = this.museum;
 
     // First-visit tutorial coachmarks. Constructed eagerly so main.js can
     // call .start() at the right moment (after the welcome overlay clears
@@ -1317,6 +1328,14 @@ export class App extends EventTarget {
    */
   #setMuseumInterior(active) {
     this._inMuseum = active;
+    if (active && this.actionPrompts) {
+      // ActionPrompts stops ticking underground, so its proximity state goes
+      // stale — a P press in the gallery would snap the player to the last
+      // OUTDOOR push spot (the door, 45m above). Clear it on the way in.
+      this.actionPrompts.endPush?.();
+      this.actionPrompts.currentPushSpot = null;
+      this.actionPrompts.candidate = null;
+    }
     const show = !active;
     if (this.world?.glb?.root) this.world.glb.root.visible = show;
     if (this.world?.sky?.mesh) this.world.sky.mesh.visible = show;

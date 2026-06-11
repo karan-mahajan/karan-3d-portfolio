@@ -131,6 +131,9 @@ export class MiniMap {
     const ctx = this.ctx;
     const rim = c - 12;
     for (const section of this.sections) {
+      const discovered = this.discovery?.isDiscovered?.(section.id) ?? false;
+      // Hidden entries (the museum door) stay off the map until discovered.
+      if (section.hidden && !discovered) continue;
       const [sx, , sz] = section.position;
       let o = this.#project(sx - px, sz - pz, mppm, yaw);
       const dist = Math.hypot(o.x, o.y);
@@ -138,7 +141,6 @@ export class MiniMap {
       if (atRim && dist > 0) {
         o = { x: (o.x / dist) * rim, y: (o.y / dist) * rim };
       }
-      const discovered = this.discovery?.isDiscovered?.(section.id) ?? false;
       ctx.beginPath();
       ctx.arc(c + o.x, c + o.y, atRim ? 3.4 : 5, 0, Math.PI * 2);
       ctx.fillStyle = discovered ? section.color : '#9a9082';

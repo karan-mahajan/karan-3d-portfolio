@@ -601,38 +601,6 @@ body {
   box-shadow: 0 0 11px rgba(251, 191, 36, 0.65);
 }
 
-.push-joke {
-  position: fixed;
-  top: 27%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 43;
-  max-width: min(92vw, 32rem);
-  padding: 0.6rem 1.2rem;
-  background: #15110d;
-  color: #ffffff;
-  border: 2px solid rgba(255, 210, 138, 0.55);
-  border-radius: 10px;
-  font-family: 'Nunito', sans-serif;
-  font-size: clamp(0.95rem, 3.4vw, 1.25rem);
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  font-style: italic;
-  line-height: 1.3;
-  text-align: center;
-  word-break: break-word;
-  pointer-events: none;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
-  box-shadow: 0 3px 18px rgba(0, 0, 0, 0.6);
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-
-.push-joke.hidden {
-  opacity: 0;
-  transform: translate(-50%, -6px);
-  pointer-events: none;
-}
-
 /* ─────────────── Action blocked toast ─────────────── */
 .action-blocked {
   position: fixed;
@@ -1931,10 +1899,6 @@ body[data-tod="night"] #mobile-actions .action-btn.is-active {
 .is-mobile .push-hint,
 .is-mobile .action-blocked {
   top: 14%;
-}
-
-.is-mobile .push-joke {
-  top: 22%;
 }
 
 /* Lightning message: it's the one the user reported as cut off. The

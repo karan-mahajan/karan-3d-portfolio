@@ -218,6 +218,8 @@ export class MapOverlay {
 
   #sectionAt(svgX, svgY) {
     for (const section of this.sections) {
+      // Hidden entries have no marker until discovered — no invisible hitbox.
+      if (section.hidden && !this.discovery?.isDiscovered?.(section.id)) continue;
       const [x, , z] = section.position;
       const p = worldToSvg(x, z, SIZE, SIZE, WORLD_BOUNDS);
       if (Math.hypot(svgX - p.x, svgY - p.y) <= 24) return section;

@@ -529,6 +529,25 @@ export class UIController {
 
   #syncInteractPill() {
     if (!this._interactBtn) return;
+    // Museum prompts first (`museum` is a back-reference set by App after
+    // construction). Its E-key flow already lives in a window keydown
+    // listener, so the pill's synthetic KeyE fires it as-is. While inside
+    // the gallery, never fall through to Interaction/ActionPrompts — their
+    // ticks are gated off underground, so that state is stale.
+    const mus = this.museum;
+    if (mus?._panelOpen) {
+      this._interactBtn.classList.add('hidden');
+      return;
+    }
+    if (mus?._armed) {
+      const a = mus._armed;
+      this.#showInteractPill(a.action === 'station' ? 'Read chapter' : a.label);
+      return;
+    }
+    if (mus?.isInside) {
+      this._interactBtn.classList.add('hidden');
+      return;
+    }
     const ix = this.interaction;
     // While a focused panel is open, the pill should be hidden — the panel
     // owns the screen and has its own × close.
@@ -549,12 +568,16 @@ export class UIController {
       label = this.actionPrompts.candidate.label;
     }
     if (label) {
-      this._interactBtn.classList.remove('hidden');
-      const labelEl = this._interactBtn.querySelector('.interact-label');
-      if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
+      this.#showInteractPill(label);
     } else {
       this._interactBtn.classList.add('hidden');
     }
+  }
+
+  #showInteractPill(label) {
+    this._interactBtn.classList.remove('hidden');
+    const labelEl = this._interactBtn.querySelector('.interact-label');
+    if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
   }
 
   #syncPushButton() {

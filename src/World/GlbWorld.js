@@ -32,8 +32,7 @@ export class GlbWorld {
   static PATH_NAME_REGEX = /^(spawn_path|experience_trail|experience_stepping_stone|trail_perimeter|trail_detour|stepping_stone|bridge)/;
   // Push-spot patterns. Each [regex, type] entry classifies a mesh-name into
   // one of the categories the downstream code (ActionPrompts, MiniMap nav
-  // blockers, push joke pool) reads. Regexes are tried in order — first
-  // match wins.
+  // blockers) reads. Regexes are tried in order — first match wins.
   static PUSH_NAME_PATTERNS = [
     [/^tree_pine_/,            'tree'],
     [/^tree_birch_/,           'tree'],

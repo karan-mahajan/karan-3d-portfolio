@@ -37,8 +37,9 @@ import { BANNER_TINTS, MUSEUM_CHAPTERS } from "./MuseumData.js";
  * cuboid_*\/ramp_* proxies, the E-prompt + crossing sequences, the interior
  * state swap (player flags, camera clamp, audio, HUD body-class, App callback
  * for the outdoor world), torch-flicker / rune-pulse TSL materials, the
- * float/orbit prop animations, the per-station accent tints, and the paged
- * chapter reading panel (content in MuseumData.js).
+ * float/orbit prop animations, the per-station accent tints, the paged
+ * chapter reading panel (content in MuseumData.js), and the first-entry
+ * secret reveal (achievement + hidden map marker, see mapSection()).
  *
  * WebGPU note: all custom shading is TSL node materials (mirrors
  * ResumeBook.js); GLSL onBeforeCompile silently no-ops on this renderer.
@@ -85,6 +86,8 @@ export class Museum {
    * @param {object} opts.audio
    * @param {object} opts.transitionFx  — iris wipe
    * @param {object} [opts.navmask]    — clearance tests for the exit landing
+   * @param {object} [opts.discovery]  — first entry calls discover('museum')
+   * @param {object} [opts.achievements] — first entry triggers 'museum_found'
    * @param {Function} [opts.onInteriorChange] — App hides/restores the outdoor world
    * @param {Function} [opts.warmShaders]      — off-thread pipeline warm after loads
    */
@@ -98,6 +101,8 @@ export class Museum {
     audio,
     transitionFx,
     navmask = null,
+    discovery = null,
+    achievements = null,
     onInteriorChange = null,
     warmShaders = null,
   }) {
@@ -110,6 +115,8 @@ export class Museum {
     this.audio = audio;
     this.transitionFx = transitionFx;
     this.navmask = navmask;
+    this.discovery = discovery;
+    this.achievements = achievements;
     this.onInteriorChange = onInteriorChange;
     this.warmShaders = warmShaders;
 
@@ -742,6 +749,10 @@ export class Museum {
       this.#portalHide(this.doorPortal);
     });
     this.audio?.playTeleportArrive?.();
+    // First crossing: the secret is out — rare unlock, and the door joins the
+    // map (markers + return teleport land OUTSIDE the door, never down here).
+    this.achievements?.trigger?.("museum_found");
+    this.discovery?.discover?.("museum");
     c.unlock?.();
     // Golden-wipe into the museum outfit while stepping out of the doorway.
     outfits?.set?.("museum", { duration: 1.6 });
@@ -883,6 +894,29 @@ export class Museum {
       z,
       y: (this.terrain?.heightAt?.(x, z) ?? this.groundY) + 0.1,
       facing: Math.atan2(fx, fz),
+    };
+  }
+
+  /**
+   * Map-marker descriptor for App's mapSections. `hidden: true` keeps it off
+   * the mini-map/overlay AND out of proximity auto-discovery until the first
+   * crossing calls discovery.discover('museum'). The landing reuses the
+   * navmask-checked exit-landing search, flipped to face the door — a map
+   * teleport always arrives OUTSIDE on the grass, never in the basement.
+   */
+  mapSection() {
+    const land = this.#exitLanding();
+    return {
+      id: "museum",
+      name: "Museum",
+      color: "#8a63ff", // the portal-swirl violet
+      position: [DOOR_POS.x, 0, DOOR_POS.z],
+      landing: {
+        x: land.x,
+        z: land.z,
+        facing: Math.atan2(DOOR_POS.x - land.x, DOOR_POS.z - land.z),
+      },
+      hidden: true,
     };
   }
 

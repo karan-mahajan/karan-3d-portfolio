@@ -151,9 +151,11 @@ export function renderLamps(width, height, bounds = WORLD_BOUNDS) {
 export function renderSections(width, height, bounds = WORLD_BOUNDS, { showLabels = false, discovery = null, sections = SECTIONS } = {}) {
   const group = svgEl('g', { class: 'map-sections' });
   for (const section of sections) {
+    const discovered = discovery?.isDiscovered(section.id) ?? false;
+    // Hidden entries (the museum door) stay off the map until discovered.
+    if (section.hidden && !discovered) continue;
     const [x, , z] = section.position;
     const p = worldToSvg(x, z, width, height, bounds);
-    const discovered = discovery?.isDiscovered(section.id) ?? false;
     const marker = svgEl('g', {
       class: `map-marker map-marker-section ${discovered ? 'is-discovered' : 'is-undiscovered'}`,
       'data-marker-id': section.id,

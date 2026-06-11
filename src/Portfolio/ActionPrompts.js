@@ -6,200 +6,8 @@ const MOVE_KEYS = new Set([
   'Space',
 ]);
 const COMBAT_RESET_SECONDS = 5;
-const PUSH_JOKE_DELAY = 1.6;
-const PUSH_JOKE_INTERVAL = 2.6;
-
-const PUSH_JOKES = {
-  tree: [
-    'Even the squirrels are laughing.',
-    'This tree was here first.',
-    'Real oak, real stubborn.',
-    'It pays property tax.',
-    'Nature wins. Always.',
-    'Try hugging it instead.',
-    'Bark stronger than your shoulder.',
-    'Photosynthesis 1, you 0.',
-    'Roots deeper than your repo history.',
-    'It has rings older than you.',
-    'The bark is unimpressed.',
-    'Try chopping. Or therapy.',
-    'It will outlive us all.',
-    'Hugs accepted. Shoves declined.',
-    'Even the birds left.',
-    'You vs. an oak. Place bets.',
-    'It moves at geological speed.',
-    'Static asset. Literally.',
-    'Squirrels filed a complaint.',
-    'Patience: also a tree thing.',
-  ],
-  board: [
-    'The HOA approved this.',
-    'Bolted to the codebase.',
-    'Even my best work wont budge.',
-    'Submit a ticket?',
-    'Press harder. Same result.',
-    'Its rendered, not movable.',
-    '404: motion not found.',
-    'CSS position: extremely fixed.',
-    'This board has tenure.',
-    'Maybe try a different framework.',
-    'Its in production. It stays.',
-    'PR blocked by reviewer: the board.',
-    'Mounted by someone who cared.',
-    'Stuck on this since launch.',
-    'It would, but lazy loading.',
-    'Welded with feature flags.',
-    'Static site, static board.',
-    'Inspect element wont help.',
-    'Hot-glued by the build step.',
-  ],
-  sign: [
-    'The sign disagrees.',
-    'Signs are stubborn by design.',
-    'Wood doesnt yield.',
-    'Even the typography is rigid.',
-    'Marker, not a mover.',
-    'Move along - literally.',
-    'The sign reads: nope.',
-    'Direction-giver, not direction-taker.',
-    'Posted, signed, immovable.',
-    'It points. You walk. Thats the deal.',
-    'Read it. Dont fight it.',
-    'Concrete footing, concrete answer.',
-    'It saw your shove coming.',
-    'A sign of the times. Not yours.',
-    'Wrong verb: try reading.',
-    'Sign language: no.',
-    'Cemented in vibes.',
-    'It is the path, not the obstacle.',
-    'Posted. Final. Indexed.',
-  ],
-  section: [
-    'Dont push my buttons.',
-    'Load-bearing self-doubt.',
-    'The structure prevails.',
-    'Solid build, unfortunately.',
-    'Even my home page wont move.',
-    'This section is on rails.',
-    'Foundational. Like, literally.',
-    'Refactored to be immovable.',
-    'Stable release. Cant patch it.',
-    'Landing zone, not a sled.',
-    'Featured. Therefore frozen.',
-    'It has a route. It is the route.',
-    'Cant scroll past with brute force.',
-    'Section locked: by design.',
-    'Move me with a redesign instead.',
-    'Architectural. Not optional.',
-    'It carries the whole vibe.',
-    'Cant be pushed. Can be admired.',
-    'Anchored, like the navbar.',
-  ],
-  rock: [
-    'Its a rock. Of course not.',
-    'Tectonically speaking, no.',
-    'Predates the planet.',
-    'Geology disagrees.',
-    'Maybe in a thousand years.',
-    'Stone-faced refusal.',
-    'This boulder has tenure.',
-    'Igneous and uninterested.',
-    'Rock solid. Surprise.',
-    'It absorbed your push.',
-    'Pebble it is not.',
-    'Even erosion gave up.',
-    'Mass: yes. Movement: no.',
-    'It saw the dinosaurs.',
-    'Stories: many. Motion: zero.',
-    'Granite-tier stubbornness.',
-    'Static asset, biggest one.',
-    'Try a smaller rock?',
-    'Sisyphus tried. Stopped.',
-    'Sedimentally opposed.',
-  ],
-  log: [
-    'Its napping.',
-    'Lumberjack required.',
-    'Roll over - no, the log.',
-    'Even the moss is laughing.',
-    'Try a different log.',
-  ],
-  crate: [
-    'Label says fragile - its bluffing.',
-    'Shipping ETA: never.',
-    'Whats inside? More crates.',
-    'Even the postman gave up.',
-    'Cardboards flexing on you.',
-    'This crate is union.',
-    'Heavier than your tech debt.',
-    'Tracking number: lost.',
-    'Customs hold. Permanent.',
-    'Sender: unknown. Will: strong.',
-    'It contains dense, dense vibes.',
-    'Out for delivery: forever.',
-    'Maybe a forklift. Or a wizard.',
-    'Try the other side?',
-    'It was packed by professionals.',
-    'Address label: here, stay here.',
-    'Tape is doing too much.',
-    'Box logic: pushed = popped.',
-    'Return to sender. Cannot.',
-  ],
-  bag: [
-    'Punch it instead.',
-    'The bag is winning.',
-    'Try squaring up first.',
-    'It hangs there. Like Mondays.',
-    'Maybe ask politely.',
-    'Bags swing. They dont fold.',
-    'Press P? Try press jab.',
-    'It is built different.',
-    'Heavier than your last commit.',
-    'Push? Bro, throw hands.',
-    'Sand inside. Resolve outside.',
-    'It saw worse. Last leg day.',
-    'Tap it. Then tap out.',
-    'Boxing 101: hit it, dont hug it.',
-    'Filled with regret. And sand.',
-    'Hang in there. Literally.',
-    'This is a punch zone.',
-    'Square up or step off.',
-    'Gloves, then opinions.',
-  ],
-  generic: [
-    'Keep pushing!',
-    'It wont budge.',
-    'Try a different angle?',
-    'Shouldve skipped leg day.',
-    'This is futile.',
-    'Have you tried turning it off and on again?',
-    'Persistence is admirable.',
-    'Achievement unlocked: futile effort.',
-    'No movement detected.',
-    'Status: unchanged.',
-    'It enjoys this.',
-    'Out of bounds for physics.',
-    'Pushing intensifies.',
-    'Resistance is not futile, actually.',
-    'It outweighs your discipline.',
-    'Pixel-perfect refusal.',
-    'Even gravity is laughing.',
-    'Stalemate. Move on.',
-    'It does not negotiate.',
-    'Try gentler. Or harder. Same.',
-  ],
-};
 
 const PUSH_FACING_MIN_DOT = 0.5; // ±60° arc — matches the bag-punch facing check
-
-function shuffleCopy(arr) {
-  const out = arr.slice();
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
 
 /**
  * Drives proximity prompts + push hint + animation triggers for the "do"
@@ -229,8 +37,6 @@ export class ActionPrompts {
 
     this.pushSpots = [];
     this.currentPushSpot = null;
-    this._pushJokeDeck = [];
-    this._activeJokeText = null;
 
     this._installDom();
     this._installKeyListeners();
@@ -254,9 +60,9 @@ export class ActionPrompts {
    * own spots directly via addPushSpot.
    *
    * Pool: every standing solid prop — trees, rocks, billboards, signs,
-   * spawn compass — so the joke gag fires when the player tries to push
-   * something they obviously can't. Crate + bag are the real pushable
-   * interactions and come from Interactables.
+   * spawn compass — so the push animation has somewhere to fire when the
+   * player tries to shove something that obviously won't move. Crate + bag
+   * are the real pushable interactions and come from Interactables.
    *
    * Excluded: lying-down props (logs, stumps) because the push animation
    * is a standing arms-forward push; firing it at a ground-level log
@@ -314,12 +120,6 @@ export class ActionPrompts {
     this.pushHintEl.innerHTML = '<span class="key" aria-hidden="true">P</span><span class="label">Press P to push</span>';
     document.body.appendChild(this.pushHintEl);
 
-    this.pushJokeEl = document.createElement('div');
-    this.pushJokeEl.className = 'push-joke hidden';
-    this.pushJokeEl.setAttribute('role', 'status');
-    this.pushJokeEl.setAttribute('aria-live', 'polite');
-    document.body.appendChild(this.pushJokeEl);
-
     // Brief toast for blocked moves ("Not enough space to backflip", etc.).
     // Reuses the warm-palette dark-chip look from the other prompts.
     this.blockedEl = document.createElement('div');
@@ -341,11 +141,6 @@ export class ActionPrompts {
 
   _showPushHint() { this.pushHintEl.classList.remove('hidden'); }
   _hidePushHint() { this.pushHintEl.classList.add('hidden'); }
-  _showPushJoke(text) {
-    if (this.pushJokeEl.textContent !== text) this.pushJokeEl.textContent = text;
-    this.pushJokeEl.classList.remove('hidden');
-  }
-  _hidePushJoke() { this.pushJokeEl.classList.add('hidden'); }
   _showPrompt(label) {
     this.promptEl.querySelector('.label').textContent = label;
     this.promptEl.classList.remove('hidden');
@@ -419,10 +214,14 @@ export class ActionPrompts {
   }
 
   _canStartGlobalAction() {
+    // `museum` is a back-reference set by App — a portal crossing scripts the
+    // character (door swing → walk → iris), so flips/pushes mid-sequence
+    // would fight it.
     return !this.globalPushActive
       && !this.activeHoldLoop
       && !this.oneShotActive
-      && !this.activeZoneLoop;
+      && !this.activeZoneLoop
+      && !this.museum?._busy;
   }
 
   _triggerGlobalAction(actionName, blockMessage) {
@@ -520,13 +319,10 @@ export class ActionPrompts {
     this.pushStartSec = 0;
     this.pushStartMs = 0;
     this.activePushSpot = null;
-    this._pushJokeDeck = [];
-    this._activeJokeText = null;
     this.player.stopLoopAction();
     this.controller.paused = false;
     if (this.playerCamera) this.playerCamera.releaseActionZoom();
     if (this.audio) this.audio.endPush();
-    this._hidePushJoke();
   }
 
   // ── Public action triggers ────────────────────────────────────────────
@@ -548,6 +344,7 @@ export class ActionPrompts {
 
   startPush() {
     if (this.globalPushActive || this.activeHoldLoop || this.oneShotActive || this.activeZoneLoop) return;
+    if (this.museum?._busy) return;
     if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.skillOpen || this.billboardInteraction.zooming)) return;
     // Realism: P only fires when the player is actually facing a real
     // pushable in range. currentPushSpot is set by tick() after the
@@ -564,10 +361,6 @@ export class ActionPrompts {
       this.globalPushActive = true;
       this.pushStartSec = this._elapsed;
       this.pushStartMs = performance.now();
-      const type = (this.currentPushSpot && this.currentPushSpot.type) || 'generic';
-      const pool = PUSH_JOKES[type] || PUSH_JOKES.generic;
-      this._pushJokeDeck = shuffleCopy(pool);
-      this._activeJokeText = null;
       this.controller.paused = true;
       if (this.playerCamera) this.playerCamera.applyActionZoom();
       if (this.audio) this.audio.startPush();
@@ -635,22 +428,6 @@ export class ActionPrompts {
     return START_REACH + (FULL_REACH - START_REACH) * eased;
   }
 
-  _jokeAt(slot) {
-    if (!this._pushJokeDeck.length) return null;
-    if (slot >= this._pushJokeDeck.length) {
-      const last = this._activeJokeText;
-      const next = shuffleCopy(this._pushJokeDeck);
-      if (next[0] === last && next.length > 1) {
-        const tmp = next[0]; next[0] = next[1]; next[1] = tmp;
-      }
-      this._pushJokeDeck = next;
-      slot = 0;
-    }
-    const text = this._pushJokeDeck[slot];
-    this._activeJokeText = text;
-    return text;
-  }
-
   tick(playerPosition, delta) {
     this._elapsed += delta;
 
@@ -673,15 +450,7 @@ export class ActionPrompts {
       this._hidePushHint();
       const heldFor = this.pushStartMs ? (performance.now() - this.pushStartMs) / 1000 : this._elapsed - this.pushStartSec;
       if (this.activePushSpot) this._snapToPushDistance(this.activePushSpot, heldFor);
-      if (heldFor > PUSH_JOKE_DELAY) {
-        const slot = Math.floor((heldFor - PUSH_JOKE_DELAY) / PUSH_JOKE_INTERVAL);
-        const text = this._jokeAt(slot);
-        if (text) this._showPushJoke(text);
-      } else {
-        this._hidePushJoke();
-      }
     } else {
-      this._hidePushJoke();
       const billboardFocused = this.billboardInteraction && this.billboardInteraction.activeIndex >= 0;
       const contactOpen = this.billboardInteraction && this.billboardInteraction.contactOpen;
       const skillOpen = this.billboardInteraction && this.billboardInteraction.skillOpen;

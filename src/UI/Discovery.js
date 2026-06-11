@@ -14,6 +14,9 @@ export class Discovery {
 
   update(playerX, playerZ) {
     for (const target of [...this.sections, ...this.pois]) {
+      // Hidden targets (the museum door) never auto-discover by proximity —
+      // their owner calls discover(id) explicitly (first entry through the door).
+      if (target.hidden) continue;
       const [x, , z] = target.position;
       if (Math.hypot(playerX - x, playerZ - z) <= DISCOVERY_RADIUS) {
         this.discover(target.id);

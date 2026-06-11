@@ -76,13 +76,14 @@ const ACHIEVEMENTS = [
   { id: 'storm_survivor',  name: 'Storm Survivor',  description: 'Stand in rain for 60 seconds',   icon: '☔', category: 'world', target: 1, secret: false, rarity: 'rare' },
   { id: 'snow_day',        name: 'Snow Day',        description: 'Witness the first snowfall',      icon: '❄️', category: 'world', target: 1, secret: false, rarity: 'rare' },
 
-  // === SECRET (6) — names hidden until unlocked ===
+  // === SECRET (7) — names hidden until unlocked ===
   { id: 'pushy',             name: 'The Bulldozer', description: 'Push 5 different objects',                  icon: '🚜',  category: 'secret', target: 5, secret: true, rarity: 'epic' },
   { id: 'water_flip',        name: 'Splashdown',    description: 'Do a backflip in the water',                icon: '🐬',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
   { id: 'storm_chaser',      name: 'Storm Chaser',  description: 'Trigger lightning 5 times in one session', icon: '🌩️',  category: 'secret', target: 5, secret: true, rarity: 'epic' },
   { id: 'distance_guesser',  name: 'Eagle Eye',     description: 'Guess an island distance within 10m',       icon: '🏝️',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
   { id: 'distance_master',   name: 'Cartographer',  description: 'Guess an island distance exactly right',    icon: '🎯',  category: 'secret', target: 1, secret: true, rarity: 'legendary' },
   { id: 'lava_death',        name: 'Floor is Lava', description: 'Get WASTED in the molten pool',             icon: '🌋',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
+  { id: 'museum_found',      name: 'Behind the Curtain', description: 'Find the hidden making-of museum',     icon: '🚪',  category: 'secret', target: 1, secret: true, rarity: 'epic' },
 
   // === TIME (5) — cumulative time spent in the world, in seconds ===
   // Counter targets are seconds so the progress bar fills smoothly. The

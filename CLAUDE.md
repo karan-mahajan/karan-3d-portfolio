@@ -89,7 +89,7 @@ src/Portfolio/          # Billboards (single Project Showcase), Signs, Interacti
 src/Effects/            # Fireflies, Water, Rain, Thunderstorm, Leaves, Footprints, WindLines, PostFX
 src/UI/                 # UIController (mobile), Compass, Tutorial, AchievementToast/Panel, MiniMap, MapOverlay, MapMarkers, Discovery, coords, map.css
 src/Travel/             # TransitionFX (iris wipe), Teleport, Navmask (A* nav grid), ClickToMove (auto-walk)
-src/Systems/            # Achievements (42 unlocks + time tracker), DistanceGame (shore mini-game)
+src/Systems/            # Achievements (43 unlocks + time tracker), DistanceGame (shore mini-game)
 src/Audio/AudioManager.js # howler (ambient + footsteps + ui chimes + splashes)
 static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/, wildlife/
 ```
@@ -166,7 +166,7 @@ physics.step → player.update → playerCamera.update → discovery.update
   0.1s); render interpolates char pos between substeps (App.js ~1775–1839). The
   old "variable timestep wart" note was WRONG — motion is already smooth.
 - Fog tinted `#ffb084`, range 65→165, so distant trees fade into sunset.
-- **Achievements** (`Systems/Achievements.js`): 42 unlocks w/ rarity tiers
+- **Achievements** (`Systems/Achievements.js`): 43 unlocks w/ rarity tiers
   (common→legendary), time tracker, rarity-themed toast on unlock, full panel
   on trophy click or `J` (completion %, per-category badges, NEW badge, 100%
   celebration). Persists to localStorage. App tick feeds it
@@ -208,9 +208,11 @@ NOT a project dep (install globally, reuse via `NODE_PATH`).
 
 ## Known parked work (don't surprise the user with rewrites)
 
-- **Push is a comedy gag** — trees/rocks/signs/billboards/compass are push spots
-  so [ActionPrompts.js](src/Portfolio/ActionPrompts.js) rotates a joke pool. Real
-  pushables: crate + bag. Lying-down props (`kind: 'log'`) excluded. Don't "fix".
+- **Push jokes REMOVED** (user ask, 2026-06-10) — trees/rocks/signs/billboards/
+  compass remain push SPOTS (animation-only; feeds Bully/Bulldozer unlocks) but
+  [ActionPrompts.js](src/Portfolio/ActionPrompts.js) no longer shows joke text.
+  Real pushables: crate + bag. Lying-down props (`kind: 'log'`) excluded.
+  Don't re-add the jokes.
 - **B (backflip) / C (cartwheel)** don't raycast for clearance.
 - **Furniture pass removed** (12e494a) — don't re-add without asking.
 - **Material/perf system is user-validated — don't break.** GLB mats → ~2 shared
