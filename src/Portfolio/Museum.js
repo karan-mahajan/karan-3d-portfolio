@@ -22,6 +22,7 @@ import {
 } from "three/tsl";
 import * as THREE from "three/webgpu";
 import { MeshBasicNodeMaterial } from "three/webgpu";
+import { BANNER_TINTS, MUSEUM_CHAPTERS } from "./MuseumData.js";
 
 /**
  * The hidden making-of museum.
@@ -36,8 +37,8 @@ import { MeshBasicNodeMaterial } from "three/webgpu";
  * cuboid_*\/ramp_* proxies, the E-prompt + crossing sequences, the interior
  * state swap (player flags, camera clamp, audio, HUD body-class, App callback
  * for the outdoor world), torch-flicker / rune-pulse TSL materials, the
- * float/orbit prop animations, and the placeholder chapter panels (real
- * content lands in Phase C via MuseumData.js).
+ * float/orbit prop animations, the per-station accent tints, and the paged
+ * chapter reading panel (content in MuseumData.js).
  *
  * WebGPU note: all custom shading is TSL node materials (mirrors
  * ResumeBook.js); GLSL onBeforeCompile silently no-ops on this renderer.
@@ -68,18 +69,7 @@ const MOTE_COUNT = 14;
 const CAMERA_MAX_DISTANCE = 4.5; // interior orbit clamp (spec §6)
 const CAMERA_MIN_POLAR = Math.PI * 0.3; // keep the orbit below the ceilings
 
-// Placeholder titles (spec §7). Phase C replaces these with MuseumData.js;
-// chapter 8 is curated there too (incl. the "Built with AI" in/out call).
-const CHAPTER_TITLES = [
-  "A world written in Python",
-  "Standing on giants' shoulders",
-  "WebGPU & TSL",
-  "The performance war",
-  "Bringing the character to life",
-  "A hundred little systems",
-  "Built with AI",
-  "Behind the curtain",
-];
+const chapterById = (id) => MUSEUM_CHAPTERS.find((c) => c.id === id);
 
 export class Museum {
   static #LIGHT_INTENSITY = [16, 18, 26, 26];
@@ -574,6 +564,7 @@ export class Museum {
 
     this.#collectAnimProps(g);
     this.#applyGlowMaterials(g);
+    this.#applyAccentTints(g);
     this.#positionLights(g);
     console.log(
       `[Museum] interior ready — ${colliderCount} colliders, ` +
@@ -644,6 +635,37 @@ export class Museum {
       if (!o.isMesh) return;
       if (o.name.startsWith("torchFlame_")) o.material = flameMat;
       else if (o.name.startsWith("runeGlow_")) o.material = runeMat;
+    });
+  }
+
+  /** Colour-variety pass: each station's trim (header band + brass cap) takes
+   *  its chapter's accent colour, and the four wall banners spread to four
+   *  distinct tints — so the room reads as eight themed alcoves instead of a
+   *  single brown. Clones are cached per (material, colour) pair; a dozen tiny
+   *  materials in the cheapest scene on the site. */
+  #applyAccentTints(g) {
+    const cache = new Map();
+    const tinted = (mat, hex, k) => {
+      const key = `${mat.uuid}|${hex}|${k}`;
+      let m = cache.get(key);
+      if (!m) {
+        m = mat.clone();
+        m.color.lerp(new THREE.Color(hex), k);
+        cache.set(key, m);
+      }
+      return m;
+    };
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      let m;
+      if ((m = /^station(Header|Cap)_(\d\d)$/.exec(o.name))) {
+        const accent = chapterById(parseInt(m[2], 10))?.accent;
+        if (accent)
+          o.material = tinted(o.material, accent, m[1] === "Cap" ? 0.8 : 0.55);
+      } else if ((m = /^bannerCloth_(\d\d)$/.exec(o.name))) {
+        const tint = BANNER_TINTS[(parseInt(m[1], 10) - 1) % BANNER_TINTS.length];
+        if (tint) o.material = tinted(o.material, tint, 1);
+      }
     });
   }
 
@@ -952,13 +974,25 @@ export class Museum {
         <div class="panel-accent"></div>
         <h2 class="panel-title"></h2>
         <p class="panel-meta"></p>
+        <h3 class="museum-page-heading"></h3>
         <div class="panel-description"></div>
       </div>
-      <div class="panel-hint">ESC to return</div>
+      <div class="panel-nav museum-pager">
+        <button class="museum-prev" aria-label="Previous page">‹ Prev</button>
+        <span class="panel-counter"></span>
+        <button class="museum-next" aria-label="Next page">Next ›</button>
+      </div>
+      <div class="panel-hint">← → PAGES · ESC TO RETURN</div>
     `;
     this.panelEl
       .querySelector(".panel-close")
       .addEventListener("click", () => this.#hidePanel());
+    this.panelEl
+      .querySelector(".museum-prev")
+      .addEventListener("click", () => this.#turnPage(-1));
+    this.panelEl
+      .querySelector(".museum-next")
+      .addEventListener("click", () => this.#turnPage(1));
     document.body.appendChild(this.panelEl);
   }
 
@@ -968,6 +1002,11 @@ export class Museum {
       if (e.code === "Escape" && this._panelOpen) {
         e.preventDefault();
         this.#hidePanel();
+        return;
+      }
+      if (this._panelOpen && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+        e.preventDefault();
+        this.#turnPage(e.code === "ArrowRight" ? 1 : -1);
         return;
       }
       if (e.code !== "KeyE" || e.repeat) return;
@@ -1007,18 +1046,54 @@ export class Museum {
   }
 
   #showPanel(chapter) {
+    const data = chapterById(chapter);
+    if (!data) return;
     this._panelOpen = true;
+    this._chapterData = data;
+    this._pageIndex = 0;
     this.player.controller.paused = true;
     this.#setPrompt(null);
     this.audio?.playMenuOpen?.();
-    const title = CHAPTER_TITLES[chapter - 1] ?? `Chapter ${chapter}`;
-    this.panelEl.querySelector(".panel-title").textContent = title;
+    this.panelEl.querySelector(".panel-title").textContent = data.title;
     this.panelEl.querySelector(".panel-meta").textContent =
-      `Chapter ${chapter} of ${this.stations.length || 8} — the making of this world`;
-    this.panelEl.querySelector(".panel-description").textContent =
-      "The full story behind this station — text, screenshots and the war " +
-      "stories — is being curated and lands in the content pass.";
+      `Chapter ${data.id} of ${MUSEUM_CHAPTERS.length} — the making of this world`;
+    this.panelEl.querySelector(".panel-accent").style.background = data.accent;
+    this.#renderPage();
     this.panelEl.classList.remove("hidden");
+  }
+
+  #turnPage(dir) {
+    const data = this._chapterData;
+    if (!this._panelOpen || !data) return;
+    const next = this._pageIndex + dir;
+    if (next < 0 || next >= data.pages.length) return;
+    this._pageIndex = next;
+    this.audio?.playInteract?.();
+    this.#renderPage();
+  }
+
+  #renderPage() {
+    const data = this._chapterData;
+    const page = data.pages[this._pageIndex];
+    this.panelEl.querySelector(".museum-page-heading").textContent =
+      page.heading;
+
+    const desc = this.panelEl.querySelector(".panel-description");
+    desc.textContent = "";
+    const paragraphs = Array.isArray(page.body) ? page.body : [page.body];
+    for (const text of paragraphs) {
+      const p = document.createElement("p");
+      p.textContent = text;
+      desc.appendChild(p);
+    }
+
+    const last = data.pages.length - 1;
+    this.panelEl.querySelector(".museum-prev").disabled = this._pageIndex === 0;
+    this.panelEl.querySelector(".museum-next").disabled =
+      this._pageIndex === last;
+    this.panelEl.querySelector(".panel-counter").textContent =
+      `${this._pageIndex + 1} / ${data.pages.length}`;
+    this.panelEl.querySelector(".panel-scroll").scrollTop = 0;
   }
 
   #hidePanel() {
@@ -1095,8 +1170,8 @@ export class Museum {
         ? {
             action: "station",
             chapter: best.chapter,
-            label: "View",
-            name: CHAPTER_TITLES[best.chapter - 1] ?? `Chapter ${best.chapter}`,
+            label: "Read",
+            name: chapterById(best.chapter)?.title ?? `Chapter ${best.chapter}`,
           }
         : null,
     );

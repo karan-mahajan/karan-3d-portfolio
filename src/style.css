@@ -932,6 +932,29 @@ body {
   opacity: 0.45;
 }
 
+/* ─────────────── Museum chapter panel ─────────────── */
+.museum-panel {
+  width: min(470px, 92vw);
+}
+
+.museum-page-heading {
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+  color: var(--warm-amber);
+  margin-bottom: 0.6rem;
+}
+
+.museum-pager button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.museum-pager button:disabled:hover {
+  background: transparent;
+}
+
 /* ─────────────── Contact panel ─────────────── */
 .contact-panel {
   position: fixed;
