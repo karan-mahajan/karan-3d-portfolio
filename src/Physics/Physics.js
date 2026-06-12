@@ -24,6 +24,9 @@ const FENCE_EJECT_TIME = 0.25; // seconds the push lasts (~0.6 m of travel)
  */
 export class Physics {
   static GRAVITY = -25;
+  // Shared by the controller setup and PlayerBody.swim's disable/re-enable —
+  // swim turns snapping off so the seafloor can't yank a floating capsule down.
+  static SNAP_TO_GROUND_DIST = 0.5;
 
   constructor() {
     this.ready = false;
@@ -54,7 +57,7 @@ export class Physics {
     this.characterController.setApplyImpulsesToDynamicBodies(true);
     this.characterController.setMaxSlopeClimbAngle((50 * Math.PI) / 180);
     this.characterController.setMinSlopeSlideAngle((30 * Math.PI) / 180);
-    this.characterController.enableSnapToGround(0.5);
+    this.characterController.enableSnapToGround(Physics.SNAP_TO_GROUND_DIST);
     this.characterController.enableAutostep(0.4, 0.2, true);
     this.characterController.setSlideEnabled(true);
 
@@ -556,6 +559,38 @@ class PlayerBody {
       this._verticalVelocity = 0;
     }
 
+    const t = this.body.translation();
+    this.body.setNextKinematicTranslation({
+      x: t.x + corrected.x,
+      y: t.y + corrected.y,
+      z: t.z + corrected.z,
+    });
+  }
+
+  /**
+   * Swim-mode move: gravity is NOT integrated — the caller supplies a
+   * vertical velocity (buoyancy toward the water surface). Motion still
+   * resolves through the character controller so shores, cliffs and rocks
+   * block the swimmer, and a rising seafloor lifts the capsule rather than
+   * letting it clip through.
+   */
+  swim(horizontal, verticalVelocity, delta) {
+    this._verticalVelocity = 0;
+    this._grounded = false;
+    this._fenceSlideT = 0;
+    const desired = {
+      x: horizontal.x * delta,
+      y: verticalVelocity * delta,
+      z: horizontal.z * delta,
+    };
+    const cc = this.physics.characterController;
+    // Snap-to-ground is a walking aid: with the seafloor inside snap range a
+    // downward float settle (e.g. stroke→tread sink) would get yanked to the
+    // bottom in one substep instead of easing. Buoyancy owns the vertical.
+    cc.disableSnapToGround();
+    cc.computeColliderMovement(this.collider, desired);
+    cc.enableSnapToGround(Physics.SNAP_TO_GROUND_DIST);
+    const corrected = cc.computedMovement();
     const t = this.body.translation();
     this.body.setNextKinematicTranslation({
       x: t.x + corrected.x,

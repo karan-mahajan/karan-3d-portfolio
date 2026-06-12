@@ -71,6 +71,11 @@ const MIXAMO_CLIPS = [
   // IntroCinematic, which lifts the body so the lowest foot/hand bone never
   // sinks below the surface — robust regardless of the clip's authored contact.
   { action: 'hardLanding',      url: '/models/character/animations/hard-landing.glb' },
+  // Deep-water locomotion — Player swaps to these while swim mode is active
+  // (see Player.#updateAnimationState). Vertical float is physics-driven, so
+  // root motion is stripped like the rest.
+  { action: 'swimming',         url: '/models/character/animations/swimming.glb' },
+  { action: 'treadingWater',    url: '/models/character/animations/treading-water.glb' },
 ];
 
 const DEFERRED_MIXAMO_CLIPS = [

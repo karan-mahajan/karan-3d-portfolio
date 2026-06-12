@@ -21,6 +21,42 @@ export class Player {
   static WATER_SLOWDOWN_PER_M = 0.45;
   static WATER_SLOWDOWN_MIN = 0.15;
 
+  // ── Swimming ──────────────────────────────────────────────────────────
+  // Deep-water locomotion. Enter when the water is deeper than a wade
+  // (river center is only ~0.9 m below the surface, so the threshold must
+  // sit under that), exit shallower with hysteresis so the boundary never
+  // flickers. Small ponds + the lava basin are deny-listed by App via
+  // setNoSwimZones() — depth alone can't exclude them (some are deeper
+  // than the river).
+  static SWIM_ENTER_DEPTH = 0.85;
+  static SWIM_EXIT_DEPTH = 0.70;
+  static SWIM_SPEED = 1.5;       // m/s, slower than walking
+  static SWIM_FAST_SPEED = 2.5;  // m/s while Shift is held
+  // How far the group origin (the standing character's FEET) sits below the
+  // water surface while floating. The hips bone is pinned ~0.95 m above the
+  // origin, so these put the hips just under the waterline: prone stroke
+  // rides higher (back/head break the surface), treading hangs lower
+  // (head + shoulders out). Pure visual tuning knobs.
+  static SWIM_BODY_SINK = 1.05;
+  static TREAD_BODY_SINK = 1.25;
+  // Buoyancy: exponential approach rate to the float height, velocity-
+  // clamped so plunging in reads as a settle, not a snap.
+  static SWIM_SURFACE_LERP = 6;     // 1/s
+  static SWIM_MAX_VERTICAL = 3;     // m/s
+  // Don't let the player swim past the terrain mesh (±96.85) into
+  // undefined heightfield samples.
+  static SWIM_MAX_RADIUS = 90;
+  // Small ponds where swimming must never trigger (the player wades
+  // instead). World-space circles derived from the v3 authoring mask
+  // (tools/blender/scripts/v3/karan/02-ground-grass-base.py ORGANIC_PONDS,
+  // 512 px ≈ 125 m). The skills pond + lava pool are appended at runtime
+  // from live GLB refs in App.#scheduleDeferredWorldSystems.
+  static NO_SWIM_PONDS = [
+    { x: 2.4,  z: 11.0,  r: 10 },  // center spawn-side pond
+    { x: 45.7, z: 35.2,  r: 10 },  // lower-left curl pool
+    { x: 38.1, z: -47.9, r: 10 },  // lower-right puddle splash
+  ];
+
   // Natural foot-speed of each locomotion clip in m/s, MEASURED from the
   // source clips' hip root-motion (forward travel / duration) before the
   // position tracks are stripped on import: walking 1.7m over 1.03s, running
@@ -32,6 +68,9 @@ export class Player {
     walking: 1.65,
     running: 4.43,
     crouchWalk: 1.35,
+    // Stroke cadence tuned so the clip plays ~0.85× at SWIM_SPEED and ~1.4×
+    // at SWIM_FAST_SPEED (in-place Mixamo clip — no measured ground pace).
+    swimming: 1.8,
   };
   // Jump clips are full authored arcs (crouch→launch→air→land, ~2s) while the
   // physics arc is snappy (~0.7s airborne). startAt skips the anticipation
@@ -93,6 +132,9 @@ export class Player {
     // App tick reads + clears it to drop the render-interpolation snapshots so
     // the character doesn't smear/pull toward the pre-snap position for a frame.
     this._teleported = false;
+    // Deep-water swim mode — set per substep in stepPhysics with hysteresis.
+    this._swimming = false;
+    this._noSwimZones = [...Player.NO_SWIM_PONDS];
 
     // Museum interior: skip the terrain-coupled effects (wading slowdown,
     // slope tilt) and swap the void-fall respawn — the basement sits at
@@ -185,6 +227,8 @@ export class Player {
     if (this.interiorMode) {
       // Museum floors are dry — the terrain sampled here is the OUTDOOR
       // surface 45m above the player's actual floor (and may dip into ponds).
+      this._swimming = false;
+      this.controller.swimMode = false;
       this.controller.speedMultiplier = 1.0;
     } else {
       const groundY = this.terrain ? this.terrain.heightAt(dx, dz) : 0;
@@ -193,7 +237,31 @@ export class Player {
       // surface. On a bridge deck over the river the feet are up on the planks
       // (the deck collider, not the terrain, is the floor), so skip the slowdown.
       const submergedFeet = this.group.position.y <= Player.WATER_SURFACE_Y + 0.1;
-      if (waterDepth > 0 && submergedFeet) {
+      const overWater = waterDepth > 0 && submergedFeet;
+
+      // Swim mode: deep water engages it, hysteresis releases it. The same
+      // feet gate that protects bridges from wade-slow protects them here.
+      if (this._swimming) {
+        if (!overWater || waterDepth < Player.SWIM_EXIT_DEPTH) this._swimming = false;
+      } else if (
+        overWater
+        && waterDepth >= Player.SWIM_ENTER_DEPTH
+        && !this.#inNoSwimZone(dx, dz)
+      ) {
+        this._swimming = true;
+        // A jump that splashed down mid-arc must not resume its clip later.
+        this._jumpClip = null;
+        this._verticalVelocity = 0;
+      }
+      this.controller.swimMode = this._swimming;
+
+      if (this._swimming) {
+        // Swim pace replaces the wade slowdown (depth-scaled slowdown would
+        // floor a deep-water swimmer at 15% speed).
+        this.controller.speedMultiplier = this.controller.isRunning
+          ? Player.SWIM_FAST_SPEED / PlayerController.RUN_SPEED
+          : Player.SWIM_SPEED / PlayerController.WALK_SPEED;
+      } else if (overWater) {
         const slow = waterDepth * Player.WATER_SLOWDOWN_PER_M;
         this.controller.speedMultiplier = Math.max(Player.WATER_SLOWDOWN_MIN, 1.0 - slow);
       } else {
@@ -209,7 +277,8 @@ export class Player {
     // into the ocean-floor slope and stick). Instead, just cancel the
     // outward component of velocity — inward motion always passes so the
     // player can wade back to land.
-    if (sample.moving && distFromCenter >= Player.MAX_TRAVEL_RADIUS) {
+    const travelRadius = this._swimming ? Player.SWIM_MAX_RADIUS : Player.MAX_TRAVEL_RADIUS;
+    if (sample.moving && distFromCenter >= travelRadius) {
       const ox = dx / distFromCenter;
       const oz = dz / distFromCenter;
       const outward = sample.velocity.x * ox + sample.velocity.z * oz;
@@ -276,7 +345,10 @@ export class Player {
 
     this.#applySlopeTilt();
 
-    this._airTime = this._grounded ? 0 : this._airTime + frameDelta;
+    // Swimming reports ungrounded but is NOT airborne — keep the timer at
+    // zero so a one-frame ungrounded shore exit can't read as a minutes-long
+    // fall and flash the falling clip.
+    this._airTime = (this._grounded || this._swimming) ? 0 : this._airTime + frameDelta;
     if (this._state === 'breathingIdle') this._breathTimer += frameDelta;
     if (this._lastSample) this.#updateAnimationState(this._lastSample);
 
@@ -348,6 +420,32 @@ export class Player {
 
   /** Rapier path: capsule + character controller resolve movement against the world. */
   #applyPhysicsMotion(sample, delta) {
+    if (this._swimming) {
+      // Buoyancy: velocity-clamped exponential approach to the float height.
+      // Routed through the controller (PlayerBody.swim) so shores still block.
+      const sink = sample.moving ? Player.SWIM_BODY_SINK : Player.TREAD_BODY_SINK;
+      const targetY = Player.WATER_SURFACE_Y - sink;
+      // Error term reads the BODY y, not group y — App overwrites the group
+      // with the render interpolation after the fixed loop, so on the first
+      // substep of a frame the group is up to one substep stale.
+      const vy = THREE.MathUtils.clamp(
+        (targetY - this.body.position.y) * Player.SWIM_SURFACE_LERP,
+        -Player.SWIM_MAX_VERTICAL,
+        Player.SWIM_MAX_VERTICAL,
+      );
+      const horizontal = sample.moving
+        ? { x: sample.velocity.x, z: sample.velocity.z }
+        : { x: 0, z: 0 };
+      this.body.swim(horizontal, vy, delta);
+      const p = this.body.position;
+      this.group.position.set(p.x, p.y, p.z);
+      this._grounded = false;
+      // Treat a held Space as consumed: without this, holding the (no-op)
+      // jump key while swimming fires a surprise hop on the first substep
+      // that grounds at the shore.
+      this._jumpLatched = true;
+      return;
+    }
     const pressing = this.controller.isJumping;
     if (pressing && !this._jumpLatched && this.body.grounded) {
       this.body.jump(Player.JUMP_VELOCITY);
@@ -367,6 +465,30 @@ export class Player {
 
   /** Fallback: original manual gravity + ground snap (used if physics is unavailable). */
   #applyKinematicMotion(sample, delta) {
+    if (this._swimming) {
+      if (sample.moving) {
+        this.group.position.x += sample.velocity.x * delta;
+        this.group.position.z += sample.velocity.z * delta;
+      }
+      const sink = sample.moving ? Player.SWIM_BODY_SINK : Player.TREAD_BODY_SINK;
+      // No collider on this path — clamp the float target to the seabed so
+      // the legs can't bury where the water is shallower than the sink depth.
+      const groundY = this.terrain
+        ? this.terrain.heightAt(this.group.position.x, this.group.position.z)
+        : 0;
+      const targetY = Math.max(groundY, Player.WATER_SURFACE_Y - sink);
+      const vy = THREE.MathUtils.clamp(
+        (targetY - this.group.position.y) * Player.SWIM_SURFACE_LERP,
+        -Player.SWIM_MAX_VERTICAL,
+        Player.SWIM_MAX_VERTICAL,
+      );
+      this.group.position.y += vy * delta;
+      this._verticalVelocity = 0;
+      this._grounded = false;
+      // Held Space is consumed (see #applyPhysicsMotion) — no shore-exit hop.
+      this._jumpLatched = true;
+      return;
+    }
     if (sample.moving) {
       this.group.position.x += sample.velocity.x * delta;
       this.group.position.z += sample.velocity.z * delta;
@@ -437,7 +559,11 @@ export class Player {
     }
 
     let nextState;
-    if (!this._grounded) {
+    if (this._swimming) {
+      // Surface locomotion: stroke while moving, tread while idle. The
+      // vertical float is physics-driven, so both clips play in place.
+      nextState = sample.moving ? 'swimming' : 'treadingWater';
+    } else if (!this._grounded) {
       if (this._jumpClip) {
         // Deliberate jump — play the latched arc.
         nextState = this._jumpClip;
@@ -490,11 +616,16 @@ export class Player {
       // the walk clip's timeScale is also approaching zero by this point,
       // so the longer fade hides the last-frame freeze. The breath → calm-idle
       // settle is slower still so the wind-down feels gradual.
+      const swimBlend = nextState === 'swimming' || nextState === 'treadingWater'
+        || this._state === 'swimming' || this._state === 'treadingWater';
       const exitingLoco = (this._state === 'walking' || this._state === 'running' || this._state === 'crouchWalk')
         && (nextState === 'idle' || nextState === 'breathingIdle');
       const settling = this._state === 'breathingIdle' && nextState === 'idle';
       this._state = nextState;
-      this.character.play(nextState, settling ? { fade: 0.6 } : exitingLoco ? { fade: 0.3 } : undefined);
+      this.character.play(
+        nextState,
+        swimBlend ? { fade: 0.35 } : settling ? { fade: 0.6 } : exitingLoco ? { fade: 0.3 } : undefined,
+      );
     }
 
     // Per-frame timeScale on the active locomotion clip so foot speed
@@ -528,6 +659,29 @@ export class Player {
    */
   markTeleported() {
     this._teleported = true;
+  }
+
+  /** True while deep-water swim mode drives locomotion (App reads this). */
+  get isSwimming() {
+    return this._swimming;
+  }
+
+  /**
+   * Replace the no-swim circles. App calls this once the GLB-ref-resolved
+   * features exist (skills pond, lava pool) — see NO_SWIM_PONDS for the
+   * mask-derived defaults active until then.
+   */
+  setNoSwimZones(zones) {
+    this._noSwimZones = zones;
+  }
+
+  #inNoSwimZone(x, z) {
+    for (const zone of this._noSwimZones) {
+      const ddx = x - zone.x;
+      const ddz = z - zone.z;
+      if (ddx * ddx + ddz * ddz <= zone.r * zone.r) return true;
+    }
+    return false;
   }
 
   /**
@@ -618,6 +772,8 @@ export class Player {
    * are forwarded to Character.play. Returns true if the action existed.
    */
   performAction(name, opts = {}) {
+    // No backflips/cartwheels/kicks while floating — the clips assume ground.
+    if (this._swimming) return false;
     if (!this.character || !this.character.actions[name]) return false;
     // Lock the state machine to this clip while it's playing — the one-shot
     // path in #updateAnimationState already handles this when interruptible

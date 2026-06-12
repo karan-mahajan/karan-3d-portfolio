@@ -108,9 +108,6 @@ static/models/          # character/ (Avaturn+Mixamo), nature/, extras/, props/,
 - **Experience** — north at +52.15m, signs along `SECTION_POSITIONS.experiencePath`
 - **Skills** — south at -52.15m, around `SECTION_POSITIONS.skills`
 - **Contact** — west at -52.15m, around `SECTION_POSITIONS.contact`
-- Runtime wade/clamp/respawn thresholds (`Past r=45 wades, r=120 clamps,
-  y=-5 respawns`) PREDATE the v2 build — they're still calibrated for the
-  legacy procedural island and likely need updating to match r≈60 walkable.
 - Distant islands ring the horizon (DistantIslands.js) — visual only, no colliders.
 - `Nature.addExclusion(x, z, r)` keeps trees out of clearings; always exclude
   new sections so trees don't clip props.
@@ -196,6 +193,10 @@ physics.step → player.update → playerCamera.update → discovery.update
   auto-walks via `PlayerController.setVirtualInput` (WASD cancels). Data in
   [WorldMap.js](src/Portfolio/WorldMap.js); sessionStorage key
   `karan-world-discovered-v1`. Backtick = navmask debug overlay.
+- **Swimming** (`Player.js` swim mode): deep water (≥0.85m, hysteresis 0.7m)
+  floats the body at the surface — `swimming`/`treadingWater` Mixamo clips,
+  no jump/crouch in water; small ponds + lava deny-listed via
+  `Player.NO_SWIM_PONDS` + runtime refs (App.#scheduleDeferredWorldSystems).
 
 ## Verification
 

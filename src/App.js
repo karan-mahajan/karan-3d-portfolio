@@ -1122,6 +1122,30 @@ export class App extends EventTarget {
             achievements: this.achievements,
           });
         }
+        // No-swim zones: mask-derived small ponds + the two ref-resolved
+        // basins (skills pond around the sphere, lava pool — carved into the
+        // terrain exactly like a pond, so depth alone would classify it as
+        // swimmable water).
+        if (this.player) {
+          const zones = [...Player.NO_SWIM_PONDS];
+          if (this.skillSphere?.ready) {
+            const c = this.skillSphere.center;
+            zones.push({ x: c.x, z: c.z, r: 16 });
+          }
+          if (this.lava?.center) {
+            zones.push({ x: this.lava.center.x, z: this.lava.center.z, r: (this.lava.radius || 4) + 3 });
+          }
+          this.player.setNoSwimZones(zones);
+          if (this.debug?.enabled) {
+            // Calibration: each zone center should sit in water deeper than
+            // SWIM_ENTER_DEPTH (i.e. heightAt < -1.0) — if one reads shallow or
+            // dry, the mask-derived coordinates need re-deriving (axis/sign).
+            for (const z of zones) {
+              const h = this.world.terrain.heightAt(z.x, z.z);
+              console.log(`[swim] no-swim zone (${z.x.toFixed(1)}, ${z.z.toFixed(1)}) r=${z.r} groundY=${h.toFixed(2)}`);
+            }
+          }
+        }
         this.animatedProps = new AnimatedProps(
           this.scene,
           this.world.terrain,
@@ -2268,7 +2292,8 @@ export class App extends EventTarget {
     // Jump achievement — count every air-out transition (same edge used
     // for the audio cue). Fires for both Space-jumps and any future
     // launch-into-air mechanic.
-    const airedOut = this._wasGroundedApp === true && _grounded === false;
+    const airedOut = this._wasGroundedApp === true && _grounded === false
+      && !this.player.isSwimming;
     if (airedOut) {
       this.achievements?.onJump?.();
     }

@@ -38,6 +38,9 @@ export class PlayerController {
     // slows the character down without forking the speed constants.
     this.speedMultiplier = 1.0;
     this.actionSpeedMultiplier = 1.0;
+    // Player sets this while swim mode is active: Space and Z are surface
+    // locomotion modifiers there, not jump/crouch.
+    this.swimMode = false;
 
     // Smoothed speed magnitude (m/s). Ramped toward the target speed at
     // ACCEL / DECEL each frame so velocity has inertia.
@@ -118,13 +121,13 @@ export class PlayerController {
   }
 
   get isJumping() {
-    return !this.paused && !this._locked && this.keys.has('Space');
+    return !this.paused && !this._locked && !this.swimMode && this.keys.has('Space');
   }
 
   get isCrouching() {
     // Z chosen over Ctrl: Ctrl+W closes the browser tab, which made the
     // intended crouch-walk-forward combo destructive.
-    return !this.paused && !this._locked && this.keys.has('KeyZ');
+    return !this.paused && !this._locked && !this.swimMode && this.keys.has('KeyZ');
   }
 
   /**
