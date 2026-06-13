@@ -1,4 +1,4 @@
-import { snowCoverage, snowFall } from "./SnowState.js";
+import { snowCoverage, snowFall, snowWetness } from "./SnowState.js";
 import { fogWhiten } from "./FogState.js";
 
 /**
@@ -37,6 +37,7 @@ export class WeatherDirector {
     this._wait = FIRST_DELAY;
     this._cov = 0;
     this._fall = 0;
+    this._wet = 0;
     // Winter fog tint now lives in FogState (fogWinterColor); WeatherDirector
     // only drives the whiten amount (see #applyFog).
   }
@@ -80,27 +81,32 @@ export class WeatherDirector {
     if (!this.enabled) {
       this._fall = approach(this._fall, 0, 0.4, delta);
       this._cov = approach(this._cov, 0, 0.1, delta);
+      this._wet = approach(this._wet, 0, 0.05, delta);
     } else {
       this._t += delta;
       switch (this._phase) {
         case "clear":
           this._fall = approach(this._fall, 0, 0.4, delta);
           this._cov = approach(this._cov, 0, 0.12, delta);
+          this._wet = approach(this._wet, 0, 0.03, delta); // slow ~30s dry-out
           if (this._t >= this._wait) this.#go("onset");
           break;
         case "onset":
           this._fall = approach(this._fall, 1, 0.5, delta);
           this._cov = Math.min(1, this._cov + delta / ONSET);
+          this._wet = approach(this._wet, 0, 0.3, delta);
           if (this._t >= ONSET) this.#go("storm");
           break;
         case "storm":
           this._fall = approach(this._fall, 1, 0.6, delta);
           this._cov = Math.min(1, this._cov + delta / ONSET);
+          this._wet = approach(this._wet, 0, 0.3, delta);
           if (this._t >= STORM_HOLD) this.#go("melt");
           break;
         case "melt":
           this._fall = approach(this._fall, 0, 0.45, delta);
           this._cov = Math.max(0, this._cov - delta / MELT);
+          this._wet = approach(this._wet, 1, 0.35, delta);
           if (this._t >= MELT) {
             this._wait = CLEAR_HOLD;
             this.#go("clear");
@@ -110,6 +116,7 @@ export class WeatherDirector {
     }
     snowCoverage.value = this._cov;
     snowFall.value = this._fall;
+    snowWetness.value = this._wet;
     this.#applyFog();
   }
 

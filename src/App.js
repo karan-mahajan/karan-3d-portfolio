@@ -9,6 +9,9 @@ import { LikeLights } from "./Effects/LikeLights.js";
 import { PostFX } from "./Effects/PostFX.js";
 import { Rain } from "./Effects/Rain.js";
 import { Snow } from "./Effects/Snow.js";
+import { SnowPiles } from "./Effects/SnowPiles.js";
+import { SnowShells } from "./Effects/SnowShells.js";
+import { initSnowTrail, SnowTrail } from "./Effects/SnowTrail.js";
 import { Thunderstorm } from "./Effects/Thunderstorm.js";
 import { Water } from "./Effects/Water.js";
 import { WindLines } from "./Effects/WindLines.js";
@@ -91,6 +94,9 @@ export class App extends EventTarget {
     this.clock = new THREE.Clock();
     this.loader = new Loader();
     this.quality = detectQuality();
+    // Trail texture must exist before GlbV3World builds the terrain material
+    // (the TSL sampler bakes the texture reference in at material build).
+    initSnowTrail(this.quality.snowTrailRes ?? 0);
     // Render-resolution ceiling from the quality tier (capable → Retina/2.0,
     // weak → 1.0). Set on Sizes BEFORE #initRenderer's first setPixelRatio; the
     // adaptive DPR controller then scales below it under load. Backend (WebGPU
@@ -186,6 +192,10 @@ export class App extends EventTarget {
     // 12s (not 15) so snow is firmly active before the 15s rain timer fires —
     // otherwise rain would blip on for a frame before snow suppresses it.
     if (visitedBefore && !snowSeen) this.weather.setFirstDelay(12);
+    // ?snow — dev/verify: start the first storm almost immediately.
+    if (new URLSearchParams(window.location.search).has("snow")) {
+      this.weather.setFirstDelay(2);
+    }
     this.windLines = new WindLines(this.scene, this.wind, {
       count: this.quality.windLineCount,
     });
@@ -751,6 +761,12 @@ export class App extends EventTarget {
         !odd,
         this._snowPrint,
       );
+      if (this._snowPrint) {
+        this.snowTrail?.stampStep(
+          this.player.position.x,
+          this.player.position.z,
+        );
+      }
     };
     // Cache path arrays once for #surfaceAt() — picking grass/stone/sand
     // per-frame for footstep audio + landing.
@@ -758,6 +774,53 @@ export class App extends EventTarget {
       this.world.paths?.getTilePositions() ?? new Float32Array(0);
     this._pathCount = this.world.paths?.getTileCount() ?? 0;
     this._pathRadius2 = 1.4 * 1.4;
+
+    // Snow systems: pressed-trail dents, ground drifts + shed-lump pool, and
+    // conforming crusts. Drift domes are seeded here on open grass only (off
+    // paths, water, ponds and lava); snow ON props comes from SnowShells,
+    // which bakes inflated copies of the real bench/boulder geometry.
+    this.snowTrail = new SnowTrail();
+    {
+      const anchors = [];
+      const budget = this.quality.snowPileBudget ?? 0;
+      const exclusions = Player.NO_SWIM_PONDS ?? [];
+      let guard = 0;
+      while (anchors.length < budget && guard++ < budget * 30) {
+        const x = (Math.random() * 2 - 1) * 56;
+        const z = (Math.random() * 2 - 1) * 56;
+        if (Math.hypot(x, z) > 56) continue;
+        const groundY = this.world.terrain?.heightAt(x, z) ?? 0;
+        if (groundY < -0.1) continue; // pond/river/ocean dip
+        if (
+          exclusions.some((p) => Math.hypot(x - p.x, z - p.z) < (p.r ?? 4) + 2)
+        )
+          continue;
+        let onPath = false;
+        const pos = this._pathPositions;
+        for (let i = 0; i < this._pathCount; i++) {
+          const dx = x - pos[i * 2];
+          const dz = z - pos[i * 2 + 1];
+          if (dx * dx + dz * dz < 4.8) {
+            onPath = true;
+            break;
+          }
+        }
+        if (onPath) continue;
+        // Mound proportions: height ≈ 40% of radius reads as a drift; flatter
+        // aspect ratios read as discs lying on the grass. Kept SMALL — knee
+        // height at most; big mounds read as misplaced hills (user feedback).
+        const r = 0.35 + Math.random() * 0.75;
+        anchors.push({ x, y: groundY, z, r, h: 0.08 + r * 0.4 });
+      }
+      this.snowPiles = new SnowPiles(this.scene, anchors, this.world.terrain);
+    }
+    this.snowShells = new SnowShells(this.scene, {
+      staticSources: this.world.glb?.snowShellSources ?? [],
+      piles: this.snowPiles,
+    });
+    for (const brick of this.world.glb?.dynamicBrickPiles ?? []) {
+      if (brick?.mesh) this.snowShells.trackMesh(brick.mesh);
+    }
 
     // Grass disabled — see ctor. Skipping the load() call leaves no tufts
     // in the scene. The blocks below remain so re-enable is a one-shot
@@ -934,6 +997,11 @@ export class App extends EventTarget {
     const loadInteractables = () =>
       this.interactables
         .load()
+        .then(() => {
+          // Football collects a snow crust at rest and sheds it when kicked.
+          const fb = this.interactables.football;
+          if (fb?.mesh) this.snowShells?.trackBall(fb.mesh, 0.26);
+        })
         // Warm the football's pipeline off-thread once it's in the scene, so it
         // doesn't compile the first time the player turns to look at it.
         .then(() => this.#warmShadersInBackground())
@@ -1152,6 +1220,8 @@ export class App extends EventTarget {
           v3refs,
           this.physics,
         );
+        // Animals collect snow while idle and shed it when they wander off.
+        this.snowShells?.trackAnimalRigs(this.animatedProps.animals);
         // Fireflies are a night-only effect — build them now (post-spawn) and
         // wire them into the day/night driver so they light up when night
         // arrives. Invisible during the forced day-start, so no rush.
@@ -2229,6 +2299,12 @@ export class App extends EventTarget {
     // on real time (don't slow the storm schedule); only the flake FALL slows.
     this.weather.update(frameDelta);
     if (!inMuseum) this.snow.update(scaledDelta);
+    // Pressed-snow trail (drag stamps + refill sweep), drift/lump piles, and
+    // conforming crusts (static visibility + dynamic accumulate/shed).
+    const snowCov = this.weather?.coverage ?? 0;
+    this.snowTrail?.update(this.player?.position ?? null, !!sample?.moving, snowCov);
+    this.snowPiles?.update(frameDelta, snowCov, this.player?.position ?? null);
+    this.snowShells?.update(frameDelta, snowCov);
     // Auto-thunder only fires while rain is genuinely active (and never during
     // snow or underground). The manual ⚡ button stays live regardless.
     this.thunderstorm.setActive(rainActive && !inMuseum);

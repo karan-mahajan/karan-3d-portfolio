@@ -27,6 +27,7 @@ import {
   terrainSnowDrift,
 } from "./SnowState.js";
 import { worldShadowCatcher, worldLitOutput } from "./WorldLight.js";
+import { snowTrailNode } from "../Effects/SnowTrail.js";
 
 // Tree GLB systems that ship a solid low-poly GREEN canopy primitive (material
 // `*_canopy_*`) alongside their trunk → foliage species key. ONLY oak does:
@@ -249,6 +250,15 @@ export class GlbV3World {
     this.dynamicBrickPiles = [];
     this.dynamicTitleLetters = [];
     this.titleLetterMaterial = null; // shared by all letters; recoloured per frame
+    // Letter recolour uniforms (node material ignores .color/.emissive — the
+    // per-frame day/night/snow lerp writes these instead).
+    this._titleColorU = null;
+    this._titleEmissiveU = null;
+    this._titleEmissiveIntensityU = null;
+    // Snow-shell sources {geometry, matrix} harvested during load (bench
+    // meshes, boulder instances). SnowShells bakes them into one merged
+    // world-space crust that conforms to the real prop shapes.
+    this.snowShellSources = [];
     this._titleTargetColor = new THREE.Color(TITLE_LETTER_COLOR);
     this._titleTargetEmissive = new THREE.Color(TITLE_LETTER_EMISSIVE);
     this._titleTargetEmissiveIntensity = TITLE_EMISSIVE_DAY;
@@ -461,6 +471,7 @@ export class GlbV3World {
       }
       if (entry.system === "benches") {
         this.#configureBenchShadows(group);
+        this.#collectBenchSnowShellSources(group);
         this.#addBenchColliders(group, physics);
       }
       if (entry.system === "scenery" || entry.system === "areas") {
@@ -572,8 +583,7 @@ export class GlbV3World {
   // pulls toward the contrasting teal. The target is approached with
   // exponential smoothing so even an abrupt weather/time flip eases over ~1s.
   #updateTitleLetterAppearance(delta, env) {
-    const mat = this.titleLetterMaterial;
-    if (!mat) return;
+    if (!this._titleColorU) return;
 
     const ease = (x) => {
       const c = Math.min(1, Math.max(0, x));
@@ -600,9 +610,10 @@ export class GlbV3World {
 
     const dt = Math.min(Math.max(delta || 1 / 60, 0), 1 / 30);
     const k = 1 - Math.exp(-dt * TITLE_RECOLOR_RATE);
-    mat.color.lerp(target, k);
-    mat.emissive.lerp(targetEm, k);
-    mat.emissiveIntensity += (targetEi - mat.emissiveIntensity) * k;
+    this._titleColorU.value.lerp(target, k);
+    this._titleEmissiveU.value.lerp(targetEm, k);
+    this._titleEmissiveIntensityU.value +=
+      (targetEi - this._titleEmissiveIntensityU.value) * k;
   }
 
   #updateFloatingTitleLetters(delta, playerPos) {
@@ -933,7 +944,14 @@ export class GlbV3World {
     // Snow blanket: drift the surface up (depth + dunes) and whiten the ground
     // by the shared snowCoverage uniform. Flat ground covers fully; steep banks
     // stay bare via the normal-keyed mask.
-    mat.positionNode = positionLocal.add(terrainSnowDrift(0.16));
+    // Pressed-trail dip: where the player has walked, the snow drift sinks
+    // (55% of full depth — the rest of the read is fragment darkening below;
+    // terrain verts are 1.5 m apart so the vertex dip is a broad swale, and
+    // the footprint decals ride on top for the sharp tread detail).
+    const trail = snowTrailNode(positionLocal.xz);
+    mat.positionNode = positionLocal.add(
+      terrainSnowDrift(0.16).mul(trail.mul(0.55).oneMinus()),
+    );
     // Grass ground collects snow EARLY, the path/slab art LAST — so a storm
     // creeps across the meadow before the walkways whiten.
     const maskGrass = snowMask({ low: 0.2, high: 0.5, bias: 0.2 });
@@ -985,9 +1003,18 @@ export class GlbV3World {
     } else {
       groundColor = snowColor(olive, maskGrass);
     }
+    // Pressed snow is compacted: darker, bluer, and it loses its glitter.
+    const trailFrag = snowTrailNode(positionWorld.xz).mul(maskGrass);
+    groundColor = mix(
+      groundColor,
+      groundColor.mul(vec3(0.74, 0.78, 0.92)),
+      trailFrag,
+    );
     // Sparkle + cool lift on the snowy ground so it reads as bright snow, not
     // cream, under the warm sunset light.
-    const groundEmissive = snowEmissive(maskGrass);
+    const groundEmissive = snowEmissive(maskGrass).mul(
+      trailFrag.mul(0.85).oneMinus(),
+    );
     // Same Bruno-style faked lighting as the props (WorldLight): wrapped soft
     // terminator + coloured shadows + manual fog, so the big ground surface
     // shades cohesively with everything standing on it.
@@ -1009,6 +1036,22 @@ export class GlbV3World {
     });
     if (count > 0)
       console.log(`[GlbV3World] benches: ${count} mesh shadows enabled`);
+  }
+
+  /**
+   * Benches collect a conforming snow crust: capture each bench mesh's
+   * geometry + world matrix so SnowShells can bake an inflated copy that hugs
+   * the slats and backrest (a bounding-box blob reads as floating discs).
+   */
+  #collectBenchSnowShellSources(group) {
+    group.updateMatrixWorld(true);
+    group.traverse((obj) => {
+      if (!obj.isMesh || !BENCH_MESH_RE.test(obj.name || "")) return;
+      this.snowShellSources.push({
+        geometry: obj.geometry,
+        matrix: obj.matrixWorld.clone(),
+      });
+    });
   }
 
   #configureShadowReceivers(group) {
@@ -2134,12 +2177,33 @@ export class GlbV3World {
           : Uint32Array.from({ length: a.count }, (_, n) => n);
       }
 
+      // Big rocks get a conforming snow crust (boulders only — pebbles
+      // whitening via the shared snow mask is enough).
+      const isRocks = entry.system === "rocks";
+      let protoBox = null;
+      if (isRocks) {
+        protos[0].geometry.computeBoundingBox();
+        protoBox = protos[0].geometry.boundingBox;
+      }
+      const _sz = new THREE.Vector3();
+
       // Per-instance world matrices, shared across this template's primitives.
       const matrices = new Array(placements.length);
       for (let i = 0; i < placements.length; i++) {
         placements[i].matrixWorld.decompose(pos, quat, scl);
         matrices[i] = new THREE.Matrix4().compose(pos, quat, scl);
         if (isPath) pathXZ.push(pos.x, pos.z);
+        if (isRocks) {
+          protoBox.getSize(_sz);
+          const w = Math.min(_sz.x * scl.x, _sz.z * scl.z);
+          const tall = _sz.y * scl.y;
+          if (tall > 0.45 && w > 0.5) {
+            this.snowShellSources.push({
+              geometry: protos[0].geometry,
+              matrix: matrices[i],
+            });
+          }
+        }
         if (solidColliders) {
           // Transform this instance's verts to world space → EXACT trimesh
           // collider (shares the template index). Hugs the real rock surface so
@@ -2338,13 +2402,25 @@ export class GlbV3World {
       if (obj.isMesh && /^titleLetter_\d+_/i.test(obj.name)) letters.push(obj);
     });
 
-    const material = new THREE.MeshStandardMaterial({
-      color: TITLE_LETTER_COLOR,
+    // Node material so the letters can take a REAL snow cap (white up-facing
+    // strokes) on top of the day/night/teal recolour — the old plain material
+    // could only swap its single colour. The dynamic colours move into
+    // uniforms; #updateTitleLetterAppearance writes .value instead of
+    // material properties.
+    const material = new THREE.MeshStandardNodeMaterial({
       roughness: 0.72,
       metalness: 0,
-      emissive: TITLE_LETTER_EMISSIVE,
-      emissiveIntensity: TITLE_EMISSIVE_DAY,
     });
+    this._titleColorU = uniform(new THREE.Color(TITLE_LETTER_COLOR));
+    this._titleEmissiveU = uniform(new THREE.Color(TITLE_LETTER_EMISSIVE));
+    this._titleEmissiveIntensityU = uniform(TITLE_EMISSIVE_DAY);
+    // Steeper facing window than ground props (low .35) — only true top
+    // strokes whiten, the glyph faces stay readable teal.
+    const letterMask = snowMask({ low: 0.35, high: 0.75 });
+    material.colorNode = snowColor(this._titleColorU, letterMask);
+    material.emissiveNode = this._titleEmissiveU
+      .mul(this._titleEmissiveIntensityU)
+      .add(snowEmissive(letterMask));
     this.titleLetterMaterial = material;
 
     for (let i = 0; i < letters.length; i++) {

@@ -197,6 +197,16 @@ physics.step → player.update → playerCamera.update → discovery.update
   floats the body at the surface — `swimming`/`treadingWater` Mixamo clips,
   no jump/crouch in water; small ponds + lava deny-listed via
   `Player.NO_SWIM_PONDS` + runtime refs (App.#scheduleDeferredWorldSystems).
+- **Snow** (`World/SnowState.js` + `WeatherDirector.js`): coverage/fall/wetness
+  uniforms; shading = view-dep glints + fresnel + edge lip (snowColor);
+  `Effects/SnowShells.js` = CONFORMING crusts (inflated copies of real
+  bench/boulder geometry merged static, + per-object shells on football/
+  bricks/animals that accumulate at rest and SHED on movement into
+  `SnowPiles.dropLumps`); `Effects/SnowPiles.js` = ground drift domes +
+  shed-lump pool; `Effects/SnowTrail.js` world-fixed pressed-trail DataTexture
+  sampled by the terrain material (tier knobs snowTrailRes / snowPileBudget).
+  Never blob-cap props from bounding boxes (reads as floating discs — user
+  rejected). Shared prop material stays colour-only. `?snow` = storm ~2s (dev).
 
 ## Verification
 

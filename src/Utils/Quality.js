@@ -21,6 +21,13 @@ const PROFILES = {
     maxSettledLeaves: 80,
     windLineCount: 350,
     fireflyCount: 144,
+    // Snow-trail deformation texture resolution (world-fixed ±64 m). 0 = the
+    // trail system is disabled entirely (the texture sample in the terrain
+    // shader and the CPU decay sweep are both skipped).
+    snowTrailRes: 512,
+    // Ground drift domes seeded on open grass (snow on props is SnowShells,
+    // not counted here). Sparse on purpose — drifts are an accent.
+    snowPileBudget: 90,
     // Adaptive DPR floor: under sustained frame budget pressure, the
     // adaptive controller in App.js may scale the renderer's pixelRatio
     // down to (base * dprFloor) to recover frametime. On a healthy GPU
@@ -57,6 +64,8 @@ const PROFILES = {
     maxSettledLeaves: 50,
     windLineCount: 210,
     fireflyCount: 96,
+    snowTrailRes: 384,
+    snowPileBudget: 60,
     dprFloor: 0.7,
     dprCap: 1.5, // sharper than 1.0, lighter than full Retina (2.25× px vs 4×)
     prewarm: { frames: 5, capMs: 3000 },
@@ -82,6 +91,8 @@ const PROFILES = {
     maxSettledLeaves: 24,
     windLineCount: 90,
     fireflyCount: 48,
+    snowTrailRes: 0,
+    snowPileBudget: 36,
     dprFloor: 0.55,
     dprCap: 1.0, // weak machines stay at 1.0 — resolution is the cheapest lever
     prewarm: { frames: 3, capMs: 2000 },

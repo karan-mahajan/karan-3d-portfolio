@@ -1,6 +1,7 @@
 import {
   uniform, float, vec3, vec4, mix, smoothstep, clamp,
   positionWorld, positionLocal, normalWorld, normalLocal, mx_noise_float,
+  cameraPosition,
 } from "three/tsl";
 
 /**
@@ -24,12 +25,19 @@ import {
 
 export const snowCoverage = uniform(0);
 export const snowFall = uniform(0);
+// 0..1 — how WET the bare ground is. Driven by WeatherDirector: climbs during
+// melt, dries off slowly in the following clear phase. Melting snow must leave
+// dark sodden ground behind, otherwise coverage ramping down reads as "the
+// white tint fading" instead of snow actually going away.
+export const snowWetness = uniform(0);
 
 // Two cold whites — snow albedo varies by noise so the blanket reads as shaded
 // drifts, not a flat paint fill. Slightly blue so the world's warm sunset light
 // brings it to neutral white instead of cream/brown.
 export const SNOW_ALBEDO = vec3(0.9, 0.95, 1.0);
-const SNOW_DIM = vec3(0.7, 0.78, 0.9);
+// Deeper blue shift than the albedo so the noise variation between the two
+// whites reads as cold shaded drifts rather than two near-identical creams.
+const SNOW_DIM = vec3(0.62, 0.71, 0.92);
 
 /**
  * Large-scale patch field in 0..1 over world XZ. Two octaves so patch edges are
@@ -53,6 +61,22 @@ export function snowGrowAt(xz, bias = 0, edge = 0.16) {
   const patch = patchField(xz);
   const cov = clamp(snowCoverage.add(bias), 0, 1);
   return smoothstep(patch.sub(edge), patch.add(edge * 0.5), cov);
+}
+
+/**
+ * 1 in the band of ground JUST ahead of / behind the receding snow line —
+ * the pixels that most recently lost their snow. Evaluates the patch field
+ * once (cheaper than two snowGrowAt calls).
+ */
+function wetBand(xz, bias = 0) {
+  const patch = patchField(xz);
+  const cov = clamp(snowCoverage.add(bias), 0, 1);
+  const edge = 0.16;
+  const covered = smoothstep(patch.sub(edge), patch.add(edge * 0.5), cov);
+  const nearlyCovered = smoothstep(
+    patch.sub(edge), patch.add(edge * 0.5), clamp(cov.add(0.18), 0, 1),
+  );
+  return clamp(nearlyCovered.sub(covered), 0, 1);
 }
 
 /**
@@ -105,14 +129,27 @@ function snowAlbedo() {
   return mix(SNOW_DIM, SNOW_ALBEDO, n);
 }
 
-/** Blend a base rgb node toward (shaded) snow by `mask`. */
+/**
+ * Blend a base rgb node toward (shaded) snow by `mask`, with an EDGE LIP:
+ * `mask*(1-mask)*4` peaks exactly at the mask boundary, brightening the snow
+ * side (rounded fresh-snow rim catching light) and pressing a thin dark
+ * contact line into the bare side — the silhouette cue that the blanket has
+ * thickness, without any geometry.
+ */
 export function snowColor(baseRgb, mask) {
-  return mix(baseRgb, snowAlbedo(), mask);
+  const lip = mask.mul(mask.oneMinus()).mul(4.0);
+  const contact = lip.mul(mask.oneMinus()).mul(0.16);
+  const wet = wetBand(positionWorld.xz).mul(snowWetness);
+  const bare = baseRgb
+    .mul(contact.oneMinus())
+    .mul(mix(float(1.0), float(0.55), wet));
+  const lifted = snowAlbedo().mul(lip.mul(0.10).add(1.0));
+  return mix(bare, lifted, mask);
 }
 
 /** Preserve a vec4 colour's alpha while snowing the rgb (shared-material path). */
 export function snowColor4(baseRgba, mask) {
-  return vec4(mix(baseRgba.xyz, snowAlbedo(), mask), baseRgba.w);
+  return vec4(snowColor(baseRgba.xyz, mask), baseRgba.w);
 }
 
 /** Snow reads matte — push roughness up where it accumulates. */
@@ -128,11 +165,20 @@ export function snowRoughness(baseRough, mask) {
  * gated by the snow mask.
  */
 function snowSparkle() {
-  // High-frequency noise raised to a high power → small, sparse bright specks.
-  const glintField = mx_noise_float(positionWorld.mul(11.0)).mul(0.5).add(0.5);
-  const glint = glintField.pow(26).mul(1.4);
+  // Glints must TWINKLE: keying the noise field off the view direction makes
+  // individual specks pop in/out as the camera orbits — a static high-pass
+  // noise reads as dirt, not glitter.
+  const viewDir = cameraPosition.sub(positionWorld).normalize();
+  const glintField = mx_noise_float(
+    positionWorld.mul(11.0).add(viewDir.mul(2.5)),
+  ).mul(0.5).add(0.5);
+  const glint = glintField.pow(26).mul(1.8);
+  // Grazing-angle cool rim — snow scatters light through its surface grains,
+  // so silhouette edges brighten faintly blue (cheap stand-in for SSS).
+  const fres = clamp(viewDir.dot(normalWorld), 0, 1).oneMinus().pow(3.0);
+  const rim = vec3(0.5, 0.65, 1.0).mul(fres).mul(0.22);
   const coolLift = vec3(0.05, 0.07, 0.11); // faint cold ambient so snow stays white
-  return coolLift.add(glint);
+  return coolLift.add(glint).add(rim);
 }
 
 /** Emissive snow contribution (sparkle + cool lift) gated by the snow mask. */
