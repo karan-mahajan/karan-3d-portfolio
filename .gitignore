@@ -64,4 +64,7 @@ AGENTS.md
 # Stray shadow-verification probe.
 /.verify-shadows.mjs
 
+# graphify codebase knowledge graph (generated dev tooling, regenerable).
+/graphify-out/
+
 .superpowers/
