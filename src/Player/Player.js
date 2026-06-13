@@ -56,6 +56,42 @@ export class Player {
     { x: 45.7, z: 35.2,  r: 10 },  // lower-left curl pool
     { x: 38.1, z: -47.9, r: 10 },  // lower-right puddle splash
   ];
+  // ── Edge-grab exit (swimming-to-edge clip) ────────────────────────────
+  // Measured on the avatar (.verify/scripts/measure-swim-edge-reach.mjs):
+  // prone strokes until ~1.6s, a vertical reach, then a stable two-handed
+  // hold with the hands planted ~1.10m above the group origin and ~0.5m
+  // ahead. The clip authors NO climb-up, so after the hold the body is
+  // boosted onto the bank procedurally while crossfading to idle.
+  //
+  // The terrain has NO underwater cliffs (steepest carved bank ≈30°,
+  // measured by .verify/scripts/debug-edge-grab-geometry.mjs — dry ground
+  // is never closer than ~1.5m to swim-deep water). So the trigger probes a
+  // fan of distances for the nearest dry lip and the clip's authored
+  // approach strokes glide the body up to it; the hang then reads as
+  // "chest at the waterline, hands on the edge" because the body-bank
+  // intersection below the hold stays underwater.
+  static EDGE_PROBE_MIN = 0.5;      // m — fan start (hand reach)
+  // Fan end. Scanned (debug-edge-grab-geometry.mjs): at ≤2.75m dry lips
+  // exist ONLY on river/lagoon banks — ocean beaches keep dry ground
+  // farther out, so they can never trigger a grab. 2.25 covers the river
+  // and both lagoons densely.
+  static EDGE_PROBE_MAX = 2.25;
+  static EDGE_PROBE_STEP = 0.25;
+  static EDGE_BANK_MAX_Y = 0.55;    // lips above this are beyond arm reach — no grab
+  static EDGE_HANDS_ABOVE_ORIGIN = 1.10; // measured hold-pose hand height over the feet origin
+  static EDGE_HOLD_REACH = 0.55;    // hands plant this far ahead of the held body
+  // Ground under the hold spot must stay submerged so the buried legs are
+  // hidden by water. Carved banks flatten into a shoulder right at the
+  // waterline (~-0.19 on the steepest profile), so "submerged" can only
+  // mean a couple of cm under the -0.15 surface — any stricter and no bank
+  // on the island qualifies.
+  static EDGE_HOLD_MAX_GROUND = Player.WATER_SURFACE_Y - 0.02;
+  static EDGE_MIN_SWIM_TIME = 0.4;  // s in swim mode before a grab can trigger (kills entry plunges)
+  static EDGE_APPROACH_TIME = 1.6;  // s — the clip's authored approach strokes
+  static EDGE_GRAB_RISE_TIME = 0.5; // s to lift the body to the hold height
+  static EDGE_GRAB_HOLD_TIME = 1.5; // s from grab start until the boost begins (reach completes)
+  static EDGE_CLIMB_TIME = 0.55;    // s for the boost onto the bank
+  static EDGE_CLIMB_FORWARD = 0.35; // m beyond the lip the landing point sits
 
   // Natural foot-speed of each locomotion clip in m/s, MEASURED from the
   // source clips' hip root-motion (forward travel / duration) before the
@@ -135,6 +171,10 @@ export class Player {
     // Deep-water swim mode — set per substep in stepPhysics with hysteresis.
     this._swimming = false;
     this._noSwimZones = [...Player.NO_SWIM_PONDS];
+    // Continuous seconds in swim mode (edge-grab trigger guard) and the
+    // active edge-grab sequence ({phase, t, ...} while grabbing/climbing).
+    this._swimTime = 0;
+    this._edgeGrab = null;
 
     // Museum interior: skip the terrain-coupled effects (wading slowdown,
     // slope tilt) and swap the void-fall respawn — the basement sits at
@@ -217,6 +257,14 @@ export class Player {
     // advances the character animation and keeps the camera following.
     if (this._frozen) return;
 
+    // Edge-grab sequence owns the body (rise to the hold, then boost onto the
+    // bank) — input and normal swim motion are paused until it completes.
+    if (this._edgeGrab) {
+      this.#updateEdgeGrab(delta);
+      this._lastSample = this.#stationarySample(delta);
+      return this._lastSample;
+    }
+
     // Wading slowdown — must be set before sample() so the velocity it returns
     // is already scaled. Depth is the terrain dipping below the water surface
     // (ponds, river, ocean falloff), so it engages wherever the water visibly
@@ -242,10 +290,24 @@ export class Player {
       // Swim mode: deep water engages it, hysteresis releases it. The same
       // feet gate that protects bridges from wade-slow protects them here.
       if (this._swimming) {
-        if (!overWater || waterDepth < Player.SWIM_EXIT_DEPTH) this._swimming = false;
+        // Lift-exit: ground support carrying the body above the exit-depth
+        // float line means the player is standing in the shallows or has
+        // ridden up a bank. The x/z depth sample misses this (steep banks
+        // read "deep" right at the wall), which left the stroke playing on
+        // dry-looking edges.
+        const lifted = (this.body ? this.body.swimSupported : true)
+          && this.group.position.y > Player.WATER_SURFACE_Y - Player.SWIM_EXIT_DEPTH;
+        if (!overWater || waterDepth < Player.SWIM_EXIT_DEPTH || lifted) this._swimming = false;
       } else if (
         overWater
         && waterDepth >= Player.SWIM_ENTER_DEPTH
+        // Mirror of the lift-exit: standing supported above the exit float
+        // line (steep banks, submerged props) must not re-enter swim on the
+        // very next substep — that would thrash the swim↔walk crossfade.
+        // Beach wading (feet down at the deep ground) and jump-ins (airborne)
+        // pass untouched.
+        && !(this.body?.grounded
+          && this.group.position.y > Player.WATER_SURFACE_Y - Player.SWIM_EXIT_DEPTH)
         && !this.#inNoSwimZone(dx, dz)
       ) {
         this._swimming = true;
@@ -268,8 +330,24 @@ export class Player {
         this.controller.speedMultiplier = 1.0;
       }
     }
+    this._swimTime = this._swimming ? this._swimTime + delta : 0;
 
     const sample = this.controller.sample(delta);
+
+    // Swimming into a grabbable bank edge starts the edge-grab exit. Checked
+    // after sampling (the trigger needs the movement direction) and before
+    // motion is applied so the sequence owns the body from its first substep.
+    if (
+      this._swimming
+      && sample.moving
+      && this._swimTime >= Player.EDGE_MIN_SWIM_TIME
+    ) {
+      this.#maybeStartEdgeGrab(sample);
+      if (this._edgeGrab) {
+        this._lastSample = this.#stationarySample(delta);
+        return this._lastSample;
+      }
+    }
 
     // Soft wall at MAX_TRAVEL_RADIUS. Hard-teleporting here used to fight
     // the kinematic character controller (move() queues a next-translation
@@ -659,6 +737,10 @@ export class Player {
    */
   markTeleported() {
     this._teleported = true;
+    // Any external snap invalidates an in-flight edge grab — its cached bank
+    // point is at the OLD location, so letting it run would pin the player
+    // under the destination terrain and then drag them back across the world.
+    if (this._edgeGrab) this.#abortEdgeGrab();
   }
 
   /** True while deep-water swim mode drives locomotion (App reads this). */
@@ -682,6 +764,174 @@ export class Player {
       if (ddx * ddx + ddz * ddz <= zone.r * zone.r) return true;
     }
     return false;
+  }
+
+  /** Zeroed controller sample for substeps where a sequence owns the body. */
+  #stationarySample(delta) {
+    return {
+      velocity: new THREE.Vector3(),
+      speed: 0,
+      moving: false,
+      facing: null,
+      pureBackward: false,
+      pureRight: false,
+      pureLeft: false,
+      delta,
+    };
+  }
+
+  /**
+   * Probe a fan of distances along the swim direction for the nearest dry
+   * lip: ground at/above the waterline, low enough for the measured hold
+   * pose, with the hold spot's own ground still submerged (so the hang
+   * reads chest-at-the-waterline instead of arms floating over a slope).
+   * Gentle beaches never qualify — their dry ground sits several metres
+   * past swim-deep water, beyond the fan.
+   */
+  #maybeStartEdgeGrab(sample) {
+    if (!this.terrain || !this.character?.actions?.swimmingToEdge) return;
+    const sp = sample.speed;
+    if (sp < 0.3) return;
+    const dirX = sample.velocity.x / sp;
+    const dirZ = sample.velocity.z / sp;
+    let lipD = 0;
+    let bankY = 0;
+    for (
+      let d = Player.EDGE_PROBE_MIN;
+      d <= Player.EDGE_PROBE_MAX + 1e-6;
+      d += Player.EDGE_PROBE_STEP
+    ) {
+      const b = this.terrain.heightAt(
+        this.group.position.x + dirX * d,
+        this.group.position.z + dirZ * d,
+      );
+      if (b >= Player.WATER_SURFACE_Y + 0.05) {
+        if (b > Player.EDGE_BANK_MAX_Y) return; // wall too tall to grab
+        lipD = d;
+        bankY = b;
+        break;
+      }
+    }
+    if (!lipD) return;
+    const lipX = this.group.position.x + dirX * lipD;
+    const lipZ = this.group.position.z + dirZ * lipD;
+    const holdX = lipX - dirX * Player.EDGE_HOLD_REACH;
+    const holdZ = lipZ - dirZ * Player.EDGE_HOLD_REACH;
+    if (this.terrain.heightAt(holdX, holdZ) > Player.EDGE_HOLD_MAX_GROUND) return;
+
+    this._edgeGrab = {
+      phase: 'approach',
+      t: 0,
+      fromX: this.group.position.x,
+      fromZ: this.group.position.z,
+      startY: this.group.position.y,
+      holdX,
+      holdZ,
+      // Hold height puts the planted hands exactly on the bank lip; never
+      // sink below the treading float to get there.
+      grabY: Math.max(
+        bankY - Player.EDGE_HANDS_ABOVE_ORIGIN,
+        Player.WATER_SURFACE_Y - Player.TREAD_BODY_SINK,
+      ),
+      landX: lipX + dirX * Player.EDGE_CLIMB_FORWARD,
+      landZ: lipZ + dirZ * Player.EDGE_CLIMB_FORWARD,
+      // The validated lip — the climb falls back to it when the farther
+      // landing spot turns out wet (thin wall) or a steep pop-up.
+      probeX: lipX,
+      probeZ: lipZ,
+      bankY,
+    };
+    this._targetYaw = Math.atan2(dirX, dirZ); // square up to the bank
+    this.controller.lock();
+    this._actionLocked = true;
+    this._state = 'swimmingToEdge';
+    // Full clip from t=0 — the authored approach strokes cover the glide
+    // up to the hold spot.
+    this.character.play('swimmingToEdge', { fade: 0.3 });
+  }
+
+  /** Advance the approach → grab → boost sequence; called per substep instead of motion. */
+  #updateEdgeGrab(delta) {
+    const eg = this._edgeGrab;
+    eg.t += delta;
+    if (eg.phase === 'approach') {
+      // Glide to the hold spot at the float height while the clip's authored
+      // strokes play — speed varies with trigger distance, which reads as a
+      // last reaching stroke rather than locomotion, so no timeScale sync.
+      const f = Math.min(1, eg.t / Player.EDGE_APPROACH_TIME);
+      this.#driveBodyTo(
+        eg.fromX + (eg.holdX - eg.fromX) * f,
+        eg.startY,
+        eg.fromZ + (eg.holdZ - eg.fromZ) * f,
+      );
+      if (eg.t >= Player.EDGE_APPROACH_TIME) {
+        eg.phase = 'grab';
+        eg.t = 0;
+      }
+    } else if (eg.phase === 'grab') {
+      const f = Math.min(1, eg.t / Player.EDGE_GRAB_RISE_TIME);
+      const ease = f * (2 - f); // easeOutQuad — settle onto the hold
+      this.#driveBodyTo(
+        this.group.position.x,
+        eg.startY + (eg.grabY - eg.startY) * ease,
+        this.group.position.z,
+      );
+      if (eg.t >= Player.EDGE_GRAB_HOLD_TIME) {
+        eg.phase = 'climb';
+        eg.t = 0;
+        eg.fromX = this.group.position.x;
+        eg.fromY = this.group.position.y;
+        eg.fromZ = this.group.position.z;
+        eg.landY = this.terrain.heightAt(eg.landX, eg.landZ) + 0.02;
+        // Thin spit / sharp rise beyond the probed lip — land on the
+        // validated probe point instead of vaulting into water or popping up.
+        if (
+          eg.landY < Player.WATER_SURFACE_Y + 0.05
+          || eg.landY > Player.EDGE_BANK_MAX_Y + 0.3
+        ) {
+          eg.landX = eg.probeX;
+          eg.landZ = eg.probeZ;
+          eg.landY = eg.bankY + 0.02;
+        }
+        // No authored climb-up exists — the idle crossfade over the short
+        // boost arc reads as the pull-up.
+        this.character.play('idle', { fade: 0.35 });
+      }
+    } else {
+      const f = Math.min(1, eg.t / Player.EDGE_CLIMB_TIME);
+      const s = f * f * (3 - 2 * f); // smoothstep
+      const fy = Math.min(1, s * 1.6); // vertical leads — the arc reads up-then-over
+      this.#driveBodyTo(
+        eg.fromX + (eg.landX - eg.fromX) * s,
+        eg.fromY + (eg.landY - eg.fromY) * fy,
+        eg.fromZ + (eg.landZ - eg.fromZ) * s,
+      );
+      if (f >= 1) this.#endEdgeGrab();
+    }
+  }
+
+  #driveBodyTo(x, y, z) {
+    if (this.body?.teleport) this.body.teleport(x, y, z);
+    this.group.position.set(x, y, z);
+  }
+
+  #endEdgeGrab() {
+    this._edgeGrab = null;
+    this._swimming = false;
+    this._swimTime = 0;
+    this.controller.swimMode = false;
+    this.controller.unlock();
+    this._actionLocked = false;
+    this._grounded = true;
+    this._verticalVelocity = 0;
+    this._state = 'idle';
+  }
+
+  /** Cancel mid-sequence when an external system snaps the player away. */
+  #abortEdgeGrab() {
+    this._edgeGrab = null;
+    this.controller.unlock();
+    this._actionLocked = false;
   }
 
   /**

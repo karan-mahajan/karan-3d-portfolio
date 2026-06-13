@@ -76,6 +76,10 @@ const MIXAMO_CLIPS = [
   // root motion is stripped like the rest.
   { action: 'swimming',         url: '/models/character/animations/swimming.glb' },
   { action: 'treadingWater',    url: '/models/character/animations/treading-water.glb' },
+  // Edge-grab exit: prone approach strokes → vertical reach → two-handed
+  // hold on the bank lip (the clip has NO climb-up — Player boosts the body
+  // procedurally after the hold). See Player.#maybeStartEdgeGrab.
+  { action: 'swimmingToEdge',   url: '/models/character/animations/swimming-to-edge.glb' },
 ];
 
 const DEFERRED_MIXAMO_CLIPS = [

@@ -499,6 +499,10 @@ class PlayerBody {
     this.radius = radius;
     this._verticalVelocity = 0;
     this._grounded = true;
+    // True while swim() detects ground contact under the floating capsule —
+    // Player reads it to exit swim mode when the seafloor/bank carries the
+    // body up (`grounded` itself is forced false during swim).
+    this._swimSupported = false;
     // Sideways slide applied for a few frames after landing on a fence rope, to
     // shove the player off the thin top instead of letting them balance on it.
     this._fenceSlideX = 0;
@@ -514,6 +518,10 @@ class PlayerBody {
 
   get grounded() {
     return this._grounded;
+  }
+
+  get swimSupported() {
+    return this._swimSupported;
   }
 
   jump(impulse) {
@@ -590,6 +598,7 @@ class PlayerBody {
     cc.disableSnapToGround();
     cc.computeColliderMovement(this.collider, desired);
     cc.enableSnapToGround(Physics.SNAP_TO_GROUND_DIST);
+    this._swimSupported = cc.computedGrounded();
     const corrected = cc.computedMovement();
     const t = this.body.translation();
     this.body.setNextKinematicTranslation({

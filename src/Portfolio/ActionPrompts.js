@@ -345,6 +345,9 @@ export class ActionPrompts {
   startPush() {
     if (this.globalPushActive || this.activeHoldLoop || this.oneShotActive || this.activeZoneLoop) return;
     if (this.museum?._busy) return;
+    // No pushing from the water — the snap-to-distance teleport would fight
+    // the swim float (and the edge-grab sequence) for the body.
+    if (this.player?.isSwimming) return;
     if (this.billboardInteraction && (this.billboardInteraction.activeIndex >= 0 || this.billboardInteraction.contactOpen || this.billboardInteraction.skillOpen || this.billboardInteraction.zooming)) return;
     // Realism: P only fires when the player is actually facing a real
     // pushable in range. currentPushSpot is set by tick() after the
