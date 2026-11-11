@@ -193,7 +193,7 @@ export const portfolio = {
       solution: null,
       impact: null,
       highlights: [],
-      tech: ["WordPress", "PHP", "Git", "Pantheon"],
+      tech: ["WordPress", "PHP", "Git"],
       links: { live: "https://rpra.ca/", github: null, caseStudy: null },
       url: "https://rpra.ca/",
       color: "#34d399",
@@ -212,7 +212,7 @@ export const portfolio = {
       solution: null,
       impact: null,
       highlights: [],
-      tech: ["WordPress", "PHP", "Git", "Pantheon"],
+      tech: ["WordPress", "PHP", "Git"],
       links: {
         live: "https://ontariorecycles.ca/",
         github: null,

@@ -37,8 +37,8 @@
 ## Selected projects
 
 - Alectra Utilities (https://alectrautilities.com): Custom development and ongoing maintenance with the Skylar Media Group team. Enterprise Drupal CMS for an Ontario utility — complex content workflows, scheduled transitions, Pantheon deployments. Tech: Drupal, PHP, Pantheon, Lando.
-- RPRA Website (https://rpra.ca): Custom development and ongoing maintenance with the Skylar Media Group team. Full QA audit and development for Ontario's Resource Productivity and Recovery Authority — custom tooling, plugin management, Git deployment pipelines. Tech: WordPress, PHP, Git, Pantheon.
-- Ontario Recycles (https://ontariorecycles.ca): Custom WordPress build and ongoing maintenance with the Skylar Media Group team. Custom development, QA, plugin management, and Git deployment pipelines. Tech: WordPress, PHP, Git, Pantheon.
+- RPRA Website (https://rpra.ca): Custom development and ongoing maintenance with the Skylar Media Group team. Full QA audit and development for Ontario's Resource Productivity and Recovery Authority — custom tooling, plugin management, Git deployment pipelines. Tech: WordPress, PHP, Git.
+- Ontario Recycles (https://ontariorecycles.ca): Custom WordPress build and ongoing maintenance with the Skylar Media Group team. Custom development, QA, plugin management, and Git deployment pipelines. Tech: WordPress, PHP, Git.
 - Interstone: Custom development and ongoing maintenance with the Skylar Media Group team. WooCommerce store with WebP image compression, REST API integrations, Wordfence security. Tech: WordPress, WooCommerce, REST API, PHP.
 - findabl: Custom development and ongoing maintenance with the Skylar Media Group team. Next.js app with Apollo GraphQL, dynamic employee profiles, CSP enforcement, SSR optimizations. Tech: Next.js, React, GraphQL, Apollo.
 
