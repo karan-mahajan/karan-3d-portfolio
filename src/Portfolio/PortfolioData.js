@@ -27,10 +27,10 @@ export const portfolio = {
     {
       name: "findabl",
       summary:
-        "findabl is a full-stack SaaS platform I designed and built single-handedly to help businesses improve their visibility across AI-powered search tools like ChatGPT, Gemini, Perplexity, and Microsoft Copilot.",
+        "findabl is a full-stack SaaS platform developed and maintained by the Skylar Media Group team to help businesses improve their visibility across AI-powered search tools like ChatGPT, Gemini, Perplexity, and Microsoft Copilot.",
       description:
-        'findabl is a full-stack SaaS platform I designed and built single-handedly to help businesses improve their visibility across AI-powered search tools like ChatGPT, Gemini, Perplexity, and Microsoft Copilot. I shipped the entire customer-facing product solo in [N weeks] — Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, Supabase, Stripe, and SendGrid — covering the full journey from marketing and authentication through billing, onboarding, and a post-subscription dashboard.\n\nVisitors register with server-side reCAPTCHA v3, choose a Starter or Growth plan, acknowledge a dynamically generated PDF service agreement, and check out through Stripe, with webhooks keeping Supabase in sync and firing automated welcome emails and activity logs. On the technical side I built dual AI-powered business search on GPT-4o-mini and Gemini 2.5 Flash with IP-based rate limiting, promotional flows with auto-applied Stripe coupons matched by email, and marketing pages cached with Next.js\'s "use cache" directive on week-long TTLs and Suspense skeletons for fast loads.',
-      role: "Full Stack Web Developer",
+        'findabl is a full-stack SaaS platform developed and maintained by the Skylar Media Group team to help businesses improve their visibility across AI-powered search tools like ChatGPT, Gemini, Perplexity, and Microsoft Copilot. As part of the Skylar team, I developed the customer-facing product on Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, Supabase, Stripe, and SendGrid, covering the full journey from marketing and authentication through billing, onboarding, and a post-subscription dashboard.\n\nVisitors register with server-side reCAPTCHA v3, choose a Starter or Growth plan, acknowledge a dynamically generated PDF service agreement, and check out through Stripe, with webhooks keeping Supabase in sync and firing automated welcome emails and activity logs. On the technical side I built dual AI-powered business search on GPT-4o-mini and Gemini 2.5 Flash with IP-based rate limiting, promotional flows with auto-applied Stripe coupons matched by email, and marketing pages cached with Next.js\'s "use cache" directive on week-long TTLs and Suspense skeletons for fast loads.',
+      role: "Full Stack Web Developer at Skylar Media Group",
       year: 2025,
       category: "Website",
       problem: null,
@@ -54,10 +54,10 @@ export const portfolio = {
     {
       name: "Alectra Utilities",
       summary:
-        "I built and maintained a large-scale, multi-brand enterprise web platform serving two major Ontario utilities — Alectra Utilities and Guelph Hydro — powering their public sites, customer portals, and a shared UI component library consumed by third-party billing and account-management apps.",
+        "As part of the Skylar Media Group team, I built and maintained a large-scale, multi-brand enterprise web platform serving two major Ontario utilities — Alectra Utilities and Guelph Hydro — powering their public sites, customer portals, and a shared UI component library consumed by third-party billing and account-management apps.",
       description:
-        "I built and maintained a large-scale, multi-brand enterprise web platform serving two major Ontario utilities — Alectra Utilities and Guelph Hydro — powering their public sites, customer portals, and a shared UI component library consumed by third-party billing and account-management apps. The hardest part was integration: I engineered custom Drupal modules exposing dynamic header/footer and billing endpoints that external JSP applications rendered live, so two separately-built systems looked and behaved like one product.\n\nI stood up full-text search on Apache Solr with advanced filtering and spellcheck, and delivered a responsive, multi-brand front-end on a custom Foundation theme with multi-region layouts, inline alerts, and accessible navigation. The platform runs on Pantheon with enterprise caching and is hardened to utility-sector security standards (CSP, 2FA, and bot/spam protection) for reliability at scale.",
-      role: "Full Stack Web Developer",
+        "As part of the Skylar Media Group team, I built and maintained a large-scale, multi-brand enterprise web platform serving two major Ontario utilities — Alectra Utilities and Guelph Hydro — powering their public sites, customer portals, and a shared UI component library consumed by third-party billing and account-management apps. The hardest part was integration: I engineered custom Drupal modules exposing dynamic header/footer and billing endpoints that external JSP applications rendered live, so two separately-built systems looked and behaved like one product.\n\nI stood up full-text search on Apache Solr with advanced filtering and spellcheck, and delivered a responsive, multi-brand front-end on a custom Foundation theme with multi-region layouts, inline alerts, and accessible navigation. The platform runs on Pantheon with enterprise caching and is hardened to utility-sector security standards (CSP, 2FA, and bot/spam protection) for reliability at scale.",
+      role: "Full Stack Web Developer at Skylar Media Group",
       year: 2025,
       category: "Website",
       problem: null,
@@ -122,10 +122,10 @@ export const portfolio = {
     {
       name: "Interstone",
       summary:
-        "I designed and built a custom WordPress theme for Interstone, a premium building-materials company, turning a 1500+product catalogue into a polished, fully responsive browsing experience with no transactional layer.",
+        "As part of the Skylar Media Group team, I built a custom WordPress theme for Interstone, a premium building-materials company, turning a 1500+ product catalogue into a polished, fully responsive browsing experience with no transactional layer.",
       description:
-        "I designed and built a custom WordPress theme for Interstone, a premium building-materials company, turning a [N]-product catalogue into a polished, fully responsive browsing experience with no transactional layer. The interesting constraint was using WooCommerce purely as a catalogue engine — I stripped all cart and checkout UI so users could explore products by category and filter by material, colour, and finish, with live search returning instant results as they type.\n\nThe standout feature is an AI-powered Visual Search page where users upload a photo of their space and get relevant product recommendations back. Under the hood I built a strict SCSS token system on Bootstrap 5 with a Gulp pipeline (compilation, autoprefixing, minification, source maps) and seven reusable Gutenberg blocks on ACF Pro, so the client can compose pages without touching code.",
-      role: "Full Stack Web Developer",
+        "As part of the Skylar Media Group team, I built a custom WordPress theme for Interstone, a premium building-materials company, turning a 1500+ product catalogue into a polished, fully responsive browsing experience with no transactional layer. The interesting constraint was using WooCommerce purely as a catalogue engine — I stripped all cart and checkout UI so users could explore products by category and filter by material, colour, and finish, with live search returning instant results as they type.\n\nThe standout feature is an AI-powered Visual Search page where users upload a photo of their space and get relevant product recommendations back. Under the hood I built a strict SCSS token system on Bootstrap 5 with a Gulp pipeline (compilation, autoprefixing, minification, source maps) and seven reusable Gutenberg blocks on ACF Pro, so the client can compose pages without touching code.",
+      role: "Full Stack Web Developer at Skylar Media Group",
       year: 2026,
       category: "Website",
       problem: null,
@@ -149,10 +149,10 @@ export const portfolio = {
     {
       name: "Alectra Corporate Website",
       summary:
-        "I led the Drupal 10 → 11 major-version migration for Alectra Inc.'s corporate website — one of Ontario's largest electricity distributors, serving over 1 million customers — upgrading the platform across a 60+ component, paragraph-based content system with no loss of content or layout.",
+        "As part of the Skylar Media Group team, I led the Drupal 10 → 11 major-version migration for Alectra Inc.'s corporate website — one of Ontario's largest electricity distributors, serving over 1 million customers — upgrading the platform across a 60+ component, paragraph-based content system with no loss of content or layout.",
       description:
-        "I led the Drupal 10 → 11 major-version migration for Alectra Inc.'s corporate website — one of Ontario's largest electricity distributors, serving over 1 million customers — upgrading the platform across a 60+ component, paragraph-based content system with no loss of content or layout. On top of the migration I owned frontend and custom module development end to end, building three custom Drupal modules covering automated cache management, employee document handling, and security headers, all on a fully custom Foundation for Sites theme. The 60+ reusable components let the client's editors assemble new pages — careers listings, data-sheet sections, CTA layouts — entirely from the CMS without developer involvement.",
-      role: "Full Stack Web Developer",
+        "As part of the Skylar Media Group team, I led the Drupal 10 → 11 major-version migration for Alectra Inc.'s corporate website — one of Ontario's largest electricity distributors, serving over 1 million customers — upgrading the platform across a 60+ component, paragraph-based content system with no loss of content or layout. On top of the migration I owned frontend and custom module development end to end, building three custom Drupal modules covering automated cache management, employee document handling, and security headers, all on a fully custom Foundation for Sites theme. The 60+ reusable components let the client's editors assemble new pages — careers listings, data-sheet sections, CTA layouts — entirely from the CMS without developer involvement.",
+      role: "Full Stack Web Developer at Skylar Media Group",
       year: 2025,
       category: "Web App",
       problem: null,
@@ -181,23 +181,46 @@ export const portfolio = {
       image: "/textures/screenshots/alectra-corporate.webp",
     },
     {
-      name: "WEAL Website",
+      name: "RPRA Website",
       summary:
-        "Developed and designed a comprehensive website using Wix, enabling efficient sample submission and result management.",
+        "As part of the Skylar Media Group team, I handle custom development and ongoing maintenance for the WordPress website of the Resource Productivity and Recovery Authority, Ontario's regulator for the province's circular economy laws.",
       description:
-        "Developed and designed a comprehensive website using Wix, enabling efficient sample submission and result management. Implemented an admin dashboard for streamlined sample analysis and results uploading, improving overall administrative workflow",
-      role: "Programming Research Assistant",
-      year: 2024,
+        "As part of the Skylar Media Group team, I handle custom development and ongoing maintenance for the WordPress website of the Resource Productivity and Recovery Authority, Ontario's regulator for the province's circular economy laws.\n\nThe work covers QA audits, custom tooling, plugin management, and Git-based deployment pipelines, keeping a public-sector site stable, secure, and up to date.",
+      role: "Full Stack Web Developer at Skylar Media Group",
+      year: null,
       category: "Website",
       problem: null,
       solution: null,
       impact: null,
       highlights: [],
-      tech: ["Wix", "Velo API", "JavaScript", "HTML/CSS"],
-      links: { live: "https://www.xsal.ca/", github: null, caseStudy: null },
-      url: "https://www.xsal.ca/",
-      color: "#a78bfa",
-      image: "/textures/screenshots/weal.webp",
+      tech: ["WordPress", "PHP", "Git", "Pantheon"],
+      links: { live: "https://rpra.ca/", github: null, caseStudy: null },
+      url: "https://rpra.ca/",
+      color: "#34d399",
+      image: "/textures/screenshots/rpra.webp",
+    },
+    {
+      name: "Ontario Recycles",
+      summary:
+        "Ontario Recycles is a public-facing WordPress site built by Skylar Media Group for the Resource Productivity and Recovery Authority, helping Ontarians find where to recycle batteries, electronics, paint, tires, and more.",
+      description:
+        "Ontario Recycles is a public-facing WordPress site built by Skylar Media Group for the Resource Productivity and Recovery Authority, helping Ontarians find where to recycle batteries, electronics, paint, tires, and more.\n\nAs part of the Skylar team, I handle custom development and ongoing maintenance on the site, including QA, plugin management, and Git-based deployment pipelines.",
+      role: "Full Stack Web Developer at Skylar Media Group",
+      year: null,
+      category: "Website",
+      problem: null,
+      solution: null,
+      impact: null,
+      highlights: [],
+      tech: ["WordPress", "PHP", "Git", "Pantheon"],
+      links: {
+        live: "https://ontariorecycles.ca/",
+        github: null,
+        caseStudy: null,
+      },
+      url: "https://ontariorecycles.ca/",
+      color: "#3b82f6",
+      image: "/textures/screenshots/ontario-recycles.webp",
     },
     {
       name: "Campus Cart",
