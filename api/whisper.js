@@ -22,11 +22,15 @@ import {
   WHISPER_MAXLEN,
   NAME_MAXLEN,
   WHISPER_COOLDOWN_S,
+  isCrossSiteRequest,
 } from "./_lib.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return sendJson(res, 405, { error: "method_not_allowed" });
+  }
+  if (isCrossSiteRequest(req)) {
+    return sendJson(res, 403, { error: "forbidden" });
   }
   if (isLocalRequest(req)) {
     return sendJson(res, 200, { configured: false, error: "local" });
@@ -49,6 +53,11 @@ export default async function handler(req, res) {
       error: "rate_limited",
       retryAfter: ipRate.retryAfter,
     });
+  }
+
+  const dayRate = await enforceIpRateLimit(redis, req, RATE_LIMITS.whisperIpDay);
+  if (dayRate.limited) {
+    return sendJson(res, 429, { error: "rate_limited" });
   }
 
   const text = sanitizeText(body.text, WHISPER_MAXLEN);

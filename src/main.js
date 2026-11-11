@@ -37,7 +37,14 @@ function startOnboardingWhenReady(app) {
 }
 
 async function bootstrap() {
-  const app = new App();
+  let app;
+  try {
+    app = new App();
+  } catch (err) {
+    console.error('Boot failed', err);
+    loadingScreen.fail();
+    return;
+  }
   window.__app = app;
 
   // Browsers block audio until a real user gesture (click / key / tap). There's
@@ -68,6 +75,7 @@ async function bootstrap() {
     result = await app.boot();
   } catch (err) {
     console.error('Boot failed', err);
+    loadingScreen.fail();
     return;
   }
 

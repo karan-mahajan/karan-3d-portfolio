@@ -73,6 +73,16 @@ export class ClickToMove {
     this.controller?.setVirtualInput?.({ forward: 1, strafe: 0, worldAngle: angle });
   }
 
+  cancel() {
+    if (!this.target) return;
+    this.target = null;
+    this.path = [];
+    this.waypointIndex = 0;
+    this.controller?.clearVirtualInput?.();
+    this.#clearRoute();
+    this.flag.visible = false;
+  }
+
   #finish() {
     const finalFacing = this.#finalFacing();
     this.target = null;

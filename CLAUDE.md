@@ -60,7 +60,7 @@ fair game **only** when debugging a dependency.
 
 - **three@0.184** — **WebGPURenderer** (WebGL2 auto-fallback); all custom
   shading is **TSL** node materials (GLSL `onBeforeCompile` silently no-ops)
-- **@dimforge/rapier3d-compat@0.12** — physics (async WASM init; see [Physics.js](src/Physics/Physics.js))
+- **@dimforge/rapier3d-compat@0.19** — physics (async WASM init; see [Physics.js](src/Physics/Physics.js))
 - **camera-controls@3** — third-person follow cam
 - **gsap@3** — UI fades + interaction transitions
 - **howler@2** — audio (ambient + footsteps + ui sfx)
@@ -81,7 +81,7 @@ src/main.js             # bootstrap: load → welcome → start journey
 src/App.js              # renderer, scene, lights, tick loop, wires all modules
 src/style.css           # all CSS
 
-src/Utils/              # Sizes, Loader, Debug
+src/Utils/              # Sizes, Loader, Debug, Quality, storage (safeLocal/safeSession — use these, never raw localStorage)
 src/Physics/Physics.js  # Rapier init + heightfield ground + collider helpers
 src/Player/             # Player, PlayerController, PlayerCamera, Character (Avaturn+Mixamo)
 src/World/              # Terrain, Sky, Nature, Grass, Paths, StreetLights, DistantIslands, TimeOfDay, Sun, Wind, Palette, World
@@ -192,7 +192,8 @@ physics.step → player.update → playerCamera.update → discovery.update
   with collision-clear landing via Navmask; land click drops a flag and
   auto-walks via `PlayerController.setVirtualInput` (WASD cancels). Data in
   [WorldMap.js](src/Portfolio/WorldMap.js); sessionStorage key
-  `karan-world-discovered-v1`. Backtick = navmask debug overlay.
+  `karan-world-discovered-v1`. Debug keys (`?debug` only): backtick = navmask
+  overlay, K = colliders, T = tone mapping, P = perf-shed ladder.
 - **Swimming** (`Player.js` swim mode): deep water (≥0.85m, hysteresis 0.7m)
   floats the body at the surface — `swimming`/`treadingWater` Mixamo clips,
   no jump/crouch in water; small ponds + lava deny-listed via

@@ -139,6 +139,7 @@ export class GuestbookView {
 
   // ── Posting ───────────────────────────────────────────────────────────────
   async #submit() {
+    if (this.submitEl.disabled) return;
     const text = this.textEl.value.trim();
     if (!text) {
       this.#feedback("Write a little something first.", "warn");

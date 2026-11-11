@@ -1,3 +1,4 @@
+import { safeSession } from "../Utils/storage.js";
 import CameraControls from "camera-controls";
 import * as THREE from "three";
 
@@ -185,7 +186,7 @@ export class PlayerCamera {
   #initTrackpadHint() {
     if (typeof document === 'undefined' || typeof window === 'undefined') return;
     if ('ontouchstart' in window) return;
-    if (sessionStorage.getItem(HINT_DISMISS_KEY)) return;
+    if (safeSession.getItem(HINT_DISMISS_KEY)) return;
     const el = document.getElementById('camera-hint');
     if (!el) return;
     this._hintEl = el;
@@ -223,7 +224,7 @@ export class PlayerCamera {
     clearTimeout(this._hintTimer);
     this._hintTimer = null;
     if (this._hintBootObs) { this._hintBootObs.disconnect(); this._hintBootObs = null; }
-    sessionStorage.setItem(HINT_DISMISS_KEY, '1');
+    safeSession.setItem(HINT_DISMISS_KEY, '1');
     el.classList.remove('is-shown');
     setTimeout(() => el.classList.add('hidden'), 360);
   }
@@ -392,7 +393,8 @@ export class PlayerCamera {
     const distance = offset.length();
     const polar = Math.acos(THREE.MathUtils.clamp(offset.y / distance, -1, 1));
     const azimuth = Math.atan2(offset.x, offset.z);
-    this.controls.distance = distance;
+    this.controls.distance =
+      distance / (this._movementZoomFactor * this._mobileZoom);
     this.controls.azimuthAngle = azimuth;
     this.controls.polarAngle = polar;
   }

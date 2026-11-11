@@ -548,6 +548,7 @@ export class ColourGarden {
 
   #exitGame() {
     if (this.mode === 'out' || this.mode === 'exiting') return;
+    if (this.mode === 'charging') this.player.releaseChargedAction?.();
     this.mode = 'exiting';
     this.audio?.stopPaintCharge?.();
     this.hud.exit();

@@ -1,4 +1,5 @@
 import { resume } from '../Portfolio/ResumeData.js';
+import { trapFocus } from '../Utils/focusTrap.js';
 
 // page-flip (~tens of KB) is dynamically imported in #initFlip, NOT statically
 // here: ~99% of visitors never open the resume book, so keeping it out of the
@@ -81,6 +82,7 @@ export class ResumeBookView {
   show() {
     this.open = true;
     this.root.classList.remove('hidden');
+    this._releaseFocus = trapFocus(this.root);
     requestAnimationFrame(() => {
       this.root.classList.add('rb-visible');
       this.#initFlip().catch((err) =>
@@ -200,6 +202,8 @@ export class ResumeBookView {
   /** Hide the DOM only (owner-driven; does NOT re-fire onClose). */
   hide() {
     this.open = false;
+    this._releaseFocus?.();
+    this._releaseFocus = null;
     this.root.classList.remove('rb-visible');
     const done = () => {
       this.root.classList.add('hidden');

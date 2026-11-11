@@ -366,6 +366,9 @@ export class ProjectsHut {
 
   #applyIndex(index, immediate = false) {
     this.currentIndex = index;
+    if (this.active) {
+      this.achievements?.onProjectViewed?.(this.projects[index]?.name);
+    }
     if (immediate) {
       this.#renderCanvas(index);
       this.screenMat.opacity = 1;

@@ -8,6 +8,7 @@
  * A single, engagement-timed nudge (never on a loop) gently pulses the pill once
  * the visitor is invested — never a repeating pop-up.
  */
+import { safeSession } from "../Utils/storage.js";
 import { Confetti } from "./Confetti.js";
 
 const NUDGE_KEY = "karan-portfolio:like-nudged";
@@ -21,7 +22,7 @@ export class SocialHud {
     this.audio = audio;
     this.controller = controller;
 
-    this._nudged = sessionStorage.getItem(NUDGE_KEY) === "1";
+    this._nudged = safeSession.getItem(NUDGE_KEY) === "1";
     this._engaged = false;
     this._nudgeTimer = null;
     this.confetti = new Confetti();
@@ -103,7 +104,7 @@ export class SocialHud {
     // Only nudge once genuinely engaged: either the timer elapsed or a section
     // was visited. (start()'s timer sets neither flag, so it nudges on time.)
     this._nudged = true;
-    sessionStorage.setItem(NUDGE_KEY, "1");
+    safeSession.setItem(NUDGE_KEY, "1");
     this.root.classList.add("pulse");
     this.nudgeEl.classList.remove("hidden");
     clearTimeout(this._hideNudgeTimer);

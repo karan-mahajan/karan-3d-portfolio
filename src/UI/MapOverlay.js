@@ -1,4 +1,5 @@
 import gsap from 'gsap';
+import { trapFocus } from '../Utils/focusTrap.js';
 import { SECTIONS, WORLD_BOUNDS } from '../Portfolio/WorldMap.js';
 import { svgToWorld, worldToSvg } from './coords.js';
 import { renderIslandMap, svgEl } from './MapMarkers.js';
@@ -67,6 +68,8 @@ export class MapOverlay {
 
   open(fromRect = null) {
     if (this.isOpen || document.body.classList.contains('booting')) return;
+    if (this.controller?.paused || this.canOpen?.() === false) return;
+    gsap.killTweensOf(this.panel);
     this.isOpen = true;
     this.audio?.playMapOpen?.();
     this.controller && (this.controller.paused = true);
@@ -74,6 +77,7 @@ export class MapOverlay {
     // or reads back the GPU, so it can't hitch.
     this.#paintWorld();
     this.root.classList.remove('hidden');
+    this._releaseFocus = trapFocus(this.panel);
     const target = this.panel.getBoundingClientRect();
     const from = fromRect ?? this.miniMap?.getRect?.() ?? target;
     gsap.fromTo(this.panel, {
@@ -100,6 +104,9 @@ export class MapOverlay {
     this.isOpen = false;
     if (!silent) this.audio?.playMapClose?.();
     this.controller && (this.controller.paused = false);
+    this._releaseFocus?.();
+    this._releaseFocus = null;
+    gsap.killTweensOf(this.panel);
     gsap.to(this.panel, {
       scale: 0.96,
       opacity: 0,
@@ -183,6 +190,11 @@ export class MapOverlay {
     for (const marker of this.svg.querySelectorAll('.map-marker-section')) {
       const section = this.sections.find((s) => s.id === marker.dataset.markerId);
       if (!section) continue;
+      marker.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
       marker.addEventListener('click', (e) => {
         e.stopPropagation();
         this.audio?.playMarkerClick?.();

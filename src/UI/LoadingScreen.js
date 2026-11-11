@@ -102,6 +102,19 @@ export class LoadingScreen {
    * the fading overlay doesn't eat the first click (audio-arm / onboarding).
    * Reduced-motion → instant. (Phase 4 also adds a subtle map zoom.)
    */
+  /** Boot threw — stop the progress loops and say so instead of spinning forever. */
+  fail() {
+    this.#dead = true;
+    cancelAnimationFrame(this.#raf);
+    clearInterval(this.#triviaTimer);
+    const hint = this.#els.hint;
+    if (!hint) return;
+    this.#hintShown = true;
+    hint.firstChild.textContent = 'The 3D world couldn’t start in this browser. ';
+    hint.lastChild.textContent = ' to try again.';
+    hint.removeAttribute('hidden');
+  }
+
   fadeOut(durationMs = 700) {
     const el = this.#els.screen;
     // Tear down both loops so nothing runs against the hidden overlay — even on
@@ -113,11 +126,11 @@ export class LoadingScreen {
     clearInterval(this.#triviaTimer);
     if (!el) return Promise.resolve();
     el.style.pointerEvents = 'none';
-    if (this.#reduced) { el.classList.add('hidden'); return Promise.resolve(); }
+    if (this.#reduced) { el.classList.add('hidden'); el.style.display = 'none'; return Promise.resolve(); }
     return new Promise((resolve) => {
       const map = el.querySelector('.loading-map');
       const tl = gsap.timeline({
-        onComplete: () => { el.classList.add('hidden'); resolve(); },
+        onComplete: () => { el.classList.add('hidden'); el.style.display = 'none'; resolve(); },
       });
       // Two tweens at position 0: map zooms in (subtly "steps into" the world)
       // while the full overlay fades — compositor-only, no layout during fade.

@@ -412,16 +412,14 @@ export class Thunderstorm {
   }
 
   /** Push ambient intensity up for ~350ms so the whole scene "blinks
-   *  bright." Restores to whatever the current TimeOfDay palette left
-   *  on the light (day vs. night). */
+   *  bright." TimeOfDay owns the intensity and adds this boost each tick. */
   #flashAmbient() {
     const light = this.ambientLight;
     if (!light) return;
-    const orig = light.intensity;
-    light.intensity = Math.max(2.5, orig + 2.0);
-    setTimeout(() => { light.intensity = Math.max(1.2, orig + 0.8); }, 60);
-    setTimeout(() => { light.intensity = Math.max(1.8, orig + 1.4); }, 120);
-    setTimeout(() => { light.intensity = orig; }, 350);
+    light.userData.flashBoost = 2.0;
+    setTimeout(() => { light.userData.flashBoost = 0.8; }, 60);
+    setTimeout(() => { light.userData.flashBoost = 1.4; }, 120);
+    setTimeout(() => { light.userData.flashBoost = 0; }, 350);
   }
 
   #showMessage() {

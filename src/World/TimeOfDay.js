@@ -989,7 +989,8 @@ export class TimeOfDay {
     this.rim.color.copy(p.rimColor);
     this.rim.intensity = p.rimIntensity;
     this.ambient.color.copy(p.ambientColor);
-    this.ambient.intensity = p.ambientIntensity;
+    this.ambient.intensity =
+      p.ambientIntensity + (this.ambient.userData.flashBoost ?? 0);
     this.hemi.color.copy(p.hemiSky);
     this.hemi.groundColor.copy(p.hemiGround);
     this.hemi.intensity = p.hemiIntensity;

@@ -16,11 +16,15 @@ import {
   registerAbuseStrike,
   logAudit,
   RATE_LIMITS,
+  isCrossSiteRequest,
 } from "./_lib.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return sendJson(res, 405, { error: "method_not_allowed" });
+  }
+  if (isCrossSiteRequest(req)) {
+    return sendJson(res, 403, { error: "forbidden" });
   }
   if (isLocalRequest(req)) {
     return sendJson(res, 200, { configured: false, likes: 0, liked: false });

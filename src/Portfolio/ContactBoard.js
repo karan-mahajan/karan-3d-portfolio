@@ -333,7 +333,8 @@ export class ContactBoard {
   // ── Canvas ──────────────────────────────────────────────────────────────────
 
   #crossfadeTo(detail) {
-    if (this._detail === detail) return;
+    if ((this._pendingDetail ?? this._detail) === detail) return;
+    this._pendingDetail = detail;
     gsap.killTweensOf(this.panelMat);
     gsap.to(this.panelMat, {
       opacity: 0.15,
@@ -352,6 +353,7 @@ export class ContactBoard {
 
   #render(detail) {
     this._detail = detail;
+    this._pendingDetail = null;
     this._hotspots = [];
     const ctx = this.ctx;
     const w = this.logicalW;

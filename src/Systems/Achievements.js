@@ -48,7 +48,7 @@ const ACHIEVEMENTS = [
 
   // === PORTFOLIO ENGAGEMENT (6) ===
   { id: 'curious_dev',       name: 'Curious Dev',          description: 'View your first project',       icon: '🔍', category: 'portfolio', target: 1, secret: false },
-  { id: 'full_stack_review', name: 'Full Stack Review',    description: 'View all 5 project billboards', icon: '💻', category: 'portfolio', target: 5, secret: false, rarity: 'epic' },
+  { id: 'full_stack_review', name: 'Full Stack Review',    description: 'View 5 different projects', icon: '💻', category: 'portfolio', target: 5, secret: false, rarity: 'epic' },
   { id: 'hired',             name: 'Hired!',               description: 'Open the Contact section',      icon: '📞', category: 'portfolio', target: 1, secret: false },
   { id: 'due_diligence',     name: 'Due Diligence',        description: 'View every experience sign',    icon: '📋', category: 'portfolio', target: 5, secret: false, rarity: 'epic' },
   { id: 'skill_scanned',     name: 'Skill Scanned',        description: 'View the skills display',       icon: '⚡', category: 'portfolio', target: 1, secret: false },
@@ -465,8 +465,10 @@ export class Achievements {
   }
 
   #loadUnlocked() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_UNLOCKED)) || []; }
-    catch { return []; }
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_UNLOCKED));
+      return Array.isArray(stored) ? stored : [];
+    } catch { return []; }
   }
 
   #saveUnlocked() {

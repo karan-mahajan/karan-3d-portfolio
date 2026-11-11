@@ -46,9 +46,10 @@ export const KEYS = {
 
 export const VISIT_DEDUP_S = 21600; // 6h — at most one visit-audit row per window
 export const RATE_LIMITS = {
-  stateIp: { scope: "state", limit: 120, windowS: 60 },
-  likeIp: { scope: "like", limit: 30, windowS: 60 },
-  whisperIp: { scope: "whisper", limit: 8, windowS: 300 },
+  stateIp: { scope: "state", limit: 60, windowS: 60 },
+  likeIp: { scope: "like", limit: 10, windowS: 60 },
+  whisperIp: { scope: "whisper", limit: 3, windowS: 300 },
+  whisperIpDay: { scope: "whisper-day", limit: 12, windowS: 86400 },
 };
 export const ABUSE_STRIKE_WINDOW_S = 600; // 10m rolling strike bucket
 export const ABUSE_STRIKE_LIMIT = 3;
@@ -105,8 +106,7 @@ export async function enforceIpRateLimit(redis, req, limitSpec) {
   const ip = normalizeIp(getClientIp(req));
   if (!ip || !limitSpec) return { limited: false };
   const key = KEYS.ipRate(limitSpec.scope, ip);
-  const count = Number(await redis.incr(key)) || 0;
-  if (count === 1) await redis.expire(key, limitSpec.windowS);
+  const count = await incrWithExpiry(redis, key, limitSpec.windowS);
   return {
     limited: count > limitSpec.limit,
     count,
@@ -151,6 +151,9 @@ export async function registerAbuseStrike(redis, req, visitorId, reason) {
 }
 
 async function incrWithExpiry(redis, key, seconds) {
+  // Create the key with its TTL first so a failed EXPIRE can't leave a
+  // permanent counter behind.
+  await redis.set(key, 0, { nx: true, ex: seconds });
   const count = Number(await redis.incr(key)) || 0;
   if (count === 1) await redis.expire(key, seconds);
   return count;
@@ -205,21 +208,33 @@ export function sendJson(res, status, body) {
 /** Parse a JSON request body whether Vercel pre-parsed it or handed us a stream. */
 export async function readJsonBody(req) {
   if (req.body && typeof req.body === "object") return req.body;
-  if (typeof req.body === "string") {
-    try {
-      return JSON.parse(req.body);
-    } catch {
-      return {};
-    }
+  let raw = req.body;
+  if (typeof raw !== "string") {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    if (!chunks.length) return {};
+    raw = Buffer.concat(chunks).toString("utf8");
   }
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  if (!chunks.length) return {};
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
   }
+}
+
+/** True when a browser sent this request from another site's page. */
+export function isCrossSiteRequest(req) {
+  const origin = req.headers?.origin;
+  if (!origin) return false;
+  let originHost;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return true;
+  }
+  const hosts = [req.headers["x-forwarded-host"], req.headers.host].filter(Boolean);
+  return hosts.length > 0 && !hosts.includes(originHost);
 }
 
 // ── Visitor id ────────────────────────────────────────────────────────────────
@@ -237,13 +252,22 @@ export function cleanVisitorId(raw) {
 // before anything is stored. This is a pragmatic guard (length + control-char
 // strip + a leetspeak-aware blocklist), not a perfect filter; pair it with the
 // ability to delete a message from the Upstash console / an admin call.
-const BLOCKLIST = [
-  "fuck", "shit", "bitch", "cunt", "asshole", "dick", "pussy", "bastard",
-  "slut", "whore", "nigger", "nigga", "faggot", "fag", "retard", "rape",
-  "cum", "cock", "twat", "wank", "jerkoff", "dildo", "porn", "nazi",
+// Matched anywhere inside a single word ("motherfucker", "bullshit").
+const BLOCK_ANYWHERE = [
+  "fuck", "shit", "bitch", "asshole", "pussy", "bastard", "slut", "whore",
+  "nigger", "nigga", "faggot", "retard", "wank", "jerkoff", "dildo", "porn",
+  "nazi",
 ];
+// Short enough to sit inside innocent words ("document", "grape", "cocktail",
+// "Scunthorpe"), so these only match as a whole word plus common endings.
+const BLOCK_WHOLE_WORD = [
+  "cunt", "dick", "fag", "rape", "raping", "rapist", "cum", "cock", "twat",
+];
+const WHOLE_WORD_RE = new RegExp(
+  `^(${BLOCK_WHOLE_WORD.join("|")})(s|es|d|ed|er|ers|ing|y)?$`,
+);
 
-function normalizeForMatch(s) {
+function deLeet(s) {
   return s
     .toLowerCase()
     .replace(/[@4]/g, "a")
@@ -251,13 +275,26 @@ function normalizeForMatch(s) {
     .replace(/[0]/g, "o")
     .replace(/[1!|]/g, "i")
     .replace(/[3]/g, "e")
-    .replace(/[7]/g, "t")
-    .replace(/[^a-z]/g, ""); // collapse spacing/punctuation so "f.u.c.k" trips
+    .replace(/[7]/g, "t");
 }
 
 export function containsProfanity(text) {
-  const flat = normalizeForMatch(text);
-  return BLOCKLIST.some((word) => flat.includes(word));
+  const words = deLeet(text).split(/[^a-z]+/).filter(Boolean);
+  // Rejoin runs of single letters so "f.u.c.k" / "f u c k" still trips.
+  const spelled = [];
+  let run = "";
+  for (const w of words) {
+    if (w.length === 1) {
+      run += w;
+    } else {
+      if (run.length > 1) spelled.push(run);
+      run = "";
+    }
+  }
+  if (run.length > 1) spelled.push(run);
+  return [...words, ...spelled].some(
+    (w) => WHOLE_WORD_RE.test(w) || BLOCK_ANYWHERE.some((b) => w.includes(b)),
+  );
 }
 
 // ASCII control characters (NUL..US plus DEL) — stripped from stored text.

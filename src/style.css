@@ -49,7 +49,7 @@ body {
   width: 100%;
   z-index: 0;
   padding: 1rem;
-  color: #111;
+  color: #f4e9dc;
   background: #0e0805;
   pointer-events: none;
 }
@@ -923,157 +923,6 @@ body {
   background: transparent;
 }
 
-/* ─────────────── Contact panel ─────────────── */
-.contact-panel {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(440px, 90vw);
-  z-index: 45;
-  padding: 2rem 2rem 1.5rem;
-  background: rgba(26, 20, 16, 0.92);
-  border: 1px solid rgba(245, 230, 211, 0.18);
-  border-radius: 16px;
-  color: var(--paper);
-  font-family: 'Nunito', sans-serif;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.contact-panel.hidden {
-  opacity: 0;
-  transform: translate(-50%, -45%);
-  pointer-events: none;
-}
-
-.contact-accent {
-  width: 64px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--warm-orange);
-  margin-bottom: 0.8rem;
-}
-
-.contact-title {
-  font-family: 'Fredoka', sans-serif;
-  font-weight: 700;
-  font-size: 2rem;
-  letter-spacing: 0.05em;
-}
-
-.contact-subtitle {
-  color: var(--warm-amber);
-  font-size: 0.95rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 0.8rem;
-}
-
-.contact-blurb {
-  font-size: 0.95rem;
-  line-height: 1.5;
-  opacity: 0.8;
-  margin-bottom: 1.2rem;
-}
-
-.contact-links {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  margin-bottom: 1.2rem;
-}
-
-.contact-link {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.7rem 0.95rem;
-  border: 1px solid rgba(245, 230, 211, 0.18);
-  border-radius: 9px;
-  background: rgba(245, 230, 211, 0.04);
-  color: var(--paper);
-  text-decoration: none;
-  transition: background 0.15s ease, transform 0.15s ease;
-}
-
-.contact-link:hover {
-  background: rgba(245, 230, 211, 0.1);
-  transform: translateY(-1px);
-}
-
-.contact-link-label {
-  font-family: 'Fredoka', sans-serif;
-  font-size: 0.75rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--warm-amber);
-}
-
-.contact-link-value {
-  font-size: 0.92rem;
-  opacity: 0.9;
-}
-
-/* ─────────────── Resume panel (ResumeData.html → .resume-body) ─────────────── */
-.resume-body {
-  margin-bottom: 1.2rem;
-}
-
-.resume-body h1 {
-  font-family: 'Fredoka', sans-serif;
-  font-weight: 700;
-  font-size: 1.9rem;
-  letter-spacing: 0.04em;
-  color: var(--paper);
-  margin: 0 0 0.45rem;
-}
-
-.resume-body .lead {
-  font-family: 'Nunito', sans-serif;
-  font-size: 0.95rem;
-  line-height: 1.45;
-  color: var(--paper);
-  opacity: 0.92;
-  margin: 0 0 1rem;
-}
-
-.resume-body ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.resume-body li {
-  padding: 0;
-}
-
-.resume-body li a {
-  display: block;
-  padding: 0.7rem 0.95rem;
-  border: 1px solid rgba(245, 230, 211, 0.18);
-  border-radius: 9px;
-  background: rgba(245, 230, 211, 0.04);
-  color: var(--paper);
-  font-family: 'Nunito', sans-serif;
-  font-size: 0.95rem;
-  letter-spacing: 0.02em;
-  text-decoration: none;
-  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
-}
-
-.resume-body li a:hover {
-  background: rgba(245, 230, 211, 0.1);
-  border-color: rgba(255, 153, 68, 0.5);
-  color: var(--warm-amber);
-  transform: translateY(-1px);
-}
-
 /* ─────────────── Night-mode theming (legacy module buttons) ───────────────
    App.js writes `data-tod="day"` / `data-tod="night"` to <body> on every
    toggle. We shift the corner button glow toward cool blue at night so the
@@ -1648,9 +1497,20 @@ body[data-tod="night"] .control-item kbd {
   display: none !important;
 }
 
-.is-mobile #controls-trigger,
+.is-mobile #controls-trigger {
+  position: static;
+}
+
 .is-mobile #controls-panel {
-  display: none !important;
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.is-mobile #controls-panel .controls-grid {
+  display: none;
 }
 
 .is-mobile .ui-btn {
@@ -2128,7 +1988,6 @@ body[data-tod="night"] .compass-tick {
 .is-mobile .camera-hint {
   display: none;
 }
-
 
 /* The cinematic unlock reveal lives centered in the lower third, NOT in a
    corner — it's a game "moment", not a notification. One reveal at a time
@@ -4731,41 +4590,6 @@ body[data-tod="night"] .control-hint-key {
   color: rgba(245, 230, 211, 0.7);
 }
 
-.guestbook-list {
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  padding-right: 0.3rem;
-  margin-bottom: 0.9rem;
-}
-
-.guestbook-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.guestbook-list::-webkit-scrollbar-thumb {
-  background: rgba(245, 230, 211, 0.22);
-  border-radius: 3px;
-}
-
-.guestbook-empty {
-  color: rgba(245, 230, 211, 0.55);
-  font-size: 0.9rem;
-  font-style: italic;
-  margin: 0.5rem 0;
-}
-
-.guestbook-item {
-  background: rgba(255, 227, 178, 0.07);
-  border: 1px solid rgba(255, 207, 122, 0.16);
-  border-left: 3px solid rgba(255, 184, 92, 0.55);
-  border-radius: 8px;
-  padding: 0.55rem 0.7rem;
-}
-
 .guestbook-msg {
   margin: 0;
   font-size: 0.92rem;
@@ -4922,17 +4746,6 @@ body[data-tod="night"] .control-hint-key {
   }
 }
 
-/* ── Guestbook section labels (separates "read" from "sign") ──────────────── */
-.guestbook-section {
-  margin: 0.2rem 0 0.5rem;
-  font-family: 'Fredoka', sans-serif;
-  font-weight: 600;
-  font-size: 0.74rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255, 214, 122, 0.75);
-}
-
 /* ── Guestbook reading caption (camera parked at one note) ───────────────── */
 .guestbook-card {
   pointer-events: auto;
@@ -5054,4 +4867,40 @@ body.in-museum #compass,
 body.in-museum #top-left-stack,
 body.in-museum #bottom-left-stack {
   display: none;
+}
+
+.controls-panel.hidden {
+  visibility: hidden;
+  transition: opacity 0.22s ease, transform 0.22s ease,
+    visibility 0s linear 0.22s;
+}
+
+.distance-game.hidden {
+  visibility: hidden;
+  transition: opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 0.3s;
+}
+
+.guestbook-view.hidden,
+.achievement-panel.hidden,
+.project-panel.hidden,
+.social-like.hidden {
+  visibility: hidden;
+  transition: opacity 0.3s ease, transform 0.3s ease,
+    visibility 0s linear 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+[tabindex='-1']:focus {
+  outline: none;
 }

@@ -75,6 +75,7 @@ const PROFILES = {
       bloomRadius: 0.45,
       bloomThreshold: 0.94,
       tiltShiftAmount: 0.45,
+      tiltTaps: 4,
     },
   },
   low: {
@@ -95,6 +96,7 @@ const PROFILES = {
     snowPileBudget: 36,
     dprFloor: 0.55,
     dprCap: 1.0, // weak machines stay at 1.0 — resolution is the cheapest lever
+    antialias: false,
     prewarm: { frames: 3, capMs: 2000 },
     postfx: {
       enabled: false,

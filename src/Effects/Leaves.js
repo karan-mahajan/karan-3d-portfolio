@@ -1,3 +1,4 @@
+import { safeLocal } from '../Utils/storage.js';
 import * as THREE from 'three/webgpu';
 import { MeshLambertNodeMaterial } from 'three/webgpu';
 import {
@@ -91,7 +92,7 @@ export class Leaves {
     this.loader = loader;
     this.count = Math.max(8, Math.floor(count));
     this.maxSettled = Math.max(0, Math.floor(maxSettled));
-    this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
+    this.enabled = safeLocal.getItem(STORAGE_KEY) !== '0';
     // Runtime gate, separate from the persisted `enabled` toggle. App holds
     // leaves off the spawn frame and suppresses them while it's snowing — both
     // without overwriting the visitor's saved leaves-on/off preference.
@@ -299,7 +300,7 @@ export class Leaves {
   setEnabled(value) {
     this.enabled = value;
     this.mesh.visible = value && this._active;
-    localStorage.setItem(STORAGE_KEY, value ? '1' : '0');
+    safeLocal.setItem(STORAGE_KEY, value ? '1' : '0');
     this.#updateButton();
   }
   toggle() { this.setEnabled(!this.enabled); }

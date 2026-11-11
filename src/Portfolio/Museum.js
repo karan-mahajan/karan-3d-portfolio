@@ -487,7 +487,10 @@ export class Museum {
         this._interiorReady = true;
         this.warmShaders?.();
       })
-      .catch((err) => console.warn("[Museum] museum.glb load failed:", err));
+      .catch((err) => {
+        console.warn("[Museum] museum.glb load failed:", err);
+        this._interiorLoadStarted = false;
+      });
   }
 
   #buildInterior(gltf) {

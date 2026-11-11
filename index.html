@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <meta charset="UTF-8" />
     <!-- Google Tag Manager -->
     <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
     new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
@@ -25,7 +26,6 @@
       })();
     </script>
 
-    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Karan Mahajan — Full Stack Web Developer (Next.js, WordPress, Drupal) | 3D Portfolio</title>
     <meta name="description" content="Karan Mahajan is a Full Stack Web Developer specializing in Next.js, React, WordPress, and Drupal. Explore his projects, skills, and experience by walking through an interactive 3D portfolio world." />
@@ -171,9 +171,23 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
     />
+    <link
+      id="font-css"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      />
+    </noscript>
     <link rel="stylesheet" href="./src/style.css" />
     <link rel="stylesheet" href="./src/UI/map.css" />
     <link rel="stylesheet" href="./src/UI/resume-book.css" />
@@ -183,6 +197,7 @@
     <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TFN8MHCZ"
     height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <!-- End Google Tag Manager (noscript) -->
+    <noscript><style>#loading-screen, #canvas { display: none; }</style></noscript>
 
     <!--
       Crawlable / accessible content layer. The 3D experience renders to the

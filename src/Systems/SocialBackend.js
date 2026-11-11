@@ -9,6 +9,9 @@
  * State is intentionally tiny + observable: consumers (SocialHud, GuestbookTree)
  * subscribe via onChange and re-read the public fields after each call.
  */
+import { safeLocal } from "../Utils/storage.js";
+
+
 const VISITOR_KEY = "karan-portfolio:visitor-id";
 const LIKED_KEY = "karan-portfolio:liked";
 
@@ -20,7 +23,7 @@ export class SocialBackend {
     // after each mutation.
     this.likes = 0;
     this.visitors = 0;
-    this.liked = localStorage.getItem(LIKED_KEY) === "1";
+    this.liked = safeLocal.getItem(LIKED_KEY) === "1";
     this.whispers = [];
     this.configured = true; // flipped false if the API reports no DB
     this.ready = false; // true after the first successful loadState
@@ -48,7 +51,7 @@ export class SocialBackend {
   #loadVisitorId() {
     let id = null;
     try {
-      id = localStorage.getItem(VISITOR_KEY);
+      id = safeLocal.getItem(VISITOR_KEY);
     } catch {
       /* private mode — fall through to an ephemeral id */
     }
@@ -59,7 +62,7 @@ export class SocialBackend {
             .toString(36)
             .slice(2)}`).slice(0, 64);
       try {
-        localStorage.setItem(VISITOR_KEY, id);
+        safeLocal.setItem(VISITOR_KEY, id);
       } catch {
         /* ignore */
       }
@@ -91,7 +94,7 @@ export class SocialBackend {
       this.ready = true;
       if (this.liked) {
         try {
-          localStorage.setItem(LIKED_KEY, "1");
+          safeLocal.setItem(LIKED_KEY, "1");
         } catch {
           /* ignore */
         }
@@ -120,7 +123,7 @@ export class SocialBackend {
     this.liked = true;
     this.likes += 1;
     try {
-      localStorage.setItem(LIKED_KEY, "1");
+      safeLocal.setItem(LIKED_KEY, "1");
     } catch {
       /* ignore */
     }

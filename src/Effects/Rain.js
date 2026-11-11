@@ -1,3 +1,4 @@
+import { safeLocal } from '../Utils/storage.js';
 import * as THREE from 'three/webgpu';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 import {
@@ -29,7 +30,7 @@ export class Rain {
     this.camera = camera;
     this.count = Math.max(80, Math.floor(count));
     this.splashBudget = Math.max(0, Math.floor(splashBudget));
-    this.enabled = localStorage.getItem(STORAGE_KEY) !== '1';
+    this.enabled = safeLocal.getItem(STORAGE_KEY) !== '1';
     // Transient hide (e.g. while it snows) that does NOT touch the user's
     // on/off preference — driven each frame by App, never persisted.
     this._suppressed = false;
@@ -46,6 +47,8 @@ export class Rain {
     // Pond surface — set externally via setPond() so rain over water
     // spawns a wider, lighter ripple instead of a hard ground splash.
     this.pond = null;
+    this.terrain = null;
+    this.waterLevel = null;
 
     this.#buildDrops();
     this.splashPool = [];
@@ -205,7 +208,7 @@ export class Rain {
       ring.userData.life = 0;
       ring.userData.lifetime = 0.8;
     } else {
-      ring.position.set(x, 0.05, z);
+      ring.position.set(x, this.#surfaceY(x, z) + 0.05, z);
       ring.material.color.setHex(0xc8e0f0);
       ring.material.opacity = 0.5;
       ring.userData.kind = 'ground';
@@ -221,11 +224,16 @@ export class Rain {
     if (!onPond && dCam < 10) this.#spawnUpwardParticles(x, z);
   }
 
+  #surfaceY(x, z) {
+    const ground = this.terrain?.heightAt?.(x, z) ?? 0;
+    return this.waterLevel == null ? ground : Math.max(ground, this.waterLevel);
+  }
+
   #spawnUpwardParticles(x, z) {
     const group = this.upwardPool.find((g) => !g.visible);
     if (!group) return;
     group.visible = true;
-    group.position.set(x, 0.02, z);
+    group.position.set(x, this.#surfaceY(x, z) + 0.02, z);
     group.userData.life = 0;
     group.userData.mat.opacity = 0.85;
     for (let i = 0; i < 3; i++) {
@@ -246,7 +254,7 @@ export class Rain {
   setEnabled(value) {
     this.enabled = value;
     this.group.visible = value && !this._suppressed;
-    localStorage.setItem(STORAGE_KEY, value ? '0' : '1');
+    safeLocal.setItem(STORAGE_KEY, value ? '0' : '1');
     this.#updateButton();
   }
 

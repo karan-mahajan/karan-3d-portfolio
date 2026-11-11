@@ -155,7 +155,7 @@ export class Interaction {
       if (this.zooming) return;
       if (e.code === "KeyE") {
         if (this.contactOpen || this.resumeOpen || this.skillOpen || this.projectsOpen || this.experienceOpen) return;
-        if (this.activeIndex === -1) {
+        if (this.activeIndex === -1 && !this.controller?.paused) {
           // Resume is a smaller proximity than contact, so when both fire
           // (shouldn't happen — different anchors — but be defensive), the
           // resume lectern wins.

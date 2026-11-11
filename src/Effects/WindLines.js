@@ -1,3 +1,4 @@
+import { safeLocal } from '../Utils/storage.js';
 import * as THREE from 'three/webgpu';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 import {
@@ -48,7 +49,7 @@ export class WindLines {
     this.scene = scene;
     this.wind = wind;
     this.count = Math.max(0, Math.floor(count));
-    this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
+    this.enabled = safeLocal.getItem(STORAGE_KEY) !== '0';
     this.visibility = 0; // ramps with wind strength
 
     this.#buildRibbons();
@@ -162,7 +163,7 @@ export class WindLines {
   setEnabled(value) {
     this.enabled = value;
     this.mesh.visible = value;
-    localStorage.setItem(STORAGE_KEY, value ? '1' : '0');
+    safeLocal.setItem(STORAGE_KEY, value ? '1' : '0');
     this.#updateButton();
   }
   toggle() { this.setEnabled(!this.enabled); }

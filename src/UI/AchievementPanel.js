@@ -1,3 +1,4 @@
+import { trapFocus } from '../Utils/focusTrap.js';
 /**
  * AchievementPanel — full-screen overlay listing every achievement.
  *
@@ -125,7 +126,10 @@ export class AchievementPanel {
       if (e.code === 'KeyJ' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const el = document.activeElement;
         const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-        if (!typing) { e.preventDefault(); this.toggle(); }
+        const covered =
+          !this.isOpen() &&
+          document.querySelector('.map-overlay-root:not(.hidden), .guestbook-view:not(.hidden)');
+        if (!typing && !covered) { e.preventDefault(); this.toggle(); }
       }
     });
   }
@@ -143,12 +147,15 @@ export class AchievementPanel {
     this.#renderList();
     this.#refreshCounter();
     this._panel.classList.remove('hidden');
+    this._releaseFocus = trapFocus(this._panel);
     this.audio?.playMenuOpen?.();
   }
 
   close() {
     if (!this._panel || !this.isOpen()) return;
     this._panel.classList.add('hidden');
+    this._releaseFocus?.();
+    this._releaseFocus = null;
     this.audio?.playMenuClose?.();
   }
 

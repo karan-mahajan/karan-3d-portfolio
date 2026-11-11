@@ -79,53 +79,6 @@
   font-family: 'Nunito', 'Nunito', sans-serif;
 }
 
-/* ── Hard covers (leather) ── */
-.rb-cover {
-  background: linear-gradient(150deg, #5a2230 0%, #3c1620 55%, #2a0f16 100%);
-  box-shadow: inset 0 0 0 2px rgba(217, 164, 65, 0.5), inset 0 0 60px rgba(0, 0, 0, 0.5);
-}
-.rb-cover .rb-page-inner { display: flex; }
-.rb-cover-inner {
-  margin: auto;
-  text-align: center;
-  color: #e9d6ab;
-  padding: 0 1.5rem;
-}
-.rb-cover-rule {
-  display: block;
-  width: 46px;
-  height: 3px;
-  margin: 0 auto 1rem;
-  background: #d9a441;
-  border-radius: 2px;
-}
-.rb-cover-kicker {
-  font-family: 'Fredoka', sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.34em;
-  font-size: 0.72rem;
-  color: #d9a441;
-  margin: 0 0 0.8rem;
-}
-.rb-cover-name {
-  font-family: 'Fredoka', sans-serif;
-  font-weight: 700;
-  font-size: 2rem;
-  line-height: 1.1;
-  margin: 0 0 0.4rem;
-  color: #f3e3c0;
-}
-.rb-cover-title {
-  font-family: 'Fredoka', sans-serif;
-  font-weight: 400;
-  font-size: 1rem;
-  letter-spacing: 0.04em;
-  color: #c79a52;
-  margin: 0;
-}
-.rb-cover-emblem { display: block; font-size: 1.6rem; color: #d9a441; margin-top: 1.6rem; }
-.rb-cover-link { color: #d9a441; text-decoration: none; font-family: 'Nunito', sans-serif; font-weight: 600; }
-
 /* ── Page typography ── */
 .rb-eyebrow {
   font-family: 'Fredoka', sans-serif;
@@ -145,7 +98,7 @@
 }
 .rb-title { font-family: 'Fredoka', sans-serif; font-weight: 500; font-size: 0.98rem; color: #8a5a1f; margin: 0 0 1rem; }
 .rb-lead { font-family: 'Nunito', system-ui, sans-serif; font-size: 0.88rem; line-height: 1.6; color: #5b4631; margin: 0 0 0.9rem; }
-.rb-note { font-family: 'Nunito', system-ui, sans-serif; font-style: italic; font-size: 0.82rem; color: #6f583f; margin: 0.9rem 0 0; }
+
 .rb-h2 {
   font-family: 'Fredoka', sans-serif;
   text-transform: uppercase;
@@ -171,7 +124,6 @@
 .rb-entry { margin-bottom: 0.9rem; }
 .rb-entry-top { font-family: 'Fredoka', sans-serif; font-size: 1rem; font-weight: 600; color: #3a2614; margin: 0; }
 .rb-entry-meta { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #a06a22; margin: 0.1rem 0 0.28rem; }
-.rb-entry-sum { font-family: 'Nunito', system-ui, sans-serif; font-size: 0.8rem; line-height: 1.45; color: #5b4631; margin: 0; }
 
 .rb-proj { margin-bottom: 0.8rem; }
 .rb-proj-name { font-family: 'Fredoka', sans-serif; font-size: 0.98rem; font-weight: 600; color: #3a2614; margin: 0; }
@@ -236,5 +188,5 @@
 @media (max-width: 640px) {
   .rb-page-inner { padding: 16px 16px; }
   .rb-name { font-size: 1.6rem; }
-  .rb-cover-name { font-size: 1.6rem; }
+
 }

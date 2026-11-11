@@ -25,6 +25,7 @@
  * `play*` methods no-op when their buffer isn't ready.
  */
 
+import { safeLocal } from "../Utils/storage.js";
 import { Howl, Howler } from "howler";
 
 function randIn([min, max]) {
@@ -118,6 +119,11 @@ const PROX_RAMP_S = 0.4;
 // rain-on-water, flip whoosh, zoom-in / zoom-out whooshes) is intentionally
 // absent — when the user drops them in, add the entry here and wire a play
 // method.
+// Weather / far-from-spawn sounds: fetched a few seconds after the first
+// gesture so they don't compete with the essentials.
+const DEFERRED_SOUNDS = /^(rain|thunder|paint|stepSnow|brickHit)/;
+const DEFERRED_SOUND_DELAY_MS = 4000;
+
 const SOUND_FILES = {
   // Ambient beds + spatial loops
   ambientDay: { src: "/sounds/ambient-day.mp3", loop: true, vol: 0 },
@@ -310,7 +316,7 @@ const BRICK_HIT_KEYS = ["brickHit1", "brickHit2", "brickHit3", "brickHit4"];
 
 export class AudioManager {
   constructor() {
-    this.muted = localStorage.getItem(STORAGE_KEY) === "1";
+    this.muted = safeLocal.getItem(STORAGE_KEY) === "1";
     this._started = false;
     this._focusLost = false;
     this.howls = {};
@@ -344,8 +350,11 @@ export class AudioManager {
   }
 
   #preload() {
+    const deferred = [];
     for (const [key, cfg] of Object.entries(SOUND_FILES)) {
+      const late = DEFERRED_SOUNDS.test(key);
       this.howls[key] = new Howl({
+        preload: !late,
         src: [cfg.src],
         loop: cfg.loop,
         volume: cfg.vol,
@@ -355,7 +364,9 @@ export class AudioManager {
           console.warn(`[Audio] failed to load ${cfg.src}`, err);
         },
       });
+      if (late) deferred.push(this.howls[key]);
     }
+    setTimeout(() => deferred.forEach((h) => h.load()), DEFERRED_SOUND_DELAY_MS);
   }
 
   /** Bring up the ambient bed appropriate to the current mode + the constant
@@ -450,7 +461,11 @@ export class AudioManager {
     // Rain layer + thunder. _rainOn is cached so setOceanProximity can gate
     // the rain-on-water layer without needing rainOn passed separately.
     this._rainOn = rainOn;
-    if (rainOn && !this._wasRainOn) this.#startRain();
+    if (rainOn && !this._wasRainOn) {
+      // Not decoded yet — leave the edge unconsumed and retry next tick.
+      if (this.howls.rainAmbient?.state() !== "loaded") return;
+      this.#startRain();
+    }
     else if (!rainOn && this._wasRainOn) this.#stopRain();
     this._wasRainOn = rainOn;
   }
@@ -1079,7 +1094,7 @@ export class AudioManager {
   // ── Mute toggle (user-controlled) ────────────────────────────────────────
   setMuted(value) {
     this.muted = value;
-    localStorage.setItem(STORAGE_KEY, value ? "1" : "0");
+    safeLocal.setItem(STORAGE_KEY, value ? "1" : "0");
     if (!this._focusLost) Howler.volume(value ? 0 : MASTER_LEVEL);
     this.#updateButton();
   }

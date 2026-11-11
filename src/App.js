@@ -1,3 +1,5 @@
+import { safeLocal, safeSession } from "./Utils/storage.js";
+import { canvasFontsReady } from "./Utils/fonts.js";
 import * as THREE from "three/webgpu";
 import { AudioManager } from "./Audio/AudioManager.js";
 import { Fireflies } from "./Effects/Fireflies.js";
@@ -185,9 +187,9 @@ export class App extends EventTarget {
     // time so they finally see it. snow-seen is stamped in the tick once snow is
     // actually visible.
     const visitedBefore =
-      localStorage.getItem("karan-portfolio:visited") === "1";
-    const snowSeen = localStorage.getItem("karan-portfolio:snow-seen") === "1";
-    localStorage.setItem("karan-portfolio:visited", "1");
+      safeLocal.getItem("karan-portfolio:visited") === "1";
+    const snowSeen = safeLocal.getItem("karan-portfolio:snow-seen") === "1";
+    safeLocal.setItem("karan-portfolio:visited", "1");
     this._snowSeenPersisted = snowSeen;
     // 12s (not 15) so snow is firmly active before the 15s rain timer fires —
     // otherwise rain would blip on for a frame before snow suppresses it.
@@ -364,6 +366,8 @@ export class App extends EventTarget {
     // only when factor changes (setPixelRatio reallocates the framebuffer).
     this._dprBase = this.sizes.pixelRatio;
     this._dprFactor = 1.0;
+    // Seconds of boot/compile hitches to ignore before sampling frame times.
+    this._dprWarmup = 8;
     this._dprFrameAccum = 0;
     // Smallest delta seen this window ≈ the display's vsync period — used to
     // make the "comfortable" recovery threshold reachable on 60Hz panels
@@ -516,6 +520,7 @@ export class App extends EventTarget {
     // Kick Rapier's WASM boot off NOW so its ~3.7s compile hides under the
     // renderer handshake below and the world parse further down. We only block
     // on it at the world's collider seam (GlbV3World awaits physics.whenReady).
+    const fontsPromise = canvasFontsReady();
     const physicsPromise = this.physics.init();
     physicsPromise.catch(() => {}); // real error still surfaces at the await below
 
@@ -564,6 +569,7 @@ export class App extends EventTarget {
     phase("Shaping the island…");
     await physicsPromise; // ensure fully ready before addStaticGround (usually already resolved)
     this.physics.addStaticGround(this.world.terrain);
+    this.rain.terrain = this.world.terrain;
 
     // Grass — v3 runtime TSL blade field. Built now that the terrain
     // heightfield + Blender grass mask exist. Blade count scales with the
@@ -614,6 +620,7 @@ export class App extends EventTarget {
     // owns the procedural impact FX; both run as a pre-gameplay layer. main.js
     // drives intro.play() off the "Enter Karan's World" button tap. onLanded
     // flashes the compass cardinal labels once the character touches down.
+    await fontsPromise;
     this.groundBreak = new GroundBreak(this.scene);
     this.intro = new IntroCinematic({
       player: this.player,
@@ -636,6 +643,7 @@ export class App extends EventTarget {
     this.timeOfDay.reapply();
     this.water.audio = this.audio;
     this.water.setPhysics(this.physics);
+    this.rain.waterLevel = this.water.level;
 
     // Foliage — tree canopies + bushes grown as Bruno-style SDF leaf clouds.
     // Birch + cherry leaves come from their baked treeLeaves ref empties; OAK has
@@ -701,6 +709,9 @@ export class App extends EventTarget {
         this.world.glb.flowerGroups,
       );
       this.world.flowers = this.flowers;
+      if (this.quality.name !== "high") {
+        for (const m of this.flowers.meshes) m.mesh.castShadow = false;
+      }
     }
 
     // The point-light RIG is built NOW (not deferred) even though its lamps sit
@@ -1064,6 +1075,7 @@ export class App extends EventTarget {
     // mobile interact pill mirrors the museum's E-prompt, and ActionPrompts
     // refuses flips/pushes while a portal crossing is scripting the character.
     this.ui.museum = this.museum;
+    this.ui.guestbookTree = this.guestbookTree;
     this.actionPrompts.museum = this.museum;
 
     // First-visit tutorial coachmarks. Constructed eagerly so main.js can
@@ -1174,11 +1186,15 @@ export class App extends EventTarget {
       try {
         // worldLights is built at boot (not here) — adding lights post-reveal
         // recompiles every lit material → character flicker. See boot().
-        this.bonfires = await new Bonfires(
-          this.scene,
-          v3refs,
-          this.wind,
-        ).load();
+        try {
+          this.bonfires = await new Bonfires(
+            this.scene,
+            v3refs,
+            this.wind,
+          ).load();
+        } catch (err) {
+          console.warn("[App] bonfires failed:", err);
+        }
         this.lava = new Lava(this.scene, this.wind, v3refs, this.physics);
         // Hazard reads player.character lazily at sink time, so wiring it now is fine.
         if (this.player) {
@@ -1286,7 +1302,11 @@ export class App extends EventTarget {
   // costs a framebuffer realloc, which is the stutter we're avoiding. A
   // post-change cooldown further spaces adjustments out.
   #updateAdaptiveDpr(frameDelta) {
-    this._dprFrameAccum += frameDelta;
+    if (this._dprWarmup > 0) {
+      this._dprWarmup -= frameDelta;
+      return;
+    }
+    this._dprFrameAccum += Math.min(frameDelta, 0.05);
     this._dprFrameMin = Math.min(this._dprFrameMin, frameDelta);
     this._dprFrameCount++;
     if (this._dprFrameCount < 60) return;
@@ -1440,10 +1460,13 @@ export class App extends EventTarget {
       for (const m of this.flowers.meshes) m.mesh.visible = show;
     }
     if (this.fireflies?.points) this.fireflies.points.visible = show;
-    if (this.leaves?.mesh) this.leaves.mesh.visible = show;
+    if (this.leaves?.mesh)
+      this.leaves.mesh.visible =
+        show && this.leaves.enabled && this.leaves._active;
     if (this.rain?.group) this.rain.group.visible = show && this.rain.enabled;
     if (this.snow?.group) this.snow.group.visible = show;
-    if (this.windLines?.mesh) this.windLines.mesh.visible = show;
+    if (this.windLines?.mesh)
+      this.windLines.mesh.visible = show && this.windLines.enabled;
     if (this.footprints?._mesh) this.footprints._mesh.visible = show;
     if (this.contactShadow?._mesh) this.contactShadow._mesh.visible = show;
     if (this.likeLights?.swarm) this.likeLights.swarm.visible = show;
@@ -1549,6 +1572,10 @@ export class App extends EventTarget {
       snapshot: this.mapSnapshot,
       sections: this.mapSections,
     });
+    this.mapOverlay.canOpen = () =>
+      !this._inMuseum &&
+      !this.museum?._busy &&
+      !this.colourGarden?.inGameMode;
     this.discovery.onDiscover((id) => {
       if (id) this.audio?.playMarkerClick?.();
     });
@@ -1700,6 +1727,8 @@ export class App extends EventTarget {
       } else if (e.code === "Escape" && this.mapOverlay?.isOpen) {
         e.preventDefault();
         this.mapOverlay.close();
+      } else if (!this.debug?.enabled) {
+        return;
       } else if (e.code === "Backquote" && this.navmask) {
         this.#toggleNavmaskDebug();
       } else if (e.code === "KeyK") {
@@ -1828,10 +1857,10 @@ export class App extends EventTarget {
     // mature WebGL2 path rather than gambling on another stall.
     const forceWebGL =
       window.location?.search?.includes("forceWebGL") ||
-      Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0) >= 2;
+      Number(safeSession.getItem(App.GPU_RETRY_KEY) || 0) >= 2;
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
-      antialias: this.sizes.pixelRatio < 2,
+      antialias: this.quality.antialias ?? this.sizes.pixelRatio < 2,
       powerPreference: "high-performance",
       alpha: false,
       forceWebGL,
@@ -1892,7 +1921,7 @@ export class App extends EventTarget {
    * WebGPU again — and __bootTiming stays [] only if it's still mid-stall.
    */
   async #initRendererWithFallback() {
-    const attempts = Number(sessionStorage.getItem(App.GPU_RETRY_KEY) || 0);
+    const attempts = Number(safeSession.getItem(App.GPU_RETRY_KEY) || 0);
     try {
       await Promise.race([
         this.renderer.init(),
@@ -1901,10 +1930,10 @@ export class App extends EventTarget {
         ),
       ]);
       // Success — reset the counter so a future flaky session starts on WebGPU.
-      sessionStorage.removeItem(App.GPU_RETRY_KEY);
+      safeSession.removeItem(App.GPU_RETRY_KEY);
     } catch (err) {
       if (attempts < 2) {
-        sessionStorage.setItem(App.GPU_RETRY_KEY, String(attempts + 1));
+        safeSession.setItem(App.GPU_RETRY_KEY, String(attempts + 1));
         console.warn(
           `[App] ${err.message} (attempt ${attempts + 1}/2) — reloading ${
             attempts + 1 >= 2 ? "on the WebGL2 fallback" : "to retry WebGPU"
@@ -1987,13 +2016,11 @@ export class App extends EventTarget {
     this.sizes.addEventListener("resize", () => {
       this.camera.aspect = this.sizes.aspect;
       this.camera.updateProjectionMatrix();
-      this.renderer.setPixelRatio(this.sizes.pixelRatio);
+      this._dprBase = this.sizes.pixelRatio;
+      const eff = this._dprBase * this._dprFactor;
+      this.renderer.setPixelRatio(eff);
       this.renderer.setSize(this.sizes.width, this.sizes.height);
-      this.postfx?.resize(
-        this.sizes.width,
-        this.sizes.height,
-        this.sizes.pixelRatio,
-      );
+      this.postfx?.resize(this.sizes.width, this.sizes.height, eff);
     });
   }
 
@@ -2052,6 +2079,7 @@ export class App extends EventTarget {
     // guard below only catches large jumps on frames that run a substep; this
     // also covers sub-metre snaps and 0-substep frames (common at 120Hz).
     if (this.player._teleported) {
+      this.clickToMove?.cancel();
       this._physInterpReady = false;
       this.player._teleported = false;
     }
@@ -2132,6 +2160,10 @@ export class App extends EventTarget {
       this.contactShadow.update(this.player, this.world.terrain, this.weather);
     }
 
+    if (this.player._frozen && sample?.moving) {
+      sample = { ...sample, moving: false };
+    }
+
     // Drive the camera's dynamic movement-zoom before update() reads it.
     this.playerCamera.setMovementState({
       moving: !!sample?.moving,
@@ -2146,8 +2178,10 @@ export class App extends EventTarget {
     // While the Colour Garden game mode owns the camera + locks movement,
     // suppress click-to-move so canvas clicks don't drop walk-flags behind it.
     const inGarden = this.colourGarden?.inGameMode === true;
-    if (this.clickToMove && !inGarden && !inMuseum)
-      this.clickToMove.update(frameDelta);
+    if (this.clickToMove) {
+      if (inGarden || inMuseum) this.clickToMove.cancel();
+      else this.clickToMove.update(frameDelta);
+    }
     if (this.miniMap && !inMuseum) this.miniMap.update();
     if (this.mapOverlay && !inMuseum) this.mapOverlay.update();
     if (this.compass && !inMuseum) this.compass.update();
@@ -2302,7 +2336,11 @@ export class App extends EventTarget {
     // Pressed-snow trail (drag stamps + refill sweep), drift/lump piles, and
     // conforming crusts (static visibility + dynamic accumulate/shed).
     const snowCov = this.weather?.coverage ?? 0;
-    this.snowTrail?.update(this.player?.position ?? null, !!sample?.moving, snowCov);
+    this.snowTrail?.update(
+      inMuseum ? null : (this.player?.position ?? null),
+      !inMuseum && !!sample?.moving,
+      snowCov,
+    );
     this.snowPiles?.update(frameDelta, snowCov, this.player?.position ?? null);
     this.snowShells?.update(frameDelta, snowCov);
     // Auto-thunder only fires while rain is genuinely active (and never during
@@ -2313,7 +2351,7 @@ export class App extends EventTarget {
     // visitor who caught it keeps the full-cycle pacing (see boot).
     if (!this._snowSeenPersisted && this.weather?.isSnowing) {
       this._snowSeenPersisted = true;
-      localStorage.setItem("karan-portfolio:snow-seen", "1");
+      safeLocal.setItem("karan-portfolio:snow-seen", "1");
     }
     // Winter outfit follows the snow blanket with hysteresis: dress once the
     // ground is visibly whitening (cov ≥ 0.4), undress only when the melt is
@@ -2459,8 +2497,29 @@ export class App extends EventTarget {
     if (!inMuseum) {
       const p = this.player.position;
       const off = this.timeOfDay.sunOffset;
-      this.lights.sun.position.set(p.x + off.x, p.y + off.y, p.z + off.z);
-      this.lights.sun.target.position.set(p.x, p.y, p.z);
+      // Snap the followed point to whole shadow-map texels (in the light's
+      // own right/up axes) so shadow edges don't crawl as the player walks.
+      const fwd = (this._sunFwd ??= new THREE.Vector3()).copy(off).normalize();
+      const right = (this._sunRight ??= new THREE.Vector3())
+        .set(fwd.z, 0, -fwd.x);
+      let sx = p.x;
+      let sy = p.y;
+      let sz = p.z;
+      if (right.lengthSq() > 1e-6) {
+        right.normalize();
+        const up = (this._sunUp ??= new THREE.Vector3()).crossVectors(fwd, right);
+        const cam = this.lights.sun.shadow.camera;
+        const texel = (cam.right - cam.left) / this.lights.sun.shadow.mapSize.x;
+        const r = p.dot(right);
+        const u = p.dot(up);
+        const dr = Math.round(r / texel) * texel - r;
+        const du = Math.round(u / texel) * texel - u;
+        sx += right.x * dr + up.x * du;
+        sy += right.y * dr + up.y * du;
+        sz += right.z * dr + up.z * du;
+      }
+      this.lights.sun.position.set(sx + off.x, sy + off.y, sz + off.z);
+      this.lights.sun.target.position.set(sx, sy, sz);
       this.lights.sun.target.updateMatrixWorld();
       // Foliage two-tone blend follows the sun: direction = (light - target).
       if (this.world.foliage) {

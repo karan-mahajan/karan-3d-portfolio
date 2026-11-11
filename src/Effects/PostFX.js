@@ -49,7 +49,7 @@ export const TONE_MAPPING_MODES = [
 
 // screen-UV bokeh approximation. `tex` is the scene pass texture node; `amount`
 // is a live uniform scalar (0 = off, 1 = full).
-const tiltShift = /*#__PURE__*/ Fn(([tex, amount]) => {
+const makeTiltShift = (taps) => Fn(([tex, amount]) => {
   const uvc = screenUV;
   // Keep a WIDE crisp band through the middle — blur only ramps in near the
   // very top/bottom edges. (0.30,0.55) leaves the central ~60% of the frame
@@ -63,12 +63,12 @@ const tiltShift = /*#__PURE__*/ Fn(([tex, amount]) => {
   const ang0 = hash(uvc.x.add(uvc.y.mul(0.6180339887))).mul(6.28318530718);
 
   const acc = tex.sample(uvc).rgb.toVar();
-  for (let i = 0; i < TILT_TAPS; i++) {
-    const a = ang0.add((i / TILT_TAPS) * Math.PI * 2);
+  for (let i = 0; i < taps; i++) {
+    const a = ang0.add((i / taps) * Math.PI * 2);
     const off = vec2(cos(a), sin(a)).mul(radius);
     acc.addAssign(tex.sample(uvc.add(off)).rgb);
   }
-  return vec4(acc.div(float(TILT_TAPS + 1)), 1.0);
+  return vec4(acc.div(float(taps + 1)), 1.0);
 });
 
 // Rec.709 luma weights for the saturation + split-tone steps.
@@ -157,6 +157,7 @@ export class PostFX {
 
     // Linear HDR scene (sharp + bloom), still in working/linear space — tone
     // mapping happens in #buildOutputNode.
+    const tiltShift = makeTiltShift(quality.tiltTaps ?? TILT_TAPS);
     this.#hdrNode = tiltShift(scenePassColor, this.#tiltUniform).add(bloomPass);
 
     // Grade uniforms (live-tunable). Conservative defaults.

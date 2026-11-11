@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { Player } from '../Player/Player.js';
 
 const MOVE_KEYS = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD',
@@ -193,7 +194,7 @@ export class ActionPrompts {
       const t = this.candidate;
       if (!t) return;
       if (t.mode === 'holdLoop') this._startHoldLoop(t);
-      else if (t.mode === 'oneShot') this._startOneShot(t);
+      else if (t.mode === 'oneShot' && !this.oneShotActive) this._startOneShot(t);
       else if (t.mode === 'combat') this._advanceCombat(t);
     };
 
@@ -221,7 +222,8 @@ export class ActionPrompts {
       && !this.activeHoldLoop
       && !this.oneShotActive
       && !this.activeZoneLoop
-      && !this.museum?._busy;
+      && !this.museum?._busy
+      && !this.controller.paused;
   }
 
   _triggerGlobalAction(actionName, blockMessage) {
@@ -252,10 +254,12 @@ export class ActionPrompts {
     if (this.playerCamera) this.playerCamera.applyActionZoom();
     if (this.audio) this.audio.playInteract();
     if (this.achievements) {
-      const r = this.player?.position
-        ? Math.hypot(this.player.position.x, this.player.position.z)
-        : 0;
-      const inWater = r > 45; // Player.WATER_ENTRY_RADIUS
+      const p = this.player?.position;
+      const groundY = p ? this.player.terrain?.heightAt?.(p.x, p.z) : null;
+      const inWater =
+        groundY != null &&
+        groundY < Player.WATER_SURFACE_Y &&
+        p.y <= Player.WATER_SURFACE_Y + 0.1;
       if (actionName === 'backflip') this.achievements.onBackflip(inWater);
       else if (actionName === 'cartwheel') this.achievements.onCartwheel();
     }

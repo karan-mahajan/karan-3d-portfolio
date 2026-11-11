@@ -283,8 +283,8 @@ export class GlbV3World {
       heightAt: (_x, _z) => 0,
     };
 
-    // nature facade — v3 has no procedural scatter; pushSpots stays empty until
-    // Phase C/E wire real interactables. addExclusion / setPlayerUniforms are
+    // nature facade — v3 has no procedural scatter; pushSpots is filled with
+    // tree trunks by _addTreeTrunkColliders. addExclusion / setPlayerUniforms are
     // no-ops kept for API parity with the v2 consumers.
     this.nature = {
       pushSpots: [],
@@ -2570,6 +2570,12 @@ export class GlbV3World {
         TRUNK_RADIUS_MAX,
       );
       physics.addStaticCylinder(cx, ymin, cz, radius, height);
+      this.nature.pushSpots.push({
+        position: { x: cx, y: ymin, z: cz },
+        surfaceRadius: radius + 1.6,
+        colliderRadius: radius,
+        type: 'tree',
+      });
       count++;
     });
     if (count > 0)

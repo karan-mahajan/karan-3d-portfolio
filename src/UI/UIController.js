@@ -71,6 +71,10 @@ export class UIController {
     this._onKeyDown = (e) => this.#handleKey(e);
     document.addEventListener('click', this._onDocClick, true);
     window.addEventListener('keydown', this._onKeyDown);
+    // A mouse-clicked button keeps focus, so Space (jump) would re-click it.
+    document.addEventListener('click', (e) => {
+      if (e.detail > 0) e.target.closest?.('button')?.blur();
+    });
   }
 
   // ── Boot detection ─────────────────────────────────────────────────────
@@ -81,10 +85,13 @@ export class UIController {
     );
     const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     const narrow = window.innerWidth < 768;
+    // iPadOS reports a desktop Mac user agent.
+    const iPadOS =
+      /Macintosh/.test(navigator.userAgent || '') && navigator.maxTouchPoints > 1;
     // Treat as mobile if UA matches OR (touch device AND narrow viewport).
     // Plain touch alone matches laptops with touchscreens — narrow is the
     // tie-breaker.
-    return ua || (touch && narrow);
+    return ua || iPadOS || (touch && narrow);
   }
 
   // ── Layout assembly ────────────────────────────────────────────────────
@@ -150,6 +157,12 @@ export class UIController {
     const panel = document.getElementById('controls-panel');
     if (!trigger || !panel) return;
     this._controlsPanel = panel;
+    if (this.isMobile) {
+      trigger.setAttribute('aria-label', 'Graphics settings');
+      trigger.title = 'Graphics settings';
+      panel.querySelector('.controls-panel-header span').textContent = 'Settings';
+      document.getElementById('top-left-stack')?.appendChild(trigger);
+    }
     const close = panel.querySelector('.controls-close');
     trigger.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -493,7 +506,9 @@ export class UIController {
       // Free the controller of any blocking states first; if a billboard is
       // focused or a one-shot is mid-flight the call will be a no-op which
       // is acceptable.
+      if (this.controller?.paused) return;
       if (this.player.startLoopAction?.('dance')) {
+        this.controller && (this.controller.paused = true);
         this._danceActive = true;
         btn.classList.add('is-active');
       }
@@ -523,7 +538,7 @@ export class UIController {
     const ix = this.interaction;
     // Only Skills + Contact lack an on-screen close; the projects/showcase
     // panel carries its own ×, so don't double up there.
-    const needsExit = !!(ix && (ix.skillOpen || ix.contactOpen));
+    const needsExit = !!(ix && (ix.skillOpen || ix.contactOpen || ix.experienceOpen));
     this._exitBtn.classList.toggle('hidden', !needsExit);
   }
 
@@ -551,14 +566,28 @@ export class UIController {
     const ix = this.interaction;
     // While a focused panel is open, the pill should be hidden — the panel
     // owns the screen and has its own × close.
-    if (ix && (ix.activeIndex !== -1 || ix.contactOpen || ix.skillOpen || ix.projectsOpen)) {
+    const gb = this.guestbookTree;
+    if (
+      gb?.open ||
+      (ix &&
+        (ix.activeIndex !== -1 ||
+          ix.contactOpen ||
+          ix.skillOpen ||
+          ix.projectsOpen ||
+          ix.resumeOpen ||
+          ix.experienceOpen))
+    ) {
       this._interactBtn.classList.add('hidden');
       return;
     }
     let label = null;
     if (ix?.candidate) label = `View ${ix.candidate.project?.name || ''}`.trim();
+    else if (ix?.resumeCandidate) label = 'Open Resume';
     else if (ix?.contactCandidate) label = 'Contact';
     else if (ix?.skillCandidate) label = 'Enter Skills';
+    else if (ix?.projectsCandidate) label = 'Enter Projects';
+    else if (ix?.experienceCandidate) label = 'View Experience';
+    else if (gb?._near) label = 'Open Guestbook';
     else if (this.actionPrompts?.activeZoneLoop) {
       const t = this.actionPrompts.activeZoneLoop;
       label = (t.cycleActions && t.cycleActions.length)
